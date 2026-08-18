@@ -1,0 +1,127 @@
+# Tool configuration for Autorack Verify.
+#
+# This file configures ruff, mypy and pytest. It deliberately does NOT
+# declare a [project] table: this is an application deployed by copying the
+# directory onto a box and running gunicorn against it, not a distributable
+# package. Adding packaging metadata would imply a `pip install .` workflow
+# that nothing here uses, and would create a second place where the
+# dependency list lives (requirements.txt is the one place -- see the
+# comment at the top of that file).
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "static/js/vendor", "backup_data", "data"]
+
+[tool.ruff.lint]
+# Chosen for signal, not completeness. Each of these catches something that
+# is either a real defect or a genuine readability problem:
+#   E/W  pycodestyle    -- baseline formatting agreement
+#   F    pyflakes       -- unused imports/variables, undefined names
+#   I    isort          -- deterministic import order, so diffs stay small
+#   UP   pyupgrade      -- this is a 3.12-only codebase; typing.Optional and
+#                          typing.Dict are noise here
+#   B    bugbear        -- real bug shapes (mutable defaults, loop-variable
+#                          capture in closures)
+#   SIM  simplify       -- collapsible branches
+#   DTZ  flake8-datetimez -- naive datetimes. Load-bearing: every timestamp
+#                          in this system is stored UTC and rendered per
+#                          account timezone (tz.py). A naive datetime.now()
+#                          is how that invariant gets broken silently.
+#   S    bandit         -- security lint; this app takes uploads and builds
+#                          filesystem paths from client-supplied values
+#   RUF  ruff-specific
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "DTZ", "S", "RUF"]
+
+ignore = [
+    # ruff format owns line length; flagging it again just adds noise to a
+    # codebase whose long lines are mostly SQL strings and prose comments.
+    "E501",
+    # Asserts are the entire point of a test file, and this codebase also
+    # uses them as internal invariants in non-test code deliberately.
+    "S101",
+    # Unpacking a tuple and using only some of it is idiomatic here --
+    # `for line_id, raw in lines` reads better than index access.
+    "RUF059",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately hardcode credentials for the seeded demo account, use
+# non-cryptographic randomness for fixtures, shell out to node for the JS
+# parity harness, and build SQL strings to assert on schema internals.
+"tests/*" = ["S105", "S106", "S107", "S311", "S603", "S607", "S608"]
+# seed.py exists to create a known-password demo account.
+"seed.py" = ["S105", "S106"]
+# serve.py and admin_gui.py spawn subprocesses (gunicorn, openssl, the
+# server process) as their actual job. serve.py's S104 is binding to
+# 0.0.0.0, which is the entire point of a dev server that phones on the
+# warehouse wifi have to reach -- it is not the production entrypoint
+# (gunicorn behind Caddy is; see the README).
+"serve.py" = ["S603", "S607", "S104"]
+# S310 (urlopen with an unrestricted scheme) is answered by
+# _validate_remote_url, which rejects anything that is not http/https
+# before the URL reaches urllib. ruff cannot follow the value from there
+# to the urlopen call, so the check has to be turned off at file scope.
+"admin_gui.py" = ["S603", "S607", "S310"]
+# reset_data.py drops and recreates the append-only triggers around an
+# authorised wipe. The DDL it executes is read out of sqlite_master at
+# runtime and replayed verbatim, precisely so it keeps working when a
+# later migration changes a trigger. It is generated SQL, not
+# user-supplied input, and it cannot be parameterised or moved to sql/.
+"reset_data.py" = ["S608"]
+# db.py builds a small number of statements by interpolating identifiers
+# that are validated first: table_page/table_columns reject any table not
+# in KNOWN_TABLES and any column not reported by PRAGMA table_info for
+# that table, and update_account_fields checks its keys against
+# _ACCOUNT_UPDATABLE_COLUMNS. Values always go through ? binding.
+"db.py" = ["S608"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "admin_api", "app", "auth", "backup", "barcode", "billing", "db",
+    "i18n", "manifest_ingest", "pricing", "reports", "seed", "tz",
+]
+
+[tool.mypy]
+python_version = "3.12"
+
+# Shipped code only. tests/ is deliberately out of scope: with
+# check_untyped_defs on, ~180 of the errors it reports are the same shape
+# -- db.query_one() is honestly typed `Row | None`, and a test that has
+# just inserted the row indexes it directly. Silencing those means adding
+# `assert row is not None` to 180 call sites, which buys no safety: if the
+# row is missing the test fails either way, and the TypeError names the
+# line just as precisely as the assert would. Type checking is here to
+# protect what runs in a warehouse.
+files = ["*.py", "tools"]
+exclude = "(^\\.venv/|^backup_data/)"
+
+# Flask, segno and the Tkinter/ttk surface ship incomplete or absent stubs.
+# Chasing those would mean writing stub files for third-party code, which
+# buys nothing for a codebase whose own logic is what needs checking.
+ignore_missing_imports = true
+
+# Enabled: these catch real mistakes without demanding that every function
+# in a 7,000-line codebase grow a full signature first.
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+check_untyped_defs = true
+
+# Deliberately NOT enabled yet: disallow_untyped_defs. Turning it on today
+# would require annotating every Flask view and every Tkinter callback
+# before the type checker says anything useful about the modules that
+# actually carry risk (barcode.py, billing.py, db.py). Annotate those
+# first, then tighten this per-module.
+
+[[tool.mypy.overrides]]
+# sqlite3.Row supports __getitem__ but is typed as returning Any, so
+# indexing a row and passing it somewhere typed produces noise rather than
+# findings. db.py is where that boundary lives.
+module = "db"
+warn_unreachable = false
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

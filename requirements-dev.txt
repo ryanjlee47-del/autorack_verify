@@ -1,0 +1,19 @@
+-r requirements.txt
+
+pytest==9.1.1
+
+# Lint and type gates, enforced in CI (.github/workflows/ci.yml) and
+# configured in pyproject.toml rather than here.
+ruff==0.16.3
+mypy==2.3.1
+
+# Used only by tools/generate_erd.py to render docs/erd.png. Dev-only on
+# purpose: nothing the server serves at runtime imports it, so it has no
+# business in requirements.txt, where it would become a production
+# dependency of every deployment.
+Pillow==12.3.0
+
+# Dependency vulnerability scanning. Run `pip-audit -r requirements.txt`
+# as part of the release process, not once -- a clean result is a
+# statement about a moment in time, not a property of the project.
+pip-audit==2.10.1
