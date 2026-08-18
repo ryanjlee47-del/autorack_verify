@@ -1,0 +1,331 @@
+/* Owner web app: calm, dense, data-forward. Sells money saved, not
+   "warehouse technology". */
+
+body.owner {
+  font-family: var(--font-body);
+  background: var(--concrete);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+.owner-shell {
+  display: grid;
+  grid-template-columns: 15rem 1fr;
+  min-height: 100vh;
+}
+
+.owner-nav {
+  background: var(--chrome-bg);
+  color: var(--chrome-fg);
+  padding: 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.owner-nav .brand {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 1.1rem;
+  font-weight: 900;
+  color: var(--safety-yellow);
+  margin-bottom: 1.5rem;
+  padding: 0 0.5rem;
+}
+
+.owner-nav a {
+  color: var(--chrome-fg);
+  text-decoration: none;
+  padding: 0.55rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.owner-nav a:hover, .owner-nav a.active {
+  background: var(--chrome-hover);
+  color: var(--safety-yellow);
+}
+
+.owner-nav .nav-footer {
+  margin-top: auto;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  padding: 0.5rem;
+}
+
+.owner-nav .nav-footer form {
+  margin: 0;
+}
+
+.owner-nav .link-button {
+  background: none;
+  border: none;
+  color: var(--chrome-fg);
+  font: inherit;
+  text-decoration: underline;
+  opacity: 0.8;
+  padding: 0;
+  cursor: pointer;
+}
+
+.owner-main {
+  padding: 2rem 2.5rem;
+  max-width: 76rem;
+}
+
+.owner-main h1 {
+  font-size: 1.6rem;
+  margin: 0 0 1.5rem 0;
+}
+
+.card {
+  background: var(--white);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1.25rem;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-tile {
+  background: var(--white);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 1rem 1.2rem;
+}
+
+.stat-tile .value {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  font-weight: 900;
+}
+
+.stat-tile .label {
+  font-size: 0.8rem;
+  color: var(--steel-light);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Wide data tables (Workers has 9 columns) must scroll inside their own
+   box rather than forcing the whole page sideways. Wrap in
+   <div class="table-scroll"> where that matters; harmless elsewhere. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+table.data-table th {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 2px solid var(--concrete-dark);
+  color: var(--steel-light);
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+table.data-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--concrete-dark);
+}
+
+table.data-table tr:hover td {
+  background: var(--concrete);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15em 0.55em;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+/* Result chips keep their light tint + saturated text in both schemes:
+   the tint IS the signal on the Live floor, and inverting it per-scheme
+   would make the same result look like two different states depending on
+   the operator's OS setting. */
+.badge-ok { background: #dcf1e2; color: #14622f; }
+.badge-reject { background: #fbdada; color: #a81f1f; }
+.badge-duplicate { background: #fbe8cc; color: #7a4300; }
+.badge-unresolved { background: #e4e6ea; color: #3d4552; }
+
+/* .btn / .btn-secondary / .btn-danger now live in tokens.css so the
+   marketing page (which doesn't load this file) gets them too -- see the
+   note there. Nothing owner-specific to add. */
+
+.form-field { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.form-field label { font-size: 0.85rem; font-weight: 600; }
+.form-field input, .form-field select, .form-field textarea {
+  padding: 0.5em 0.6em;
+  border: 1px solid var(--concrete-dark);
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+.line-picker { position: relative; }
+.line-suggested {
+  width: 100%;
+  text-align: left;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  white-space: normal;
+}
+.line-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--white);
+  border: 1px solid var(--concrete-dark);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  margin-top: 0.2rem;
+}
+.line-result {
+  padding: 0.5em 0.7em;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.line-result:hover, .line-result:focus {
+  background: var(--concrete);
+  outline: none;
+}
+.line-result-empty {
+  padding: 0.5em 0.7em;
+  font-size: 0.85rem;
+  color: var(--steel-light);
+}
+
+.warning-banner {
+  background: var(--banner-bg);
+  border: 1px solid var(--banner-border);
+  color: var(--banner-fg);
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--steel-light);
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--chrome-bg);
+  padding: 1.5rem;
+}
+.login-card {
+  background: var(--white);
+  padding: 2.5rem;
+  border-radius: var(--radius-md);
+  width: min(90vw, 24rem);
+  box-shadow: var(--shadow-card);
+}
+
+/* ---------------------------------------------------------------------
+   Responsive.
+
+   There were no breakpoints at all in this file, so .owner-shell's fixed
+   `15rem 1fr` grid applied at every width -- on a 390px phone the sidebar
+   alone took 240px, about 62% of the screen, leaving a ~150px column for
+   the actual dashboard. A warehouse manager checking exceptions from the
+   floor is a real case, so the sidebar becomes a horizontal scrolling
+   nav bar instead of a column.
+   --------------------------------------------------------------------- */
+@media (max-width: 60rem) {
+  .owner-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .owner-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.6rem 0.75rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .owner-nav .brand {
+    margin-bottom: 0;
+    margin-right: 0.5rem;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .owner-nav a {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  /* Pull the account name / log-out button out of the `margin-top: auto`
+     column layout, where in a row it would otherwise be flung to the far
+     right past the scrollable nav links. */
+  .owner-nav .nav-footer {
+    margin-top: 0;
+    margin-left: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 0 0.25rem;
+  }
+  .owner-nav .nav-footer br { display: none; }
+
+  .owner-main {
+    padding: 1.25rem 1rem;
+  }
+  .owner-main h1 {
+    font-size: 1.35rem;
+    margin-bottom: 1rem;
+  }
+}
+
+@media (max-width: 34rem) {
+  .stat-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+  }
+  .stat-tile { padding: 0.8rem 0.9rem; }
+  .stat-tile .value { font-size: 1.5rem; }
+
+  .card { padding: 1rem; }
+
+  /* Stacked CTA rows: side-by-side buttons wrap awkwardly at ~2 per row
+     and end up different widths. Full-width reads as intentional. */
+  .card .btn {
+    display: block;
+    width: 100%;
+    margin-bottom: 0.5rem;
+  }
+
+  .login-card { padding: 1.75rem 1.4rem; }
+}

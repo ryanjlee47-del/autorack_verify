@@ -1,0 +1,49 @@
+{% extends "owner_base.html" %}
+{% block title %}Live floor -- Autorack Verify{% endblock %}
+{% block content %}
+<h1>Live floor</h1>
+<div class="card">
+  <div class="table-scroll">
+    <table class="data-table" id="floor-table">
+      <thead><tr><th>Time</th><th>Result</th><th>SKU / description</th><th>Payload</th><th>Tier</th></tr></thead>
+      <tbody id="floor-tbody">
+        <tr><td colspan="5" class="empty-state">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function badgeClass(result) {
+  return "badge badge-" + result;
+}
+function escapeHtml(s) {
+  var d = document.createElement("div");
+  d.textContent = s == null ? "" : String(s);
+  return d.innerHTML;
+}
+function render(rows) {
+  var tbody = document.getElementById("floor-tbody");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No scans yet today.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(function (r) {
+    return "<tr>" +
+      "<td>" + escapeHtml(r.ts_server) + "</td>" +
+      "<td><span class=\"" + badgeClass(r.result) + "\">" + escapeHtml(r.result) + "</span></td>" +
+      "<td>" + escapeHtml(r.sku || r.description || "") + "</td>" +
+      "<td class=\"mono\">" + escapeHtml(r.raw_payload) + "</td>" +
+      "<td>" + (r.matched_tier != null ? r.matched_tier : "--") + "</td>" +
+      "</tr>";
+  }).join("");
+}
+function poll() {
+  fetch("/floor/data").then(function (r) { return r.json(); }).then(function (data) {
+    render(data.scans);
+  }).catch(function () {});
+}
+poll();
+setInterval(poll, 2000);
+</script>
+{% endblock %}

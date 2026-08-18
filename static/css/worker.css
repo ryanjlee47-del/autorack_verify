@@ -1,0 +1,433 @@
+/* Worker scan screen: near-zero chrome, enormous type, readable at arm's
+   length by someone wearing gloves in bad light. Result state is conveyed
+   by full-screen color before any text is read. This screen has one job. */
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  /* Fixed light, NOT var(--white): the scan screen's background is a
+     hardcoded #000 camera backdrop in every color scheme, but --white
+     resolves to #2a2d31 under prefers-color-scheme: dark -- which put
+     near-black text (worker name, sync status, camera countdown in
+     .header-chip, all of which inherit this) on a pure black screen.
+     Invisible, on the one screen that has to work in a dark warehouse. */
+  color: #f4f3ef;
+  font-family: var(--font-body);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.join-screen {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Chrome tokens, not --ink/--paper: this screen is dark because a
+     warehouse door at 5am is dark, not because the phone is in dark
+     mode. It used to flip to cream-on-dark-text when the OS did. */
+  background: var(--chrome-bg);
+  color: var(--chrome-fg);
+  padding: 8vh 6vw;
+  text-align: center;
+  gap: 1.5rem;
+}
+
+.lang-toggle {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  color: var(--safety-yellow);
+  text-decoration: underline;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 0.5rem;
+}
+
+.join-screen h1 {
+  font-size: clamp(2rem, 8vw, 3.5rem);
+  margin: 0;
+}
+
+.join-screen .error-banner {
+  background: var(--reject-red);
+  color: white;
+  padding: 1.25rem;
+  border-radius: var(--radius-md);
+  font-size: clamp(1.1rem, 4vw, 1.5rem);
+  max-width: 40rem;
+}
+
+.join-screen input[type="text"] {
+  font-size: clamp(1.5rem, 6vw, 2.25rem);
+  padding: 0.75em 0.6em;
+  width: min(90vw, 24rem);
+  border-radius: var(--radius-md);
+  border: 3px solid var(--steel);
+  text-align: center;
+  /* The field sits on dark chrome in both schemes, so it needs its own
+     light surface rather than inheriting the scheme's. */
+  background: #ffffff;
+  color: #14171a;
+}
+
+.join-screen button {
+  font-size: clamp(1.5rem, 6vw, 2.25rem);
+  padding: 0.6em 1.4em;
+  background: var(--safety-yellow);
+  color: var(--on-accent);
+  border: none;
+  border-radius: var(--radius-md);
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-height: 3.5rem;
+  min-width: 12rem;
+}
+
+/* --- Scan screen --- */
+
+.scan-screen {
+  position: relative;
+  height: 100vh;
+  width: 100vw;
+  background: #000;
+}
+
+#camera-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.header-chip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  background: rgba(20, 23, 26, 0.88);
+  font-size: clamp(0.85rem, 2.6vw, 1.05rem);
+  font-weight: 700;
+}
+
+.header-chip .status-ok { color: #7fe08a; }
+.header-chip .status-stale { color: var(--dock-orange); background: #fff; padding: 0.1em 0.5em; border-radius: 3px; }
+
+.header-chip .header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.header-chip .camera-countdown {
+  font-family: var(--font-mono);
+  color: var(--safety-yellow);
+  font-weight: 700;
+  min-width: 2.4em;
+  text-align: right;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  /* Sits on .header-chip / result overlays, which are dark in every
+     scheme -- see the note on `body` above. */
+  color: var(--chrome-fg);
+  opacity: 0.85;
+  font-size: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  padding: 0.3rem;
+  min-height: 2rem;
+}
+
+.scan-controls {
+  position: absolute;
+  bottom: 1.2rem;
+  right: 1.2rem;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.icon-button {
+  width: 3.4rem;
+  height: 3.4rem;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.5);
+  background: rgba(20,23,26,0.7);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon-button svg {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+.icon-button.active {
+  border-color: var(--safety-yellow);
+  color: var(--safety-yellow);
+  background: rgba(244, 180, 0, 0.18);
+}
+
+.reticle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+}
+.reticle-box {
+  width: min(78vw, 78vh);
+  height: 32vh;
+  border: 4px solid rgba(244, 180, 0, 0.85);
+  border-radius: var(--radius-md);
+}
+
+.camera-off-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-align: center;
+  padding: 6vw;
+  background: var(--chrome-bg);
+}
+.camera-off-panel p {
+  margin: 0;
+  font-size: clamp(1.3rem, 5vw, 2rem);
+  font-weight: 900;
+  text-transform: uppercase;
+  color: var(--chrome-fg);
+}
+.camera-off-panel p.hint {
+  font-size: clamp(0.9rem, 3.2vw, 1.1rem);
+  font-weight: 500;
+  text-transform: none;
+  opacity: 0.75;
+  max-width: 26rem;
+}
+
+.result-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2rem;
+  text-align: center;
+  padding: 6vw;
+}
+.result-overlay.showing { display: flex; }
+.result-overlay .result-label {
+  font-size: clamp(3rem, 16vw, 7rem);
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1;
+}
+.result-overlay .result-detail {
+  font-size: clamp(1.2rem, 5vw, 2rem);
+  font-weight: 600;
+}
+.result-overlay .result-sku {
+  font-family: var(--font-mono);
+  font-size: clamp(1rem, 4vw, 1.5rem);
+  opacity: 0.85;
+}
+.result-overlay.result-ok { background: var(--verified-green); }
+.result-overlay.result-reject { background: var(--reject-red); }
+.result-overlay.result-duplicate { background: var(--duplicate-amber); }
+
+.dismiss-button {
+  margin-top: 1rem;
+  font-size: clamp(1.3rem, 5vw, 2rem);
+  font-weight: 900;
+  text-transform: uppercase;
+  padding: 0.7em 1.6em;
+  background: rgba(0,0,0,0.35);
+  color: white;
+  border: 3px solid white;
+  border-radius: var(--radius-md);
+  min-height: 3.2rem;
+}
+
+/* The wedge-scanner capture input is always present and focused, but
+   must never be visible or interactable by touch/tap. */
+#wedge-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  height: 1px;
+  width: 1px;
+  top: -100px;
+}
+
+.result-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  align-items: center;
+}
+
+.appeal-button {
+  background: transparent;
+  border: 3px solid rgba(255,255,255,0.7);
+  color: white;
+}
+
+/* --- Modals (manual entry, appeal) --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0,0,0,0.6);
+}
+.modal-card {
+  width: 100%;
+  max-width: 34rem;
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: 1rem 1rem 0 0;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.modal-card h2 {
+  margin: 0;
+  font-size: 1.3rem;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+}
+.modal-card .modal-hint {
+  margin: 0;
+  color: var(--steel-light);
+  font-size: 0.95rem;
+}
+.modal-card input[type="text"],
+.modal-card textarea {
+  font-size: 1.2rem;
+  padding: 0.7em 0.8em;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--concrete-dark);
+  font-family: inherit;
+  width: 100%;
+}
+.modal-card textarea {
+  resize: vertical;
+}
+.modal-card #appeal-photo-preview {
+  width: 100%;
+  max-height: 40vh;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  background: black;
+}
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+.modal-card .btn, .modal-card .btn-secondary {
+  padding: 0.7em 1.3em;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  font-size: 1rem;
+  border: none;
+  min-height: 2.8rem;
+}
+.modal-card .btn {
+  background: var(--safety-yellow);
+  color: var(--on-accent);
+}
+.modal-card .btn:disabled {
+  opacity: 0.5;
+}
+.modal-card .btn-secondary {
+  background: var(--concrete);
+  color: var(--ink);
+  border: 2px solid var(--concrete-dark);
+}
+
+/* --- End-of-shift summary --- */
+.summary-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  background: var(--chrome-bg);
+  color: var(--chrome-fg);
+  text-align: center;
+  padding: 6vw;
+}
+.summary-overlay h2 {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  font-size: clamp(1.6rem, 6vw, 2.4rem);
+  margin: 0;
+}
+.summary-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  width: 100%;
+  max-width: 24rem;
+}
+.summary-stat {
+  background: rgba(255,255,255,0.08);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+}
+.summary-stat-value {
+  font-family: var(--font-display);
+  font-size: 2.2rem;
+  color: var(--safety-yellow);
+}
+.summary-stat-label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  opacity: 0.8;
+  margin-top: 0.25rem;
+}
+.summary-overlay .btn {
+  background: var(--safety-yellow);
+  color: var(--on-accent);
+  border: none;
+  border-radius: var(--radius-md);
+  font-weight: 900;
+  text-transform: uppercase;
+  padding: 0.8em 2em;
+  font-size: 1.1rem;
+  min-height: 3.2rem;
+}

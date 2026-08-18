@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autorack Verify -- Catch the wrong item before it leaves the dock</title>
+  <link rel="icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/marketing.css">
+</head>
+<body class="marketing">
+  <nav class="mkt-nav">
+    <span class="brand">Autorack Verify</span>
+    <div>
+      {% if logged_in %}
+        <a class="btn" href="/dashboard">Dashboard</a>
+      {% else %}
+        <a class="btn btn-secondary" href="/login">Log in</a>
+        <a class="btn" href="/signup">Start free</a>
+      {% endif %}
+    </div>
+  </nav>
+
+  <section class="mkt-hero">
+    <h1>Catch the wrong item before it leaves the dock.</h1>
+    <p class="sub">
+      Autorack Verify sits alongside whatever WMS or paper process you already use.
+      Floor workers scan with a phone or a ring scanner; a wrong item hard-rejects
+      before it ships. You only pay for mis-ships it actually catches.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-big" href="/signup">Start free -- {{ free_allowance }} catches on us</a>
+      <a class="btn btn-secondary btn-big" href="#pricing">See pricing</a>
+    </div>
+  </section>
+
+  <section class="mkt-section">
+    <h2>How it works</h2>
+    <div class="mkt-grid">
+      <div class="mkt-card">
+        <h3>1. Upload today's manifest</h3>
+        <p>CSV, TSV, an Excel export, or just paste a list of barcodes. We handle the column-matching.</p>
+      </div>
+      <div class="mkt-card">
+        <h3>2. Print the door QR</h3>
+        <p>One QR per shift. Workers scan it once at the door, enter their name, and the shift downloads to their phone.</p>
+      </div>
+      <div class="mkt-card">
+        <h3>3. Scan and go</h3>
+        <p>Camera or Bluetooth ring scanner. Right item: a beep and a green flash. Wrong item: a hard stop before it ships.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="mkt-section">
+    <h2>Built for the way barcodes actually behave</h2>
+    <div class="mkt-grid">
+      <div class="mkt-card">
+        <h3>Different scanners, same product</h3>
+        <p>UPC-E, UPC-A, EAN-13, GS1-128 with lot and serial numbers -- we normalize all of them to the same product before comparing.</p>
+      </div>
+      <div class="mkt-card">
+        <h3>Never guesses on a maybe</h3>
+        <p>If a code could match more than one line on the manifest, we never bill for it. Ambiguous scans go to your review queue, not your invoice.</p>
+      </div>
+      <div class="mkt-card">
+        <h3>Works with the wifi you have</h3>
+        <p>A full shift downloads once at the door. From there, phones need no network at all -- not even a flaky one.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="mkt-section" id="pricing">
+    <h2>Pricing</h2>
+    <div class="mkt-pricing">
+      <div class="price-number">{{ free_allowance }} free</div>
+      <div class="price-label">prevented mis-ships, no card required</div>
+      <div class="price-number" style="font-size: clamp(1.6rem, 4vw, 2.2rem);">{{ price_per_catch }} per catch after that</div>
+      <div class="price-label">flat rate, billed monthly -- only for mis-ships we actually caught</div>
+      <p class="price-detail">
+        A single mis-ship -- the item, return freight, a replacement, and the labor to untangle it --
+        typically runs warehouses about {{ savings_per_catch }}. Catch 10 of those in a month and you've
+        saved roughly {{ savings_example }}, for a fraction of that in fees.
+      </p>
+    </div>
+  </section>
+
+  {#
+    Team. Deliberately states the one-person reality rather than papering
+    over it with "we" -- for a tool a warehouse is trusting with its
+    outbound accuracy, "you can always reach the person who wrote it" is a
+    real advantage over a support queue, not an apology.
+
+    The three people below are advisors and are labelled as such. Do not
+    restyle this into a "team" or "trusted by" grid, and do not add
+    titles, bios, photos, logos, or quotes that weren't explicitly
+    provided by them -- these are real named people at a real named
+    company, and implying they are employees or that they endorse the
+    product is a claim we have not been given.
+  #}
+  <section class="mkt-section" id="team">
+    <h2>Who's behind this</h2>
+
+    <div class="mkt-founder">
+      <p class="person-name">Ryan</p>
+      <p class="person-role">Founder</p>
+      <p class="person-note">
+        Autorack Verify is built and run by one person. When you email support,
+        you're emailing the person who wrote the code -- not a queue.
+      </p>
+    </div>
+
+    <p class="mkt-advisors-label">Advisors</p>
+    <div class="mkt-grid">
+      <div class="mkt-card mkt-advisor">
+        <p class="person-name">Sylas</p>
+        <p class="person-role">CEO, Chalas Supply Chain</p>
+      </div>
+      <div class="mkt-card mkt-advisor">
+        <p class="person-name">Liz Emanuel</p>
+        <p class="person-role">25+ years in fulfillment operations</p>
+      </div>
+      <div class="mkt-card mkt-advisor">
+        <p class="person-name">Aleksandr Ostudin</p>
+        <p class="person-role">PhD mentor</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="mkt-footer">
+    Autorack Verify -- a verification layer for the process you already run.
+  </footer>
+</body>
+</html>

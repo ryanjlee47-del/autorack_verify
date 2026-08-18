@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>{{ s.app_title }}</title>
+  <link rel="manifest" href="/w/manifest.webmanifest">
+  <meta name="theme-color" content="#14171a">
+  <link rel="icon" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/worker.css">
+</head>
+<body>
+  <div class="join-screen">
+    <a class="lang-toggle" href="{{ lang_toggle_url }}">{{ s.language_toggle }}</a>
+    {% if error %}
+      <div class="error-banner">{{ error }}</div>
+    {% endif %}
+    {% if shift %}
+      <h1 class="stencil">{{ shift.label }}</h1>
+      <p style="font-size: clamp(1rem, 4vw, 1.4rem); opacity: 0.85;">{{ s.enter_name_prompt }}</p>
+      <form method="post" action="/w/join">
+        <input type="hidden" name="t" value="{{ token }}">
+        <input type="hidden" name="lang" value="{{ lang }}">
+        <div style="display:flex; flex-direction:column; gap: 1rem; align-items:center;">
+          <input type="text" name="name" placeholder="{{ s.name_placeholder }}" autocomplete="name" autofocus required maxlength="60">
+          <button type="submit">{{ s.start_shift }}</button>
+        </div>
+      </form>
+    {% else %}
+      <h1 class="stencil">{{ s.app_title }}</h1>
+      <p style="font-size: clamp(1rem, 4vw, 1.4rem); opacity: 0.85;">
+        {{ s.scan_qr_prompt }}
+      </p>
+    {% endif %}
+  </div>
+</body>
+</html>

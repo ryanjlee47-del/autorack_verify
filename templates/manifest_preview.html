@@ -1,0 +1,59 @@
+{% extends "owner_base.html" %}
+{% block title %}Confirm manifest -- Autorack Verify{% endblock %}
+{% block content %}
+<h1>Confirm columns and commit</h1>
+
+{% for w in parsed.warnings %}
+<div class="warning-banner">{{ w }}</div>
+{% endfor %}
+
+<div class="card">
+  <form method="post" action="/manifests/commit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="ref" value="{{ ref }}">
+    <input type="hidden" name="source_filename" value="{{ source_filename or '' }}">
+    <input type="hidden" name="mode" value="{{ mode }}">
+    <textarea name="raw_text" style="display:none">{{ raw_text }}</textarea>
+
+    {% if mode == "delimited" %}
+    <p style="color:var(--steel-light)">We detected these columns. Fix any that look wrong before committing.</p>
+    <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+      {% for field, label in [("raw_barcode","Barcode"), ("sku","SKU"), ("description","Description"), ("qty_expected","Qty expected")] %}
+      <div class="form-field" style="min-width:12rem;">
+        <label>{{ label }}{% if field == "raw_barcode" %} (required){% endif %}</label>
+        <select name="col_{{ field }}">
+          <option value="">-- none --</option>
+          {% for h in header %}
+          <option value="{{ h }}" {{ "selected" if parsed.detected_columns.get(field) == h }}>{{ h }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <p style="margin-top:1.25rem; color:var(--steel-light)">{{ parsed.rows|length }} lines detected. Preview of the first 20:</p>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>#</th><th>Barcode</th><th>SKU</th><th>Description</th><th>Qty</th></tr></thead>
+        <tbody>
+          {% for row in parsed.rows[:20] %}
+          <tr>
+            <td>{{ row.line_no }}</td>
+            <td class="mono">{{ row.raw_barcode }}</td>
+            <td>{{ row.sku or "" }}</td>
+            <td>{{ row.description or "" }}</td>
+            <td>{{ row.qty_expected }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:1.25rem;">
+      <button class="btn" type="submit" {{ "disabled" if not parsed.rows }}>Commit manifest</button>
+      <a class="btn btn-secondary" href="/manifests/upload">Start over</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

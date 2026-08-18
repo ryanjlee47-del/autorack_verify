@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Start free -- Autorack Verify</title>
+  <link rel="icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/owner.css">
+</head>
+<body class="owner">
+  <div class="login-shell">
+    <div class="login-card">
+      <h1 class="stencil" style="font-size:1.3rem; margin-top:0;">Start free</h1>
+      <p style="color:var(--steel-light); font-size:0.9rem; margin-top:-0.5rem;">
+        {{ free_allowance }} prevented mis-ships free, then {{ price_per_catch }} per catch. No card required to start.
+      </p>
+      {% if error %}<div class="warning-banner">{{ error }}</div>{% endif %}
+      <form method="post" action="/signup">
+        <div class="form-field">
+          <label for="business_name">Business name</label>
+          <input type="text" id="business_name" name="business_name" required value="{{ business_name or '' }}">
+        </div>
+        <div class="form-field">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" required value="{{ email or '' }}">
+        </div>
+        <div class="form-field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" required minlength="8">
+        </div>
+        <div class="form-field">
+          <label for="timezone">Warehouse timezone</label>
+          <select id="timezone" name="timezone">
+            {% for tz_name in timezones %}
+            <option value="{{ tz_name }}" {{ "selected" if tz_name == selected_timezone }}>{{ tz_name.replace("_", " ") }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="btn" type="submit" style="width:100%;">Create account</button>
+      </form>
+      <p style="text-align:center; margin-top:1rem; font-size:0.85rem;">
+        <a href="/login">Already have an account? Log in</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>

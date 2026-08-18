@@ -1,0 +1,26 @@
+{% extends "owner_base.html" %}
+{% block title %}Upload a manifest -- Autorack Verify{% endblock %}
+{% block content %}
+<h1>Upload a manifest</h1>
+<div class="card">
+  <p style="color:var(--steel-light); margin-top:0;">
+    CSV, TSV, an XLSX file exported as CSV, or paste one barcode per line.
+  </p>
+  <form method="post" action="/manifests/upload" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-field">
+      <label for="ref">Reference (e.g. today's date or PO number)</label>
+      <input type="text" id="ref" name="ref" required value="{{ ref or '' }}">
+    </div>
+    <div class="form-field">
+      <label for="file">File</label>
+      <input type="file" id="file" name="file" accept=".csv,.tsv,.txt">
+    </div>
+    <div class="form-field">
+      <label for="paste">...or paste barcodes (one per line)</label>
+      <textarea id="paste" name="paste" rows="6" placeholder="012345678905&#10;ALT-SKU-9000"></textarea>
+    </div>
+    <button class="btn" type="submit">Preview</button>
+  </form>
+</div>
+{% endblock %}

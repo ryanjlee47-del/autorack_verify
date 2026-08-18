@@ -1,0 +1,203 @@
+/* Marketing landing page: calm, dense, data-forward. Sells money saved,
+   not "warehouse technology". */
+
+body.marketing {
+  font-family: var(--font-body);
+  background: var(--concrete);
+  color: var(--ink);
+  margin: 0;
+}
+
+.mkt-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1.1rem 2rem;
+  background: var(--chrome-bg);
+  color: var(--chrome-fg);
+}
+.mkt-nav .brand {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--safety-yellow);
+  font-size: 1.15rem;
+}
+.mkt-nav a.btn { margin-left: 0.75rem; }
+
+.mkt-hero {
+  padding: 4.5rem 2rem 3.5rem;
+  max-width: 62rem;
+  margin: 0 auto;
+  text-align: center;
+}
+.mkt-hero h1 {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  line-height: 1.05;
+  margin: 0 0 1rem 0;
+}
+.mkt-hero p.sub {
+  font-size: 1.2rem;
+  color: var(--steel-light);
+  max-width: 38rem;
+  margin: 0 auto 2rem auto;
+}
+.mkt-hero .cta-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+.mkt-hero .btn-big { font-size: 1.05rem; padding: 0.8em 1.8em; }
+
+.mkt-section {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 2.5rem 2rem;
+}
+.mkt-section h2 {
+  font-size: 1.4rem;
+  margin-bottom: 1.25rem;
+}
+
+.mkt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1.25rem;
+}
+.mkt-card {
+  background: var(--white);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 1.3rem 1.4rem;
+}
+.mkt-card h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.02rem;
+}
+.mkt-card p {
+  margin: 0;
+  color: var(--steel-light);
+  font-size: 0.92rem;
+}
+
+.mkt-pricing {
+  background: var(--chrome-bg);
+  color: var(--chrome-fg);
+  border-radius: var(--radius-md);
+  padding: 2.5rem 2rem;
+  text-align: center;
+}
+.mkt-pricing .price-number {
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 6vw, 3.6rem);
+  color: var(--safety-yellow);
+  line-height: 1;
+}
+/* These sit on the always-dark pricing panel, so they take the chrome
+   muted tone rather than --steel-light (tuned for light card surfaces)
+   or the old hardcoded #cfd3d9 (which became near-invisible once the
+   panel itself inverted under dark mode). */
+.mkt-pricing .price-label {
+  color: var(--chrome-muted);
+  font-size: 0.95rem;
+  margin-bottom: 1.5rem;
+}
+.mkt-pricing .price-detail {
+  max-width: 34rem;
+  margin: 1.25rem auto 0 auto;
+  font-size: 0.95rem;
+  color: var(--chrome-muted);
+}
+
+/* --- Team --- */
+
+.mkt-founder {
+  background: var(--white);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  border-left: 4px solid var(--safety-yellow);
+  padding: 1.4rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+.mkt-founder .person-name {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 1.05rem;
+  margin: 0 0 0.15rem 0;
+}
+.mkt-founder .person-role {
+  color: var(--steel-light);
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem 0;
+}
+.mkt-founder p.person-note {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--steel-light);
+}
+
+.mkt-advisors-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--steel-light);
+  margin: 0 0 0.75rem 0;
+}
+
+.mkt-advisor .person-name {
+  margin: 0 0 0.15rem 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+.mkt-advisor .person-role {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--steel-light);
+}
+
+.mkt-footer {
+  text-align: center;
+  padding: 2rem;
+  color: var(--steel-light);
+  font-size: 0.85rem;
+}
+
+/* ---------------------------------------------------------------------
+   Responsive. This file previously had no breakpoints at all -- the hero
+   and section padding stayed at 2rem and the nav stayed one row at every
+   width, so the landing page (the first thing anyone sees, often on a
+   phone) was cramped at the edges.
+   --------------------------------------------------------------------- */
+@media (max-width: 40rem) {
+  .mkt-nav {
+    padding: 0.9rem 1rem;
+  }
+  .mkt-nav a.btn {
+    margin-left: 0.4rem;
+  }
+
+  .mkt-hero {
+    padding: 2.75rem 1.25rem 2.25rem;
+  }
+  .mkt-hero p.sub {
+    font-size: 1.05rem;
+  }
+  .mkt-hero .cta-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .mkt-hero .btn-big {
+    width: 100%;
+  }
+
+  .mkt-section {
+    padding: 1.75rem 1.25rem;
+  }
+
+  .mkt-pricing {
+    padding: 1.75rem 1.25rem;
+  }
+}

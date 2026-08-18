@@ -1,0 +1,69 @@
+{% extends "owner_base.html" %}
+{% block title %}Workers -- Autorack Verify{% endblock %}
+{% block content %}
+<h1>Workers</h1>
+<p style="color:var(--steel-light)">
+  A high reject rate means a worker is frequently handed items that don't belong on the order --
+  each confirmed catch after your free allowance is a real per-catch fee. Workers see their own
+  scan counts at the end of every shift too; this isn't a hidden number.
+</p>
+
+{% if workers %}
+<div class="table-scroll">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Worker</th><th>Total scans</th><th>OK</th><th>Reject</th><th>Duplicate</th>
+        <th>Unresolved</th><th>Reject rate</th><th>Billed (net)</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in workers %}
+      <tr style="{{ 'opacity:0.5;' if not w.active }}">
+        <td>{{ w.display_name }}{% if not w.active %} <span class="badge badge-unresolved">inactive</span>{% endif %}</td>
+        <td>{{ w.total_scans }}</td>
+        <td>{{ w.ok_count }}</td>
+        <td>{{ w.reject_count }}</td>
+        <td>{{ w.duplicate_count }}</td>
+        <td>{{ w.unresolved_count }}</td>
+        <td>{{ w.reject_rate }}</td>
+        <td>{{ w.billed_amount }}</td>
+        <td>
+          <details>
+            <summary style="cursor:pointer; color:var(--steel-light); font-size:0.85rem;">Manage</summary>
+            <div style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.5rem; min-width:14rem;">
+              <form method="post" action="/workers/{{ w.id }}/rename" style="display:flex; gap:0.3rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="text" name="display_name" value="{{ w.display_name }}" style="width:8rem;">
+                <button class="btn btn-secondary" type="submit" style="padding:0.3em 0.6em; font-size:0.8rem;">Rename</button>
+              </form>
+              <form method="post" action="/workers/{{ w.id }}/toggle-active">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-secondary" type="submit" style="padding:0.3em 0.6em; font-size:0.8rem; width:100%;">
+                  {{ "Reactivate" if not w.active else "Deactivate" }}
+                </button>
+              </form>
+              {% if workers|length > 1 %}
+              <form method="post" action="/workers/{{ w.id }}/merge" onsubmit="return confirm('Merge {{ w.display_name }} into the selected worker? This cannot be undone.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <select name="into_worker_id" style="width:100%; margin-bottom:0.3rem;">
+                  <option value="">Merge into...</option>
+                  {% for other in workers if other.id != w.id %}
+                  <option value="{{ other.id }}">{{ other.display_name }}</option>
+                  {% endfor %}
+                </select>
+                <button class="btn btn-danger" type="submit" style="padding:0.3em 0.6em; font-size:0.8rem; width:100%;">Merge</button>
+              </form>
+              {% endif %}
+            </div>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">No workers have scanned yet.</div>
+{% endif %}
+{% endblock %}

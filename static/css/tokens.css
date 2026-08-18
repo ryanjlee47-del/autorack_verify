@@ -1,0 +1,184 @@
+/*
+  Autorack Verify design tokens.
+
+  Visual identity comes from the warehouse itself: dock doors, pallet
+  labels, stenciled floor markings, manifest clipboards -- not generic
+  SaaS. Deliberately not cream/serif/terracotta, and not dark-neon.
+
+  Palette (named, defensible):
+    --concrete       light warehouse-floor grey -- the base surface
+    --ink            near-black stencil ink -- primary text
+    --steel          cool blue-grey -- borders, secondary UI, chrome
+    --safety-yellow  hazard-stripe yellow -- primary brand accent / CTAs
+    --dock-orange    loading-dock orange -- secondary accent, used sparingly
+    --verified-green -- OK scan result
+    --reject-red     -- REJECT scan result
+    --duplicate-amber -- DUPLICATE scan result
+
+  Two token families deliberately do NOT flip with the color scheme:
+
+    --chrome-bg / --chrome-fg
+      Surfaces that are dark *by design*, not "dark because the OS asked":
+      the owner sidebar, the login backdrop, the marketing nav and pricing
+      panel, the worker join/camera-off/summary screens. These were
+      written as `background: var(--ink); color: var(--paper)`, which
+      silently inverted the moment --ink/--paper swapped for dark mode --
+      a light sidebar with pale-yellow-on-cream branding. They are their
+      own thing, so they get their own tokens.
+
+    --on-accent
+      Text sitting on a fixed-hue accent (--safety-yellow above all).
+      Yellow is the same yellow in both schemes, so its foreground must
+      be near-black in both schemes. Using --ink here is what turned
+      "START SHIFT" into pale-on-yellow after dark.
+
+  Type: system font stacks only, on purpose. The worker PWA must render
+  correctly after 8 hours offline in airplane mode -- a CDN webfont would
+  silently fail that promise on first load without a network trip to
+  precache it. Heavy weight + uppercase + letterspacing on the display
+  stack does the "stencilled signage" work instead of a custom font.
+*/
+
+:root {
+  --concrete: #e4e2dc;
+  --concrete-dark: #cfccc4;
+  --ink: #14171a;
+  --steel: #3d4552;
+  --steel-light: #6b7280;
+  --safety-yellow: #f4b400;
+  --dock-orange: #b8430b;
+  --verified-green: #1e7d3c;
+  --reject-red: #c62828;
+  --duplicate-amber: #955300;
+  --paper: #f4f3ef;
+  --white: #ffffff;
+
+  /* Intentionally-dark chrome; identical in the dark block below. */
+  --chrome-bg: #14171a;
+  --chrome-fg: #f4f3ef;
+  --chrome-muted: #a8b0bb;
+  --chrome-hover: rgba(244, 180, 0, 0.16);
+
+  /* Foreground for text on --safety-yellow / --dock-orange / any fixed accent. */
+  --on-accent: #14171a;
+
+  --link: #1d5fa8;
+  --banner-bg: #fff4dd;
+  --banner-border: var(--dock-orange);
+  --banner-fg: #7a3d0f;
+
+  --font-display: "Arial Black", "Helvetica Neue", ui-sans-serif, Arial, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --shadow-card: 0 1px 2px rgba(20, 23, 26, 0.08), 0 1px 1px rgba(20, 23, 26, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --concrete: #1c1f22;
+    --concrete-dark: #14171a;
+    --ink: #edece7;
+    --steel: #9aa3af;
+    /* Was #6b7280 in both schemes -- fine on white, ~2.9:1 on the dark
+       card surface, i.e. below AA for the body copy and stat-tile labels
+       that use it. Lightened for dark only. */
+    --steel-light: #9ba3ae;
+    --paper: #24272b;
+    --white: #2a2d31;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 1px rgba(0, 0, 0, 0.3);
+
+    /* --chrome-*, --on-accent: deliberately unchanged from :root. See the
+       header note -- these are the tokens whose whole job is to survive
+       the scheme switch. */
+    --link: #7cb0ee;
+    --banner-bg: #3a2c14;
+    --banner-fg: #f2d9b0;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--concrete);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+.stencil {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 900;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/*
+  Buttons live here, not in owner.css, for two reasons:
+
+  1. marketing.html loads tokens.css + marketing.css only -- it never
+     loaded owner.css, where .btn used to be defined. So every CTA on the
+     landing page ("Start free", "See pricing", "Log in") rendered as a
+     bare underlined browser link, while marketing.css styled *modifiers*
+     (.mkt-nav a.btn, .mkt-hero .btn-big) of a base class that wasn't
+     there. This is the fix for that.
+  2. static/js/worker/sw.js precaches an explicit SHELL_ASSETS list that
+     already contains tokens.css and worker.css. A separate components.css
+     would have to be added there (and CACHE_NAME bumped) or the worker
+     PWA renders unstyled offline -- the one thing this app promises. Every
+     template that loads any stylesheet loads tokens.css first, so putting
+     shared rules here costs no <link> change and no cache change.
+*/
+.btn {
+  display: inline-block;
+  padding: 0.55em 1.1em;
+  border-radius: var(--radius-sm);
+  background: var(--safety-yellow);
+  color: var(--on-accent);
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-family: inherit;
+  line-height: 1.2;
+  text-align: center;
+}
+.btn:hover { background: #d9a100; }
+
+.btn-secondary {
+  background: transparent;
+  border: 2px solid var(--steel);
+  color: var(--steel);
+}
+.btn-secondary:hover {
+  background: var(--steel);
+  color: var(--white);
+}
+
+.btn-danger {
+  background: var(--reject-red);
+  color: #ffffff;
+}
+.btn-danger:hover { background: #a81f1f; }
+
+/* Keyboard focus was entirely unstyled, and several components set
+   `outline: none` on hover states. A visible, high-contrast ring that
+   works on both the light surfaces and the dark chrome. */
+:focus-visible {
+  outline: 3px solid var(--safety-yellow);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

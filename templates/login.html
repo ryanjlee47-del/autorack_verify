@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in -- Autorack Verify</title>
+  <link rel="icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/owner.css">
+</head>
+<body class="owner">
+  <div class="login-shell">
+    <div class="login-card">
+      <h1 class="stencil" style="font-size:1.3rem; margin-top:0;">Autorack Verify</h1>
+      {# This page is standalone (it does not extend owner_base.html, which
+         has the nav chrome a logged-out visitor shouldn't see), so it has
+         to render flashed messages itself -- otherwise anything that
+         redirects here with an explanation, such as a dead email
+         verification link, fails silently. #}
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          {% for m in messages %}<div class="warning-banner">{{ m }}</div>{% endfor %}
+        {% endif %}
+      {% endwith %}
+      {% if error %}<div class="warning-banner">{{ error }}</div>{% endif %}
+      <form method="post" action="/login">
+        <div class="form-field">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" required autofocus value="{{ email or '' }}">
+        </div>
+        <div class="form-field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" required>
+        </div>
+        <button class="btn" type="submit" style="width:100%;">Log in</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

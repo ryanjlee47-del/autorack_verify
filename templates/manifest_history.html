@@ -1,0 +1,61 @@
+{% extends "owner_base.html" %}
+{% block title %}History: {{ manifest.ref }} -- Autorack Verify{% endblock %}
+{% block content %}
+<h1>History: {{ manifest.ref }}</h1>
+<p style="color:var(--steel-light)">
+  <a href="/manifests/{{ manifest.id }}">&larr; Back to manifest</a>
+</p>
+<p style="color:var(--steel-light); font-size:0.85rem;">
+  Every commit and line change against this manifest, newest first. This is the same audit_log every privileged
+  action in Autorack Verify writes to -- nothing here is reconstructed after the fact.
+</p>
+
+{% set action_labels = {
+  "manifest.commit": "Manifest committed",
+  "manifest_line.add": "Line added",
+  "manifest_line.edit": "Line edited",
+  "manifest_line.delete": "Line deleted",
+} %}
+{% set diff_fields = ["sku", "description", "qty_expected", "raw_barcode"] %}
+
+{% if entries %}
+<div class="table-scroll">
+  <table class="data-table">
+    <thead><tr><th>When</th><th>Action</th><th>By</th><th>Details</th></tr></thead>
+    <tbody>
+      {% for e in entries %}
+      {% set before = e.before_json | from_json %}
+      {% set after = e.after_json | from_json %}
+      <tr>
+        <td style="white-space:nowrap;">{{ e.created_at | localtime }}</td>
+        <td><span class="badge badge-unresolved">{{ action_labels.get(e.action, e.action) }}</span></td>
+        <td>{{ e.actor }}</td>
+        <td class="mono" style="font-size:0.85rem;">
+          {% if e.action == "manifest.commit" and after %}
+            &ldquo;{{ after.ref }}&rdquo; -- {{ after.line_count }} line{{ "s" if after.line_count != 1 }}{% if after.source_filename %} (from {{ after.source_filename }}){% endif %}
+          {% elif e.action == "manifest_line.add" and after %}
+            added {{ after.sku or "(no SKU)" }} -- barcode {{ after.raw_barcode }}
+          {% elif e.action == "manifest_line.delete" and before %}
+            removed {{ before.sku or before.raw_barcode }}{% if before.description %} -- {{ before.description }}{% endif %}
+          {% elif e.action == "manifest_line.edit" and before %}
+            {% set ns = namespace(any=false) %}
+            {% for field in diff_fields %}
+              {% if after and before.get(field) != after.get(field) %}
+                {% set ns.any = true %}
+                {{ field }}: {{ before.get(field) }} &rarr; {{ after.get(field) }}<br>
+              {% endif %}
+            {% endfor %}
+            {% if not ns.any %}(no field changes recorded){% endif %}
+          {% else %}
+            --
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">No history recorded for this manifest yet.</div>
+{% endif %}
+{% endblock %}

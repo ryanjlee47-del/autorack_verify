@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savings report -- {{ account_name }}</title>
+<style>
+  /* Standalone report: no external stylesheet references (this file is
+     opened directly as file:// or printed to PDF), so the palette used
+     everywhere else in the app is inlined here instead of linked. */
+  :root {
+    --concrete: #e4e2dc;
+    --ink: #14171a;
+    --steel: #3d4552;
+    --steel-light: #6b7280;
+    --safety-yellow: #f4b400;
+    --verified-green: #1e7d3c;
+    --paper: #f4f3ef;
+    --white: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2.5rem;
+    background: var(--concrete);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .sheet {
+    max-width: 46rem;
+    margin: 0 auto;
+    background: var(--white);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(20,23,26,0.08), 0 1px 1px rgba(20,23,26,0.06);
+    padding: 2.5rem;
+  }
+  .brand {
+    font-family: "Arial Black", "Helvetica Neue", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.95rem;
+    color: var(--steel-light);
+    margin-bottom: 0.25rem;
+  }
+  h1 {
+    margin: 0 0 0.25rem 0;
+    font-size: 1.6rem;
+  }
+  .meta {
+    color: var(--steel-light);
+    font-size: 0.85rem;
+    margin-bottom: 2rem;
+  }
+  .headline {
+    background: var(--ink);
+    color: var(--paper);
+    border-radius: 8px;
+    padding: 1.75rem;
+    text-align: center;
+    margin-bottom: 1.5rem;
+  }
+  .headline .value {
+    font-family: "Arial Black", "Helvetica Neue", sans-serif;
+    font-size: 2.6rem;
+    color: var(--safety-yellow);
+    line-height: 1;
+  }
+  .headline .label {
+    color: #cfd3d9;
+    font-size: 0.9rem;
+    margin-top: 0.4rem;
+  }
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .stat-tile {
+    background: var(--concrete);
+    border-radius: 6px;
+    padding: 1rem;
+    text-align: center;
+  }
+  .stat-tile .value {
+    font-size: 1.4rem;
+    font-weight: 700;
+  }
+  .stat-tile .label {
+    font-size: 0.75rem;
+    color: var(--steel-light);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-top: 0.2rem;
+  }
+  h2 {
+    font-size: 1.05rem;
+    margin: 2rem 0 0.75rem 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--concrete);
+  }
+  th {
+    color: var(--steel-light);
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+  }
+  .empty {
+    color: var(--steel-light);
+    font-style: italic;
+    padding: 1rem 0;
+  }
+  .footer {
+    margin-top: 2rem;
+    font-size: 0.75rem;
+    color: var(--steel-light);
+    border-top: 1px solid var(--concrete);
+    padding-top: 1rem;
+  }
+  @media print {
+    body { background: white; padding: 0; }
+    .sheet { box-shadow: none; max-width: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="brand">Autorack Verify</div>
+    <h1>Savings report</h1>
+    <div class="meta">{{ account_name }} &middot; generated {{ generated_at }}</div>
+
+    <div class="headline">
+      <div class="value">{{ savings }}</div>
+      <div class="label">estimated money saved to date, from {{ catches }} caught mis-ship{{ "es" if catches != 1 else "" }}</div>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <div class="value">{{ catches }}</div>
+        <div class="label">Mis-ships caught</div>
+      </div>
+      <div class="stat-tile">
+        <div class="value">{{ free_allowance }}</div>
+        <div class="label">Free allowance</div>
+      </div>
+      <div class="stat-tile">
+        <div class="value">{{ net_owed }}</div>
+        <div class="label">Net amount owed</div>
+      </div>
+    </div>
+
+    <p style="color:var(--steel-light); font-size:0.85rem;">
+      {{ price_per_catch }} per catch after the free allowance. Savings above is an estimated cost of a
+      mis-ship avoided (item, return freight, replacement, labor) -- distinct from what was actually billed.
+    </p>
+
+    <h2>By worker</h2>
+    {% if workers %}
+    <table>
+      <thead>
+        <tr><th>Worker</th><th>Scans</th><th>Caught</th><th>Reject rate</th><th>Billed</th></tr>
+      </thead>
+      <tbody>
+        {% for w in workers %}
+        <tr>
+          <td>{{ w.display_name }}</td>
+          <td>{{ w.total_scans }}</td>
+          <td>{{ w.reject_count }}</td>
+          <td>{{ w.reject_rate }}</td>
+          <td>{{ w.billed_amount }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No workers have scanned yet.</div>
+    {% endif %}
+
+    <div class="footer">
+      Generated by the Autorack Verify operator GUI. Figures reflect all activity recorded for this
+      account as of the generation time above.
+    </div>
+  </div>
+</body>
+</html>
