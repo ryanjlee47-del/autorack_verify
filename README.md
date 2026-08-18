@@ -13,8 +13,6 @@ Built for 10–60 workers and no IT staff. A shift needs one printed QR code on
 the wall and phones the workers already own. Billing is per error caught: a
 number of free catches, then a flat rate per prevented mis-ship.
 
-![Entity-relationship diagram](docs/erd.png)
-
 ## Contents
 
 - [How a shift works](#how-a-shift-works)
