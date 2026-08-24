@@ -216,11 +216,6 @@ read from `data/secret_key` (mode `0600`, created on first run) so every
 worker process agrees on it; CSRF tokens derive from it. Login/signup rate
 limiting is stored in the database rather than per-process memory.
 
-Before exposing signup to the internet: put real TLS in front of it, run
-`pip-audit -r requirements.txt` as part of releases, get an independent
-security review, decide how signups are gated (no email verification ships
-by default), and keep `data/` off any public host path.
-
 ## Operator GUI
 
 ```bash
