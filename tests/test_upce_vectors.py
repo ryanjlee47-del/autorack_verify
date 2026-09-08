@@ -17,6 +17,8 @@ two independent sources instead of re-deriving the same rule twice:
 
 import pytest
 
+import barcode
+import seed
 from barcode import compute_check_digit, gtin_canonicalize, upce_to_upca
 
 
@@ -113,3 +115,66 @@ def test_check_digit_matches_gs1_mod10_known_value():
     # Body "03600029145" -> published GTIN/UPC check digit 2 (widely used
     # generic example in GS1 check-digit documentation/tools).
     assert compute_check_digit("03600029145") == "2"
+
+
+# ---------------------------------------------------------------------------
+# The seeded demo data (finding G, and the third item in §H)
+# ---------------------------------------------------------------------------
+
+
+def test_seeded_upce_is_a_real_upce_code():
+    """seed._upce_case012 emitted its digits in the EXPANSION's order --
+    n s1 s2 s6 s3 s4 s5 -- putting S6 fourth. A UPC-E code is
+    N S1 S2 S3 S4 S5 S6 C, S6 last. The "genuine UPC-E compressed code" the
+    demo advertised was therefore not one: it expanded to 043156000074
+    rather than the intended 043100005674.
+    """
+    upce = seed._upce_case012(0, 4, 3, 1, 5, 6, 7)
+    assert len(upce) == 8
+    # Round-trips through the engine's own expansion, which is the
+    # definition this must agree with.
+    assert barcode.upce_to_upca(upce) == "043100005674"
+    # And its check digit is real.
+    assert barcode.compute_check_digit(barcode.upce_to_upca(upce)[:-1]) == upce[-1]
+
+
+def test_seeded_electronics_gs1_lines_are_valid_gtin_lengths():
+    """_gtin_from_body11 was called with a 12-digit body (mfr is 6 digits in
+    the electronics rows, 5 in the grocery ones), returning 13 digits. So
+    "(01)00" + that overran AI 01's fixed 14-digit field, and the
+    "unserialized twin" was 15 digits -- not a GTIN length at all. The two
+    lines documented as demonstrating GTIN-tier collapsing shared no keys.
+    """
+    rows = seed._electronics_manifest_rows()
+    serialized = next(r for r in rows if r["raw_barcode"].startswith("(01)"))
+    twin = next(
+        r
+        for r in rows
+        if r["sku"] == serialized["sku"]
+        and r is not serialized
+        and not r["raw_barcode"].startswith("(01)")
+    )
+    assert len(twin["raw_barcode"]) == 14, twin["raw_barcode"]
+
+    shared = {
+        tier
+        for tier, key in barcode.normalize(serialized["raw_barcode"]).keys.items()
+        if barcode.normalize(twin["raw_barcode"]).keys.get(tier) == key
+    }
+    assert barcode.Tier.GTIN14 in shared, "the twin lines must collapse to one GTIN"
+
+
+def test_seeded_upce_and_upca_lines_collapse_to_the_same_gtin():
+    """The demo's stated purpose: a UPC-E line and its UPC-A form on a
+    *different* manifest line, collapsing at the GTIN tier. The UPC-A
+    companion line did not exist -- the comment described a pair the code
+    never produced."""
+    rows = seed._electronics_manifest_rows()
+    upce_row = next(r for r in rows if r["sku"] == "ELEC-COMPRESSED-1")
+    upca_row = next(r for r in rows if r["sku"] == "ELEC-COMPRESSED-1-UPCA")
+    assert len(upce_row["raw_barcode"]) == 8
+    assert len(upca_row["raw_barcode"]) == 12
+
+    upce_keys = barcode.normalize(upce_row["raw_barcode"]).keys
+    upca_keys = barcode.normalize(upca_row["raw_barcode"]).keys
+    assert upce_keys[barcode.Tier.GTIN14] == upca_keys[barcode.Tier.GTIN14]

@@ -1655,8 +1655,12 @@ class AccountsTab(ttk.Frame):
                 "plan": self.detail_vars["plan"].get(),
                 "price_per_catch_cents": int(self.detail_vars["price_per_catch_cents"].get()),
                 "free_allowance": int(self.detail_vars["free_allowance"].get()),
-                "loose_suffix_len": max(
-                    int(self.detail_vars["loose_suffix_len"].get()), barcode.MIN_SUFFIX_LEN
+                # Clamped at both ends -- see admin_api.MAX_SUFFIX_LEN. The
+                # API validates and the database enforces; this just keeps the
+                # GUI from sending a value it already knows will be refused.
+                "loose_suffix_len": min(
+                    max(int(self.detail_vars["loose_suffix_len"].get()), barcode.MIN_SUFFIX_LEN),
+                    admin_api.MAX_SUFFIX_LEN,
                 ),
                 "loose_match_enabled": int(self.loose_match_var.get()),
                 "worker_self_resolve": int(self.worker_self_resolve_var.get()),

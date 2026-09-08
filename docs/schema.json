@@ -822,6 +822,20 @@
         "not_null": false,
         "pk": false,
         "type": "TEXT"
+      },
+      {
+        "fk": false,
+        "name": "bundle_version_issued",
+        "not_null": true,
+        "pk": false,
+        "type": "INTEGER"
+      },
+      {
+        "fk": false,
+        "name": "ended_at",
+        "not_null": false,
+        "pk": false,
+        "type": "TEXT"
       }
     ],
     "foreign_keys": [

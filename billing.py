@@ -47,6 +47,20 @@ def confirm_exception_as_billable_catch(conn, account_id: int, scan_uuid: str) -
 
 
 def _insert_catch(conn, account_id: int, scan_uuid: str) -> int:
+    # BEGIN IMMEDIATE, not the default deferred BEGIN: this counts existing
+    # catches and then inserts based on that count, and under a deferred
+    # transaction the count runs before any write lock is taken. Two
+    # concurrent /w/sync batches landing at the free-allowance boundary both
+    # observed `already_billed < free_allowance` and both charged zero.
+    #
+    # If a caller already opened a transaction this joins it (db.transaction
+    # is re-entrant), so callers doing read-then-write on billing state must
+    # request `immediate=True` at their own outermost level -- w_sync does.
+    with db.transaction(conn, immediate=True):
+        return _insert_catch_locked(conn, account_id, scan_uuid)
+
+
+def _insert_catch_locked(conn, account_id: int, scan_uuid: str) -> int:
     already_billed = db.count_billable_catches(conn, account_id)
     account = db.get_account(conn, account_id)
     if account is None:
@@ -113,7 +127,15 @@ def net_amount_owed_cents(
     # Credits follow the same window as the events they offset -- see
     # db.total_credit_cents.
     total -= db.total_credit_cents(conn, account_id, start, end)
-    return max(total, 0)
+    # Signed, deliberately. This used to return max(total, 0), which meant a
+    # credit larger than the current balance was silently discarded rather
+    # than carried forward -- a goodwill credit issued in a quiet month
+    # simply evaporated. A negative result is a real answer: credit the
+    # account holds and has not yet used, and pricing.format_cents_as_dollars
+    # already renders the sign. Anything that eventually produces an invoice
+    # (nothing does yet; billing_events.invoice_id is unwritten) must clamp at
+    # its own boundary and carry the remainder, not lose it here.
+    return total
 
 
 def savings_to_date_cents(conn, account_id: int) -> int:

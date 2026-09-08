@@ -99,9 +99,3 @@ FROM manifest_lines ml
 JOIN manifests m ON m.id = ml.manifest_id
 WHERE ml.id = ?
   AND m.account_id = ?;
-
--- name: get_manifest_line_label
--- Just enough to label a line in the live floor view. Deliberately not
--- SELECT *: this runs per scan in a polling view, and the raw barcode
--- and key data are not needed to draw a row.
-SELECT sku, description FROM manifest_lines WHERE id = ?;

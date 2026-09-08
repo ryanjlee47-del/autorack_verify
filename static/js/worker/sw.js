@@ -7,7 +7,13 @@
 // them would risk serving stale data as if it were current, which is
 // exactly the kind of silent staleness this whole architecture exists to
 // avoid.
-var CACHE_NAME = "autorack-shell-v3";
+
+// Stamped by the server at request time from a hash of the shell assets
+// themselves -- see app.py's /w/sw.js route. It was a hand-bumped literal,
+// which meant shipping a fix and forgetting the bump left every phone on
+// the old code indefinitely. The literal below is the fallback when this
+// file is read directly (tests, or serving it as a static file).
+var CACHE_NAME = "autorack-shell-__SHELL_VERSION__";
 var SHELL_ASSETS = [
   "/static/css/tokens.css",
   "/static/css/worker.css",
@@ -103,6 +109,39 @@ self.addEventListener("fetch", function (event) {
   var url = new URL(event.request.url);
   if (event.request.method !== "GET" || isNetworkOnly(url)) {
     return; // let the browser handle it directly against the network
+  }
+
+  // The matching engine is network-first, everything else is cache-first.
+  //
+  // barcode.js must agree with barcode.py byte for byte -- that is what the
+  // parity suite exists to enforce. Serving it cache-first meant a deployed
+  // engine fix ran against the OLD cached engine for a page load, producing
+  // exactly the server/phone divergence the parity tests prevent, arriving
+  // through the cache instead of through the code. A phantom reject is a
+  // billable event nobody earned, so one page load matters.
+  //
+  // The cache is still the fallback, so an offline phone is unaffected: this
+  // costs one network round trip when online and nothing when not. Nothing
+  // else gets this treatment -- CSS, icons and vendored ZXing have no
+  // cross-language contract to keep, and making them network-first would slow
+  // every cold start on dock wifi for no correctness gain.
+  if (url.pathname === "/static/js/barcode.js") {
+    event.respondWith(
+      fetch(event.request).then(function (resp) {
+        if (resp.ok) {
+          var copy = resp.clone();
+          caches.open(CACHE_NAME).then(function (cache) {
+            cache.put(event.request, copy);
+          });
+        }
+        return resp;
+      }).catch(function () {
+        return caches.match(event.request).then(function (cached) {
+          return cached || new Response("", { status: 503, statusText: "Offline" });
+        });
+      })
+    );
+    return;
   }
 
   if (url.pathname.startsWith("/static/") || url.pathname === "/w/manifest.webmanifest") {

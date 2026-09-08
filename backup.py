@@ -15,6 +15,21 @@ WAL mode with other connections actively reading/writing -- no need to
 stop the server first. The photos half is a plain zip of whatever's in
 appeal_photos/ at that moment (photo files are write-once after upload,
 so there's no equivalent "hot backup" concern there).
+
+Restore is NOT the mirror image of that, and the "safe against a live
+database" claim above applies only to the backup half. restore_backup()
+overwrites the database file underneath whatever is reading it: in-flight
+queries can observe a partially-copied file, and any cache derived from
+the old one (manifest_ingest's match index, most of all) keeps serving
+pre-restore data afterwards. Its own docstring states the precondition --
+no other process holding the database open -- and for a long time nothing
+enforced it, because /restore called it from inside the running Flask app.
+
+admin_api.run_restore is now the only caller that matters, and it holds
+maintenance.restoring() across the swap: in-flight requests drain, new
+ones get 503, and the derived caches are dropped when it completes. That
+covers this process. It cannot cover a sibling gunicorn worker or an
+operator's script, which remains an operational requirement.
 """
 
 from __future__ import annotations
@@ -170,9 +185,14 @@ def list_photo_backups(backup_dir: Path | str | None = None) -> list[Path]:
 
 
 def restore_backup(backup_path: Path | str, db_path: Path | str | None = None) -> None:
-    """Restore a database backup file over the live database. The caller
-    is responsible for making sure no other process holds the database
-    open when this runs -- this does not stop the server."""
+    """Restore a database backup file over the live database.
+
+    The caller is responsible for making sure no other process holds the
+    database open when this runs -- this does not stop the server. Within a
+    single process, admin_api.run_restore enforces the in-process half of
+    that with maintenance.restoring(); across processes it is still an
+    operational requirement. See this module's docstring.
+    """
     backup_path = Path(backup_path)
     db_path = Path(db_path) if db_path else db.DEFAULT_DB_PATH
     if not backup_path.exists():

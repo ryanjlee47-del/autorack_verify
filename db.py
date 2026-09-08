@@ -20,7 +20,7 @@ import json
 import secrets
 import sqlite3
 from collections.abc import Iterable, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -114,7 +114,7 @@ def set_read_only(conn: sqlite3.Connection, read_only: bool = True) -> None:
 
 
 @contextmanager
-def transaction(conn: sqlite3.Connection):
+def transaction(conn: sqlite3.Connection, immediate: bool = False):
     """Group several writes into one atomic unit.
 
     Connections run with isolation_level=None (autocommit), so without
@@ -124,11 +124,24 @@ def transaction(conn: sqlite3.Connection):
     Re-entrant: a nested `with transaction(conn)` joins the outer one
     rather than failing on SQLite's "cannot start a transaction within a
     transaction".
+
+    `immediate=True` issues BEGIN IMMEDIATE, taking the write lock up
+    front instead of on the first write. Required whenever the transaction
+    READS a value and then WRITES based on it. A plain BEGIN is deferred:
+    the read runs with no lock held, so two concurrent transactions can
+    both observe the same pre-state and both act on it. billing's free
+    allowance is the live instance -- count_billable_catches() followed by
+    an insert meant two syncs arriving at the allowance boundary could both
+    see `already_billed < free_allowance` and both charge zero.
+
+    Note that a nested call cannot upgrade an already-open deferred
+    transaction; the outermost `with` is the one that decides. Callers that
+    need the lock must therefore ask for it at the outer level.
     """
     if conn.in_transaction:
         yield conn
         return
-    conn.execute("BEGIN")
+    conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
     try:
         yield conn
     except BaseException:
@@ -157,6 +170,10 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
         # explicit `autocommit` attribute gives real manual transaction
         # control that DDL participates in, so the whole migration file
         # applies atomically -- a mid-script failure rolls back cleanly.
+        #
+        # This makes 3.12 a hard runtime floor for the whole application, not
+        # just a lint target. Stated in the README's "Running it locally"
+        # section, which is where someone provisioning a box will look.
         conn.autocommit = False
         try:
             conn.executescript(sql)
@@ -692,11 +709,30 @@ def bump_manifest_bundle_version(conn, manifest_id: int) -> int:
 
 
 def add_alias(conn, account_id: int, normalized_key: str, sku: str, confirmed_by: str) -> int:
-    return execute(
-        conn,
-        SQL["aliases.add_alias"],
-        (account_id, normalized_key, sku, confirmed_by),
-    )
+    """Record an owner-taught alias, and invalidate everything that caches
+    the old answer.
+
+    Without the version bump the alias did nothing at all until some
+    unrelated event happened to bump it: phones never refetched, so they
+    kept classifying the same scan REJECT, and the server's
+    cached_match_index -- keyed on (shift, bundle_version) -- kept
+    confirming that reject from a pre-alias index and billing it. The whole
+    point of "remember this" is that the next identical scan resolves.
+
+    barcode.TIER_ORDER goes to some length to ensure an owner-taught alias
+    is not silently outranked by an automatic guess; that is solved at the
+    tier-ordering level, and was then reintroduced here at the
+    cache-invalidation level. regenerate_keys already does exactly this.
+    """
+    with transaction(conn):
+        alias_id = execute(
+            conn,
+            SQL["aliases.add_alias"],
+            (account_id, normalized_key, sku, confirmed_by),
+        )
+        for row in query(conn, SQL["aliases.shifts_touching_sku"], (account_id, sku)):
+            bump_shift_bundle_version(conn, row["id"])
+    return alias_id
 
 
 def list_aliases(conn, account_id: int) -> list[sqlite3.Row]:
@@ -800,6 +836,16 @@ def get_session_by_token(conn, token: str) -> sqlite3.Row | None:
     return query_one(conn, SQL["shifts.get_session_by_token"], (token,))
 
 
+def end_session(conn, session_id: int) -> None:
+    """Mark a worker session finished at logout.
+
+    Ended sessions can still sync queued scans and upload queued appeals --
+    see migrations/0009 for why -- but cannot open the scan page or fetch a
+    bundle.
+    """
+    execute(conn, SQL["shifts.end_session"], (session_id,))
+
+
 def touch_session(conn, session_id: int, clock_skew_ms: int | None = None) -> None:
     if clock_skew_ms is not None:
         execute(
@@ -813,6 +859,45 @@ def touch_session(conn, session_id: int, clock_skew_ms: int | None = None) -> No
             SQL["shifts.touch_session"],
             (session_id,),
         )
+
+
+def record_issued_bundle_version(conn, session_id: int, bundle_version: int) -> None:
+    """Remember which bundle version the server served to this session.
+
+    See sql/shifts.sql: this is the server's own record, and it is what
+    w_sync's billing gate reads. The bundleVersion a phone sends up is kept
+    on the scan row for forensics and decides nothing.
+    """
+    execute(
+        conn,
+        SQL["shifts.record_issued_bundle_version"],
+        (bundle_version, session_id),
+    )
+
+
+def manifest_line_qty_for_shift(conn, shift_id: int) -> dict[int, int]:
+    """{manifest_line_id: qty_expected} for every line this shift can contain.
+
+    One query per sync batch. Membership answers "is this id legitimate for
+    this shift" and the value answers "how many units before a repeat scan
+    is a duplicate", so neither question needs a per-scan lookup.
+    """
+    return {
+        row["id"]: (row["qty_expected"] or 1)
+        for row in query(conn, SQL["shifts.line_ids_for_shift"], (shift_id,))
+    }
+
+
+def line_scanned_count_for_shift(conn, shift_id: int, line_id: int, excluding_uuid: str) -> int:
+    """How many OK scans this shift already holds for a manifest line, across
+    every worker and every device -- the cross-worker duplicate check the
+    phone cannot perform, since its own view is one page load on one phone."""
+    row = query_one_required(
+        conn,
+        SQL["shifts.line_scanned_count_for_shift"],
+        (shift_id, line_id, excluding_uuid),
+    )
+    return int(row["n"])
 
 
 # ---------------------------------------------------------------------------
@@ -901,6 +986,20 @@ def count_open_exceptions(conn, account_id: int) -> int:
 def recent_scans(
     conn, account_id: int, limit: int = 200, after_id: str | None = None
 ) -> list[sqlite3.Row]:
+    """Newest scans for an account, with the manifest line label joined in.
+
+    `after_id` is a scan uuid: pass it to fetch only what has arrived since,
+    for incremental polling. It used to be accepted and then dropped on the
+    floor -- the query ran without it and returned the full window, so a
+    caller wiring up incremental polling would have got silently wrong
+    results rather than an error.
+    """
+    if after_id:
+        return query(
+            conn,
+            SQL["shifts.recent_scans_after"],
+            (account_id, after_id, limit),
+        )
     return query(
         conn,
         SQL["shifts.recent_scans"],
@@ -1131,8 +1230,36 @@ def count_rate_limit_events(conn, bucket: str, key: str, window_seconds: int) ->
     return row["n"] if row else 0
 
 
+# Anything older than this is outside every limiter's window and can never
+# affect a decision again. The longest window in the app is signup's one
+# hour (app.SIGNUP_WINDOW_SECONDS); the margin is generous on purpose, since
+# the only cost of keeping a row slightly too long is a few bytes.
+RATE_LIMIT_RETENTION_SECONDS = 24 * 3600
+
+# Purging on every single record would add a DELETE scan to every login
+# attempt. One in this many recorded events triggers the sweep instead --
+# frequent enough that the table stays bounded under any real traffic,
+# rare enough to be invisible.
+_RATE_LIMIT_PURGE_EVERY = 64
+_rate_limit_events_recorded = 0
+
+
 def record_rate_limit_event(conn, bucket: str, key: str) -> int:
-    return execute(conn, SQL["rate_limits.record_rate_limit_event"], (bucket, key))
+    """Record one limiter event, and occasionally sweep expired ones.
+
+    purge_expired_rate_limit_events existed, documented itself as the reason
+    the table does not grow without bound, and was called from nowhere at
+    all -- so rate_limit_events grew forever on every deployment. Calling it
+    from the only function that adds rows is what makes the docstring true.
+    """
+    global _rate_limit_events_recorded
+    row_id = execute(conn, SQL["rate_limits.record_rate_limit_event"], (bucket, key))
+    _rate_limit_events_recorded += 1
+    if _rate_limit_events_recorded % _RATE_LIMIT_PURGE_EVERY == 0:
+        # Housekeeping must never fail a login or a signup.
+        with suppress(sqlite3.Error):
+            purge_expired_rate_limit_events(conn, RATE_LIMIT_RETENTION_SECONDS)
+    return row_id
 
 
 def clear_rate_limit_events(conn, bucket: str, key: str) -> None:
@@ -1235,8 +1362,13 @@ def table_page(
         for col, val in filters.items():
             if col not in columns or val in (None, ""):
                 continue
-            where_clauses.append(f"{col} LIKE ?")
-            params.append(f"%{val}%")
+            # ESCAPE '\\' plus _escape_like, matching every other LIKE in
+            # this file: a filter value containing % or _ was being treated
+            # as a wildcard pattern instead of the literal text the operator
+            # typed. _escape_like was written 750 lines earlier for exactly
+            # this and this call site never used it.
+            where_clauses.append(f"{col} LIKE ? ESCAPE '\\'")
+            params.append(f"%{_escape_like(str(val))}%")
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
     count_row = conn.execute(f"SELECT COUNT(*) AS n FROM {table} {where_sql}", params).fetchone()

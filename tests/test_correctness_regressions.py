@@ -5,6 +5,7 @@ test exists to prevent from coming back.
 """
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -269,3 +270,56 @@ def test_merge_workers_is_atomic(tmp_path, monkeypatch):
     db.merge_workers(conn, drop, keep)
     assert db.get_worker(conn, drop) is None
     assert db.get_session(conn, drop_session)["worker_id"] == keep
+
+
+# ---------------------------------------------------------------------------
+# Invariants that span two files
+#
+# The review's closing observation: a comment asserting a guarantee is not
+# documentation, it is an unfinished feature. Each of these pins a coupling
+# that would otherwise exist only as a "keep these in step" comment.
+# ---------------------------------------------------------------------------
+
+
+def test_every_uploadable_photo_extension_has_a_mimetype():
+    """exception_photo served four accepted formats as image/jpeg because
+    the response handled two. A .webp answered as image/jpeg is a
+    user-supplied byte stream with a wrong Content-Type -- which is what
+    X-Content-Type-Options exists for, and it was not sent either."""
+    import app
+
+    assert set(app.ALLOWED_PHOTO_EXTS) == set(app.PHOTO_MIMETYPES), (
+        "every extension the upload accepts must have a Content-Type to serve it with"
+    )
+
+
+def test_shell_version_covers_every_cacheable_script_and_stylesheet():
+    """sw.js's CACHE_NAME is derived from a hash of the files listed in
+    app._SHELL_VERSION_SOURCES. Anything the service worker caches but that
+    list omits can change without busting the cache -- and for barcode.js
+    that means a deployed engine fix running against the old cached engine,
+    i.e. the server/phone divergence the parity suite exists to prevent,
+    arriving through the cache instead of through the code.
+
+    The two lists are deliberately not identical: the version sources
+    include sw.js itself and exclude the icons and the webmanifest (whose
+    bytes cannot affect matching). What must hold is containment of
+    everything executable or styleable.
+    """
+    import re
+
+    import app
+
+    root = Path(__file__).parent.parent
+    sw_source = (root / "static" / "js" / "worker" / "sw.js").read_text()
+    listed = re.search(r"var SHELL_ASSETS = \[(.*?)\];", sw_source, re.S)
+    assert listed, "could not find SHELL_ASSETS in sw.js"
+    cached = {m.group(1) for m in re.finditer(r'"(/static/[^"]+)"', listed.group(1))}
+    code_assets = {a for a in cached if a.endswith((".js", ".css"))}
+    assert code_assets, "sanity: sw.js must cache some code"
+
+    versioned = {"/" + rel for rel in app.SHELL_VERSION_SOURCES}
+    missing = code_assets - versioned
+    assert not missing, (
+        f"cached but not version-tracked, so a fix to it never busts the cache: {missing}"
+    )

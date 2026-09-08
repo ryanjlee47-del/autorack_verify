@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import io
 import json
+import os
 import re
 import secrets
 import sqlite3
@@ -26,6 +27,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 import segno
 from flask import (
@@ -47,6 +49,7 @@ import barcode
 import billing
 import db
 import i18n
+import maintenance
 import manifest_ingest
 import pricing
 import tz
@@ -63,7 +66,44 @@ UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
+# Files whose contents determine the service worker's shell cache version --
+# see the /w/sw.js route. Anything sw.js caches that is missing from here can
+# change without invalidating the cache, and for barcode.js that means a
+# deployed engine fix running against the old cached engine.
+#
+# Deliberately not identical to sw.js's SHELL_ASSETS: this includes sw.js
+# itself (its own behaviour is part of the shell) and excludes the icons and
+# the webmanifest, whose bytes cannot affect matching. The containment that
+# does matter -- every cached .js and .css appears here -- is asserted by
+# tests/test_correctness_regressions.py rather than left to this comment.
+SHELL_VERSION_SOURCES = (
+    "static/css/tokens.css",
+    "static/css/worker.css",
+    "static/js/barcode.js",
+    "static/js/vendor/zxing.min.js",
+    "static/js/worker/i18n.js",
+    "static/js/worker/idb.js",
+    "static/js/worker/feedback.js",
+    "static/js/worker/scanner.js",
+    "static/js/worker/outbox.js",
+    "static/js/worker/appeals.js",
+    "static/js/worker/app.js",
+    "static/js/worker/sw.js",
+)
+
 ALLOWED_PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"}
+
+# One entry per accepted extension -- see exception_photo. Keep these in
+# step: an extension in ALLOWED_PHOTO_EXTS with no mimetype here is served
+# as application/octet-stream, which is safe but will not display.
+PHOTO_MIMETYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".webp": "image/webp",
+}
 
 # Mirrors the CHECK constraint on scans.result. Validated before insert so
 # a malformed sync entry is reported back to the client instead of raising
@@ -88,6 +128,10 @@ CSRF_EXEMPT_ENDPOINTS = frozenset(
         "w_join_submit",
         "w_sync",
         "w_appeal",
+        # Worker sessions are token-authenticated, not cookie-authenticated,
+        # so there is no ambient credential for a cross-site form to ride --
+        # the same reasoning as w_sync/w_appeal above.
+        "w_logout",
         "login_submit",
         "signup_submit",
         # Bearer-token authenticated, cookieless -- see admin_api.py. There's
@@ -114,6 +158,38 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
 # IP alone -- there's no prior identity to key on, by definition.
 SIGNUP_MAX_PER_IP = 3
 SIGNUP_WINDOW_SECONDS = 3600
+
+
+def _account_is_active(account) -> bool:
+    """/w/join refuses a suspended account. Every other worker route used to
+    let an already-joined session carry on regardless -- so a suspended
+    account kept downloading bundles, syncing scans and generating billing
+    events indefinitely, which is the one thing suspension is for."""
+    return account["status"] == "active"
+
+
+def _safe_next_url(candidate: str | None, fallback: str) -> str:
+    """Accept only a same-site, path-relative redirect target.
+
+    Rejects absolute URLs, scheme-relative "//evil.example" (which
+    urlparse reads as a netloc, not a path), backslash variants that
+    several browsers normalise into scheme-relative form ("/\\evil.example"
+    -> "//evil.example"), and anything carrying a scheme or host. Returns
+    `fallback` for everything it will not accept.
+    """
+    if not candidate:
+        return fallback
+    # Backslashes are checked before parsing: urlparse leaves them in the
+    # path, so "/\\evil.example" passes every test below while the browser
+    # treats it as a host. Nothing legitimate in this app's URLs contains one.
+    if "\\" in candidate:
+        return fallback
+    parsed = urlparse(candidate)
+    if parsed.scheme or parsed.netloc:
+        return fallback
+    if not candidate.startswith("/") or candidate.startswith("//"):
+        return fallback
+    return candidate
 
 
 def _scan_payload_is_valid(scan: object) -> bool:
@@ -144,6 +220,13 @@ def _load_or_create_secret_key(path: Path) -> str:
     anything keyed to it the moment the app restarts or runs under more
     than one worker: flashed messages vanish, and the CSRF tokens below
     would stop validating for sessions issued by a sibling process.
+
+    Created with O_CREAT|O_EXCL, not a plain write. Two workers starting
+    together (gunicorn --workers N on a first deploy) both find the file
+    absent, both mint a value, and both write -- so half the processes end
+    up with a different secret than the other half, and sessions/CSRF
+    tokens issued by one are rejected by the next. O_EXCL makes exactly one
+    writer win; the losers re-read what the winner wrote.
     """
     try:
         existing = path.read_text().strip()
@@ -153,7 +236,14 @@ def _load_or_create_secret_key(path: Path) -> str:
         pass
     key = secrets.token_hex(32)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(key)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        # Another process created it between our read and this open. Its
+        # value is the one everybody must use.
+        return path.read_text().strip()
+    with os.fdopen(fd, "w") as fh:
+        fh.write(key)
     # Best effort -- some filesystems (e.g. mounted shares) refuse chmod.
     # A key file the OS will not let us lock down is still better than no
     # key file, and the deployment docs cover file permissions separately.
@@ -241,6 +331,20 @@ def create_app(db_path=None, secret_key: str | None = None) -> Flask:
 
     app.csrf_token = csrf_token  # type: ignore[attr-defined]  # exposed for tests
     app.jinja_env.globals["csrf_token"] = csrf_token
+
+    @app.before_request
+    def _refuse_during_restore():
+        # A database restore replaces the file this process is reading. Serving
+        # a request mid-swap returns whatever the half-copied file happens to
+        # contain, so answer honestly instead. See maintenance.py and
+        # admin_api.run_restore.
+        if not maintenance.is_active():
+            return None
+        return (
+            "Maintenance: a database restore is in progress. Retry shortly.",
+            503,
+            {"Retry-After": str(maintenance.RETRY_AFTER_SECONDS)},
+        )
 
     @app.before_request
     def _require_csrf_token():
@@ -373,7 +477,12 @@ def register_worker_routes(app: Flask, get_db) -> None:
 
     @app.route("/w/lang/<lang>")
     def w_set_lang(lang):
-        next_url = request.args.get("next") or url_for("w_join_placeholder")
+        # Same-site only. This sits on a surface anonymous strangers reach by
+        # scanning a QR code taped to a dock door, so "low severity in
+        # isolation" is doing a lot of work -- an attacker-chosen next=
+        # turns our own domain into the referrer for their landing page.
+        # Only a path on this host is accepted; anything else falls back.
+        next_url = _safe_next_url(request.args.get("next"), url_for("w_join_placeholder"))
         resp = make_response(redirect(next_url))
         resp.set_cookie(
             LANG_COOKIE_NAME, i18n.normalize_lang(lang), max_age=365 * 24 * 3600, samesite="Lax"
@@ -435,7 +544,10 @@ def register_worker_routes(app: Flask, get_db) -> None:
         lang = resolve_lang()
         conn = get_db()
         sess = db.get_session_by_token(conn, sid) if sid else None
-        if not sess:
+        # An ended session must not reopen the scan screen. Logging out used
+        # to be purely client-side -- flush, summary, navigate -- so the token
+        # stayed live in browser history and on shared phones.
+        if not sess or sess["ended_at"]:
             return redirect(url_for("w_join_placeholder"))
         shift = _linked(db.get_shift(conn, sess["shift_id"]), "shift")
         account = _linked(db.get_account(conn, shift["account_id"]), "account")
@@ -458,13 +570,43 @@ def register_worker_routes(app: Flask, get_db) -> None:
         sess = db.get_session_by_token(conn, token)
         if not sess:
             return jsonify({"error": "session not found"}), 404
+        if sess["ended_at"]:
+            # Syncing queued scans still works after logout; acquiring a new
+            # bundle does not. See migrations/0009.
+            return jsonify({"error": "session ended"}), 403
         shift = _linked(db.get_shift(conn, sess["shift_id"]), "shift")
         if shift["revoked_at"]:
             return jsonify({"error": "shift revoked"}), 403
         account = _linked(db.get_account(conn, shift["account_id"]), "account")
+        if not _account_is_active(account):
+            return jsonify({"error": "account suspended"}), 403
         manifest_ids = db.get_shift_manifest_ids(conn, shift["id"])
         payload = manifest_ingest.bundle_payload(conn, account, shift, manifest_ids)
         payload["contentHash"] = manifest_ingest.content_hash(payload)
+
+        # shifts.bundle_hash was written at prepare time and then read by
+        # nothing at all -- an integrity check that never checked anything.
+        # Compare it here, on the one path that actually hands a bundle to a
+        # phone. A mismatch is expected and benign whenever the manifest has
+        # legitimately changed since prepare (bundle_version moves with it),
+        # so this records rather than refuses: refusing would take the dock
+        # offline for an edit the owner deliberately made. What it catches is
+        # a bundle changing WITHOUT a version bump, which is the corruption
+        # case and is otherwise completely silent.
+        served_content_hash = manifest_ingest.bundle_content_hash(payload)
+        if shift["bundle_version"] == 0 and served_content_hash != shift["bundle_hash"]:
+            app.logger.warning(
+                "bundle content differs from what was recorded at prepare time for "
+                "shift %s, with bundle_version still 0 (recorded=%s served=%s). "
+                "A legitimate manifest edit bumps bundle_version, so this means the "
+                "content moved without one.",
+                shift["id"],
+                shift["bundle_hash"],
+                served_content_hash,
+            )
+        # The server's own record of which version this session holds. The
+        # billing gate in w_sync reads this; it never reads the client's claim.
+        db.record_issued_bundle_version(conn, sess["id"], shift["bundle_version"])
 
         body = json.dumps(payload).encode()
         compressed = gzip.compress(body, compresslevel=6)
@@ -500,6 +642,21 @@ def register_worker_routes(app: Flask, get_db) -> None:
         shift_now = _linked(db.get_shift(conn, sess["shift_id"]), "shift")
         if shift_now["revoked_at"]:
             return jsonify({"error": "shift revoked"}), 403
+        sync_account = _linked(db.get_account(conn, shift_now["account_id"]), "account")
+        if not _account_is_active(sync_account):
+            return jsonify({"error": "account suspended"}), 403
+
+        # Which manifest lines this shift can legitimately refer to.
+        # manifestLineId arrives from the phone and used to be inserted with
+        # no check at all: a nonexistent id tripped the foreign key and 500ed
+        # the entire batch (which the outbox then retried forever), and a
+        # valid id belonging to ANOTHER account was stored and later rendered
+        # by floor_data, whose label lookup is not account-scoped either.
+        # {line_id: qty_expected}. One query for the batch, not one per scan.
+        shift_line_qty = db.manifest_line_qty_for_shift(conn, shift_now["id"])
+        # The version the SERVER issued to this session, not the one the
+        # phone claims. See sql/shifts.sql: record_issued_bundle_version.
+        issued_bundle_version = sess["bundle_version_issued"]
 
         server_now = _now_iso()
         skew_ms = None
@@ -525,43 +682,123 @@ def register_worker_routes(app: Flask, get_db) -> None:
                     rejected.append(uuid_val)
                 continue
 
+            # A manifestLineId the phone made up, or one from another
+            # account's manifest, is a malformed payload -- not a 500.
+            line_id = scan.get("manifestLineId")
+            if line_id is not None:
+                if not isinstance(line_id, int) or isinstance(line_id, bool):
+                    rejected.append(uuid_val)
+                    continue
+                if line_id not in shift_line_qty:
+                    rejected.append(uuid_val)
+                    continue
+
             # One transaction per scan: the scan row, the exception it
             # raises, and the billing event derived from it must land
             # together or not at all -- a billed scan with no exception
             # row (or vice versa) is exactly the kind of drift the
             # append-only ledger exists to prevent.
-            with db.transaction(conn):
-                inserted = db.insert_scan(
-                    conn,
-                    {
-                        "uuid": scan["uuid"],
-                        "session_id": sess["id"],
-                        "manifest_line_id": scan.get("manifestLineId"),
-                        "raw_payload": scan["rawPayload"],
-                        "normalized": scan["normalized"],
-                        "matched_tier": scan.get("matchedTier"),
-                        "result": scan["result"],
-                        "decode_ms": scan.get("decodeMs"),
-                        "match_ms": scan.get("matchMs"),
-                        "ts_client": scan["tsClient"],
-                        "bundle_version": scan.get("bundleVersion", 0),
-                        "seq": scan.get("seq"),
-                        "device_ua": request.headers.get("User-Agent", ""),
-                    },
-                )
-                if inserted and scan["result"] == "unresolved":
-                    db.create_exception(conn, scan["uuid"], "unresolved")
-                elif inserted and scan.get("needsConfirmation"):
-                    db.create_exception(
-                        conn, scan["uuid"], "tier6_confirm", scan.get("manifestLineId")
+            #
+            # Wrapped in try/except because one malformed entry must not
+            # abort the batch. It used to: an unhandled exception anywhere in
+            # here 500ed the whole request, so the outbox received neither an
+            # `accepted` nor a `rejected` verdict for ANY scan in the batch,
+            # and it only drops what the server names -- one bad payload
+            # wedged that phone's sync queue permanently.
+            try:
+                # immediate=True: this transaction can reach
+                # billing._insert_catch, which counts existing catches and
+                # then inserts based on that count. db.transaction is
+                # re-entrant, so the inner request for the write lock joins
+                # this one -- meaning the lock has to be asked for HERE, at
+                # the outermost level, or the read still runs unlocked.
+                with db.transaction(conn, immediate=True):
+                    # The README promises cross-worker duplicate detection
+                    # ("the first to reach the server gets the OK and the
+                    # second becomes a duplicate"). The phone cannot deliver
+                    # it -- its check is a plain object scoped to one page
+                    # load on one device, so two phones scanning the same
+                    # line both saw OK, and even a single phone forgot
+                    # everything on reload (which sw.js deliberately triggers
+                    # on controllerchange). Recompute it here, where the
+                    # question is answerable, and store the corrected result
+                    # rather than whatever the client asserted.
+                    #
+                    # Inside the transaction, and inside an IMMEDIATE one:
+                    # this reads a count and then writes based on it, so under
+                    # a deferred BEGIN (or outside the transaction entirely)
+                    # two phones syncing the same line would both read zero
+                    # and both store "ok" -- reintroducing precisely the race
+                    # this finding is about.
+                    result = scan["result"]
+                    if result == "ok" and line_id is not None:
+                        already = db.line_scanned_count_for_shift(
+                            conn, shift_now["id"], line_id, scan["uuid"]
+                        )
+                        # qty_expected is how many units the line covers, so
+                        # unit N+1 is the first duplicate -- not unit two.
+                        if already >= shift_line_qty[line_id]:
+                            result = "duplicate"
+
+                    inserted = db.insert_scan(
+                        conn,
+                        {
+                            "uuid": scan["uuid"],
+                            "session_id": sess["id"],
+                            "manifest_line_id": line_id,
+                            "raw_payload": scan["rawPayload"],
+                            "normalized": scan["normalized"],
+                            "matched_tier": scan.get("matchedTier"),
+                            "result": result,
+                            "decode_ms": scan.get("decodeMs"),
+                            "match_ms": scan.get("matchMs"),
+                            "ts_client": scan["tsClient"],
+                            # Stored for forensics -- what the phone believed.
+                            # It no longer gates anything; see below.
+                            "bundle_version": scan.get("bundleVersion", 0),
+                            "seq": scan.get("seq"),
+                            "device_ua": request.headers.get("User-Agent", ""),
+                        },
                     )
-                elif inserted and scan["result"] == "reject":  # noqa: SIM102
-                    # Mid-shift manifest changes: a scan made against a bundle
-                    # version older than the shift's current one is recorded
-                    # for audit, but not billed until the phone refreshes --
-                    # see the "Bundle stale" tradeoff in the README.
-                    if scan.get("bundleVersion", 0) >= shift_now["bundle_version"]:
-                        _bill_confirmed_reject(conn, shift_now, scan["uuid"], scan["rawPayload"])
+                    if inserted and result == "unresolved":
+                        db.create_exception(conn, scan["uuid"], "unresolved")
+                    elif inserted and scan.get("needsConfirmation"):
+                        db.create_exception(conn, scan["uuid"], "tier6_confirm", line_id)
+                    elif inserted and result == "reject":  # noqa: SIM102
+                        # Mid-shift manifest changes: a scan made against a
+                        # bundle version older than the shift's current one is
+                        # recorded for audit, but not billed until the phone
+                        # refreshes -- see the "Bundle stale" tradeoff in the
+                        # README. Compared against the version the SERVER
+                        # issued to this session: the phone chooses the number
+                        # it sends, and the phone's owner is who gets billed,
+                        # so a client sending bundleVersion 0 was previously
+                        # able to record every catch free of charge.
+                        if issued_bundle_version >= shift_now["bundle_version"]:
+                            _bill_confirmed_reject(
+                                conn, shift_now, scan["uuid"], scan["rawPayload"]
+                            )
+            except sqlite3.OperationalError:
+                # Transient: the database was locked or busy. This scan is
+                # still good and must stay on the phone. Critically it must
+                # NOT go in `rejected` -- outbox.js drains
+                # accepted.concat(rejected), so naming it there would DELETE
+                # it from the phone permanently. Silence here means the
+                # outbox simply retries on the next tick, which is correct.
+                app.logger.warning("w_sync: retryable failure on scan %s", uuid_val)
+                continue
+            except (sqlite3.IntegrityError, ValueError, KeyError, TypeError):
+                # Permanent: this payload will never be accepted, no matter
+                # how many times it is resent. Name it in `rejected` so the
+                # phone stops retrying it -- the same permanent-vs-transient
+                # split appeals.js makes between 4xx and 5xx.
+                #
+                # Reported rather than silently skipped: the outbox only drops
+                # what the server names, so a scan we neither accept nor
+                # reject is retried forever with no way to find out why.
+                app.logger.exception("w_sync: rejecting unprocessable scan %s", uuid_val)
+                rejected.append(uuid_val)
+                continue
             accepted.append(scan["uuid"])
 
         return jsonify(
@@ -573,6 +810,20 @@ def register_worker_routes(app: Flask, get_db) -> None:
                 "clockSkewMs": skew_ms,
             }
         )
+
+    @app.route("/w/logout", methods=["POST"])
+    def w_logout():
+        # The server half of logOut(). Deliberately tolerant: it is called on
+        # the way out of the page, so it must never block the worker or throw
+        # away queued data. An unknown token is a no-op success, and scans
+        # already in this session's outbox keep syncing (see migrations/0009).
+        conn = get_db()
+        payload = request.get_json(force=True, silent=True) or {}
+        token = payload.get("sessionId") or request.form.get("sessionId")
+        sess = db.get_session_by_token(conn, token) if token else None
+        if sess:
+            db.end_session(conn, sess["id"])
+        return jsonify({"ok": True})
 
     @app.route("/w/heartbeat/<token>")
     def w_heartbeat(token):
@@ -639,6 +890,11 @@ def register_worker_routes(app: Flask, get_db) -> None:
         sess = db.get_session_by_token(conn, session_id)
         if not sess:
             return jsonify({"error": "unknown session"}), 404
+
+        appeal_shift = _linked(db.get_shift(conn, sess["shift_id"]), "shift")
+        appeal_account = _linked(db.get_account(conn, appeal_shift["account_id"]), "account")
+        if not _account_is_active(appeal_account):
+            return jsonify({"error": "account suspended"}), 403
 
         scan = db.get_scan(conn, scan_uuid)
         if not scan:
@@ -708,8 +964,31 @@ def register_worker_routes(app: Flask, get_db) -> None:
 
     @app.route("/w/sw.js")
     def w_service_worker():
-        sw_path = Path(app.root_path) / "static" / "js" / "worker" / "sw.js"
-        return Response(sw_path.read_text(), mimetype="application/javascript")
+        # CACHE_NAME is stamped from a hash of the shell assets themselves.
+        #
+        # It used to be a hand-maintained literal ("autorack-shell-v3"), so
+        # cache invalidation depended on remembering to bump it in the same
+        # commit as the fix. Forget once and every phone keeps running the
+        # previous build with no signal that anything is stale -- including a
+        # stale barcode.js, whose divergence from barcode.py is a billing
+        # defect, not a cosmetic one.
+        root = Path(app.root_path)
+        digest = hashlib.sha256()
+        for rel in SHELL_VERSION_SOURCES:
+            path = root / rel
+            digest.update(rel.encode())
+            digest.update(path.read_bytes() if path.exists() else b"missing")
+        body = sw_source().replace("__SHELL_VERSION__", digest.hexdigest()[:16])
+        return Response(
+            body,
+            mimetype="application/javascript",
+            # The browser revalidates sw.js on its own schedule; no-store keeps
+            # an intermediary from pinning an old one.
+            headers={"Cache-Control": "no-store"},
+        )
+
+    def sw_source() -> str:
+        return (Path(app.root_path) / "static" / "js" / "worker" / "sw.js").read_text()
 
 
 def set_offline_drill_block(seconds: float | None) -> None:
@@ -1112,8 +1391,16 @@ def register_owner_routes(app: Flask, get_db) -> None:
             target_id=None,
             after={"manifest_id": manifest_id, "raw_barcode": raw_barcode, "sku": sku},
         )
-        db.add_manifest_line(conn, manifest_id, sku, description, qty_expected, raw_barcode)
-        _regenerate_manifest_keys(conn, manifest_id)
+        # One transaction, for the reason commit_manifest's docstring gives:
+        # add_manifest_line inserts a line with no line_keys rows, and the
+        # keys are computed by a separate call. A failure between them leaves
+        # a manifest line that matches nothing -- so every scan of that
+        # physical item is a confident REJECT, and confident REJECTs are
+        # billed. commit_manifest wraps everything for exactly this reason;
+        # the line editor was added later and did not inherit the rule.
+        with db.transaction(conn):
+            db.add_manifest_line(conn, manifest_id, sku, description, qty_expected, raw_barcode)
+            _regenerate_manifest_keys(conn, manifest_id)
         flash("Line added.")
         return redirect(url_for("manifest_detail", manifest_id=manifest_id))
 
@@ -1153,8 +1440,11 @@ def register_owner_routes(app: Flask, get_db) -> None:
                 "raw_barcode": raw_barcode,
             },
         )
-        db.update_manifest_line(conn, line_id, sku, description, qty_expected, raw_barcode)
-        _regenerate_manifest_keys(conn, manifest_id)
+        # Atomic for the same reason as manifest_line_add: an updated barcode
+        # whose keys were not regenerated matches nothing.
+        with db.transaction(conn):
+            db.update_manifest_line(conn, line_id, sku, description, qty_expected, raw_barcode)
+            _regenerate_manifest_keys(conn, manifest_id)
         flash("Line updated.")
         return redirect(url_for("manifest_detail", manifest_id=manifest_id, page=page))
 
@@ -1178,8 +1468,11 @@ def register_owner_routes(app: Flask, get_db) -> None:
             target_id=str(line_id),
             before=dict(line),
         )
-        db.delete_manifest_line(conn, line_id)
-        _regenerate_manifest_keys(conn, manifest_id)
+        # delete_manifest_line is itself three statements (keys, line, count),
+        # and the key regeneration is a fourth. All four or none.
+        with db.transaction(conn):
+            db.delete_manifest_line(conn, line_id)
+            _regenerate_manifest_keys(conn, manifest_id)
         flash("Line deleted.")
         return redirect(url_for("manifest_detail", manifest_id=manifest_id, page=page))
 
@@ -1210,14 +1503,107 @@ def register_owner_routes(app: Flask, get_db) -> None:
     def shift_prepare():
         conn = get_db()
         label = request.form.get("label") or "Shift"
-        shift_date = request.form.get("date") or tz.today_local(g.account["timezone"])
-        manifest_ids = [int(x) for x in request.form.getlist("manifest_ids")]
+
+        # Parsed, not passed through. shift.date is echoed to every worker
+        # phone that joins this shift (bundle.shift.date), so an unvalidated
+        # string here is an owner-to-worker injection channel -- the worker
+        # scan screen renders it, and it is the one field on that screen that
+        # does not originate on the phone.
+        raw_date = request.form.get("date")
+        if raw_date:
+            try:
+                # DTZ007 is suppressed below on purpose: a shift date is a
+                # calendar label chosen by the owner, not an instant, so
+                # there is no timezone to attach. strptime is doing
+                # validation here, not conversion.
+                parsed_date = datetime.strptime(raw_date.strip(), "%Y-%m-%d")  # noqa: DTZ007
+                shift_date = parsed_date.strftime("%Y-%m-%d")
+            except ValueError:
+                flash("Shift date must be in YYYY-MM-DD form.")
+                return redirect(url_for("shift_new_form"))
+        else:
+            shift_date = tz.today_local(g.account["timezone"])
+
+        # Ownership must be checked before these ids reach bundle_payload:
+        # db.get_manifest_lines is not account-scoped, so an id belonging to
+        # another account would return that account's complete line list --
+        # sku, description, raw barcode -- and ship it to this account's
+        # phones through /w/bundle. Every other manifest route runs
+        # _owned_manifest_or_404; this one did not.
+        # int() is guarded too: a non-numeric value raised ValueError and 500ed.
+        manifest_ids = []
+        for raw_id in request.form.getlist("manifest_ids"):
+            try:
+                manifest_id = int(raw_id)
+            except (TypeError, ValueError):
+                return "Bad request", 400
+            if _owned_manifest_or_404(conn, manifest_id) is None:
+                return "Not found", 404
+            if manifest_id not in manifest_ids:
+                manifest_ids.append(manifest_id)
+
         if not manifest_ids:
             flash("Pick at least one manifest for this shift.")
             return redirect(url_for("shift_new_form"))
 
+        # Collision analysis runs per manifest at commit time, but matching
+        # runs per shift across every manifest in it. Two lines in DIFFERENT
+        # manifests can share a loose key with no collision flag and no
+        # ingest warning -- the ambiguity guard means the outcome is
+        # `unresolved` rather than a wrong match, so it is safe, but
+        # unresolveds are exactly what the owner has to hand-review and
+        # nobody was telling them that combining these manifests caused
+        # them. Analyse the union here, where the combination is chosen, and
+        # report only what is NEW relative to the per-manifest reports the
+        # owner already saw at upload.
+        combined_lines: list[tuple[int, str]] = []
+        per_manifest_keys: set[tuple[int, str]] = set()
+        for mid in manifest_ids:
+            rows = db.get_manifest_lines(conn, mid)
+            combined_lines.extend((row["id"], row["raw_barcode"]) for row in rows)
+            single = barcode.analyze_collisions(
+                [(row["id"], row["raw_barcode"]) for row in rows],
+                suffix_len=g.account["loose_suffix_len"],
+            )
+            for tier, by_key in single.collisions.items():
+                per_manifest_keys.update((int(tier), key) for key in by_key)
+
+        if len(manifest_ids) > 1:
+            combined = barcode.analyze_collisions(
+                combined_lines, suffix_len=g.account["loose_suffix_len"]
+            )
+            cross_manifest_lines = {
+                tier: {
+                    key: ids
+                    for key, ids in by_key.items()
+                    if (int(tier), key) not in per_manifest_keys
+                }
+                for tier, by_key in combined.collisions.items()
+            }
+            affected = {
+                line_id
+                for by_key in cross_manifest_lines.values()
+                for ids in by_key.values()
+                for line_id in ids
+            }
+            if affected:
+                flash(
+                    f"{len(affected)} lines across the manifests you selected share a "
+                    "loose-match key with a line in a different manifest. Those scans will "
+                    "come back as 'needs review' rather than matching automatically. "
+                    "Each manifest is clean on its own -- this only appears when they run "
+                    "in the same shift."
+                )
+
         token = secrets.token_urlsafe(24)
-        expires = (datetime.now(UTC) + timedelta(hours=16)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        # Milliseconds: shifts.token_expires_at is string-compared against
+        # _now_iso() (app.py) and against SQLite's strftime %f (sql/shifts.sql),
+        # both of which are millisecond precision. A microsecond string sorts
+        # below the millisecond string for the same instant, so the token read
+        # as expired early. See auth._expiry.
+        expires = (datetime.now(UTC) + timedelta(hours=16)).strftime("%Y-%m-%dT%H:%M:%S.%f")[
+            :-3
+        ] + "Z"
         account = g.account
         payload = manifest_ingest.bundle_payload(
             conn,
@@ -1225,7 +1611,10 @@ def register_owner_routes(app: Flask, get_db) -> None:
             {"id": None, "label": label, "date": shift_date, "bundle_version": 0},
             manifest_ids,
         )
-        bundle_hash = manifest_ingest.content_hash(payload)
+        # The content hash, not the whole-payload one: shift.id is None here
+        # (the row does not exist yet) and real at serve time, so an
+        # envelope-level hash could never match. See bundle_content_hash.
+        bundle_hash = manifest_ingest.bundle_content_hash(payload)
         shift_id = db.create_shift(
             conn, account["id"], label, shift_date, token, expires, bundle_hash, 0
         )
@@ -1302,29 +1691,24 @@ def register_owner_routes(app: Flask, get_db) -> None:
     @login_required
     def floor_data():
         conn = get_db()
+        # One query, not 101. The label comes back on the row via a LEFT
+        # JOIN scoped to this account's shift manifests -- see
+        # sql/shifts.sql's recent_scans. This endpoint is polled
+        # continuously by the Live floor view, so the per-row lookup it used
+        # to do was a repeating N+1.
         rows = db.recent_scans(conn, g.account["id"], limit=100)
         account_tz = g.account["timezone"]
-        out = []
-        for r in rows:
-            line = (
-                db.query_one(
-                    conn,
-                    SQL["manifests.get_manifest_line_label"],
-                    (r["manifest_line_id"],),
-                )
-                if r["manifest_line_id"]
-                else None
-            )
-            out.append(
-                {
-                    "ts_server": tz.to_local(r["ts_server"], account_tz),
-                    "result": r["result"],
-                    "raw_payload": r["raw_payload"],
-                    "matched_tier": r["matched_tier"],
-                    "sku": line["sku"] if line else None,
-                    "description": line["description"] if line else None,
-                }
-            )
+        out = [
+            {
+                "ts_server": tz.to_local(r["ts_server"], account_tz),
+                "result": r["result"],
+                "raw_payload": r["raw_payload"],
+                "matched_tier": r["matched_tier"],
+                "sku": r["line_sku"],
+                "description": r["line_description"],
+            }
+            for r in rows
+        ]
         return jsonify({"scans": out})
 
     @app.route("/workers")
@@ -1581,8 +1965,22 @@ def register_owner_routes(app: Flask, get_db) -> None:
         photo_path = Path(row["photo_path"])
         if not photo_path.exists():
             return "Not found", 404
-        mimetype = "image/png" if photo_path.suffix.lower() == ".png" else "image/jpeg"
-        return Response(photo_path.read_bytes(), mimetype=mimetype)
+        # The upload allowlist accepts six extensions (ALLOWED_PHOTO_EXTS);
+        # this used to answer with only two, so .webp/.heic/.heif were served
+        # as image/jpeg. A browser that sniffs past a wrong Content-Type on a
+        # byte stream the user supplied is the whole reason nosniff exists,
+        # so send both the right type and the header.
+        mimetype = PHOTO_MIMETYPES.get(photo_path.suffix.lower(), "application/octet-stream")
+        return Response(
+            photo_path.read_bytes(),
+            mimetype=mimetype,
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                # Never render a user-uploaded file inline in our own origin.
+                "Content-Disposition": "inline",
+                "Content-Security-Policy": "default-src 'none'; img-src 'self'",
+            },
+        )
 
     @app.route("/exceptions/<int:exception_id>/confirm-reject", methods=["POST"])
     @login_required
@@ -1611,7 +2009,9 @@ def register_owner_routes(app: Flask, get_db) -> None:
         # The resolution is what authorises the charge (the billing_events
         # trigger requires it), so the two must commit together or the
         # ledger and the review queue disagree about why money was owed.
-        with db.transaction(conn):
+        # immediate=True for the same reason as w_sync: this reaches
+        # billing._insert_catch's read-then-write on the free allowance.
+        with db.transaction(conn, immediate=True):
             db.resolve_exception(
                 conn, exception_id, g.user["email"], "Confirmed as a genuine wrong item"
             )

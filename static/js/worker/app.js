@@ -59,10 +59,20 @@
   var summaryDoneBtn = document.getElementById("summary-done-button");
 
   var matchIndex = null; // {tier: {key: [lineId,...]}}
-  var linesById = {};
-  var settings = { looseMatchEnabled: false, looseSuffixLen: 8 };
+  var bundleFailed = false; // a bundle that could not be applied is fatal, not silent
+  // Object.create(null) throughout: manifest line ids and barcode text are
+  // both used as object keys, and a plain {} answers "constructor",
+  // "toString" and friends for keys that were never inserted.
+  var linesById = Object.create(null);
+  var DEFAULT_SETTINGS = { looseMatchEnabled: false, looseSuffixLen: 8, workerSelfResolve: false };
+  var settings = DEFAULT_SETTINGS;
   var currentBundleVersion = 0;
-  var sessionScannedLineIds = {}; // local fast-path duplicate approximation
+  var disabledKeys = {};
+  // lineId -> units scanned so far this session. A count, not a boolean:
+  // a manifest line with qty_expected 4 is four physical cartons, and
+  // calling unit two a DUPLICATE is a wrong answer on a screen whose whole
+  // promise is three unmistakable ones.
+  var sessionScannedCounts = Object.create(null);
   var sessionTally = { ok: 0, reject: 0, duplicate: 0, unresolved: 0 };
   var lastScanUuid = null; // which scan an appeal, if opened, refers to
   var selectedAppealPhoto = null;
@@ -124,13 +134,17 @@
     appealOpenBtn.style.display = workerSelfResolve ? "inline-block" : "none";
   }
 
+  // Built out of elements and textContent, never innerHTML. window.__bundleDate
+  // is bundle.shift.date, which originates in an owner's form field and is
+  // rendered on every worker phone that joins the shift -- innerHTML here was
+  // stored XSS with an owner-to-worker delivery path.
   function setHeaderChip(stale) {
     var lineCount = Object.keys(linesById).length;
-    var label = (window.__bundleDate || "") + " · " + lineCount + " lines";
-    var status = stale
-      ? '<span class="status-stale">' + T("bundleStale") + "</span>"
-      : '<span class="status-ok">' + T("bundleOfflineReady") + "</span>";
-    bundleInfoEl.innerHTML = label + " -- " + status;
+    bundleInfoEl.textContent = (window.__bundleDate || "") + " · " + lineCount + " lines -- ";
+    var status = document.createElement("span");
+    status.className = stale ? "status-stale" : "status-ok";
+    status.textContent = stale ? T("bundleStale") : T("bundleOfflineReady");
+    bundleInfoEl.appendChild(status);
   }
 
   function loadBundleFromNetwork() {
@@ -140,16 +154,50 @@
     });
   }
 
+  // Returns true if the bundle is now live. A failure here must be fatal and
+  // visible: matchIndex staying null makes handleDecoded return early on
+  // every scan, so the phone looks powered on and silently records nothing
+  // for the rest of the shift -- no beep, no flash, nothing in the outbox.
   function applyBundle(bundle) {
-    linesById = {};
-    bundle.lines.forEach(function (line) {
-      linesById[line.id] = line;
-    });
-    matchIndex = window.Barcode.buildIndex(bundle.keys);
-    settings = bundle.settings;
-    currentBundleVersion = bundle.shift.bundleVersion;
-    window.__bundleDate = bundle.shift.date;
-    setHeaderChip(false);
+    try {
+      if (!bundle || !bundle.shift || !Array.isArray(bundle.lines) || !Array.isArray(bundle.keys)) {
+        throw new Error("bundle is missing lines/keys/shift");
+      }
+      var nextLines = Object.create(null);
+      bundle.lines.forEach(function (line) {
+        nextLines[line.id] = line;
+      });
+      var nextIndex = window.Barcode.buildIndex(bundle.keys);
+      linesById = nextLines;
+      matchIndex = nextIndex;
+      // A bundle cached by an older build can be missing settings entirely,
+      // or missing a field this build reads. Merging over the defaults keeps
+      // looseSuffixLen a number rather than undefined, which normalize()
+      // would otherwise silently turn back into DEFAULT_SUFFIX_LEN on one
+      // side of an already-delicate parity contract.
+      var s = bundle.settings || {};
+      settings = {
+        looseMatchEnabled: !!s.looseMatchEnabled,
+        looseSuffixLen: typeof s.looseSuffixLen === "number" && s.looseSuffixLen > 0
+          ? s.looseSuffixLen
+          : DEFAULT_SETTINGS.looseSuffixLen,
+        workerSelfResolve: !!s.workerSelfResolve,
+      };
+      // tier -> [key]; mirrors the server's MatchIndex.disabled_keys. Omitting
+      // a colliding key from the bundle is not the same suppression the
+      // server applies -- see manifest_ingest.bundle_payload.
+      disabledKeys = bundle.disabledKeys || {};
+      currentBundleVersion = bundle.shift.bundleVersion;
+      window.__bundleDate = bundle.shift.date;
+      bundleFailed = false;
+      setHeaderChip(false);
+      return true;
+    } catch (err) {
+      matchIndex = null;
+      bundleFailed = true;
+      bundleInfoEl.textContent = T("bundleCouldNotLoad");
+      return false;
+    }
   }
 
   function initBundle() {
@@ -162,17 +210,11 @@
       // never block on it -- the cached bundle is what makes the phone
       // work through a full offline shift).
       if (navigator.onLine) {
-        return loadBundleFromNetwork()
-          .then(function (bundle) {
-            return window.AutorackIDB.metaSet("bundle", bundle).then(function () {
-              applyBundle(bundle);
-            });
-          })
-          .catch(function () {
-            if (!cached) {
-              bundleInfoEl.textContent = T("bundleCouldNotLoad");
-            }
-          });
+        return refreshBundle().then(function () {
+          if (!matchIndex) {
+            bundleInfoEl.textContent = T("bundleCouldNotLoad");
+          }
+        });
       }
       if (!cached) {
         bundleInfoEl.textContent = T("bundleNoneDownloaded");
@@ -180,6 +222,11 @@
     });
   }
 
+  // Detecting staleness and stopping there left the phone in the one state
+  // that costs money: w_sync refuses to bill any reject whose bundleVersion
+  // is behind the shift's, so after a mid-shift manifest edit the phone kept
+  // scanning and stopped producing billable catches until someone happened to
+  // reload the page. The refresh logic already exists -- call it.
   function checkStaleness() {
     if (!navigator.onLine) return;
     fetch("/w/heartbeat/" + sessionId)
@@ -187,11 +234,26 @@
         return r.json();
       })
       .then(function (info) {
-        if (info.bundleVersion !== currentBundleVersion) {
-          setHeaderChip(true);
-        }
+        if (info.bundleVersion === currentBundleVersion) return;
+        setHeaderChip(true);
+        return refreshBundle();
       })
       .catch(function () {});
+  }
+
+  // Fetch and persist a fresh bundle. Shared by initBundle and checkStaleness
+  // so a stale bundle is repaired by exactly the path that installed it.
+  function refreshBundle() {
+    return loadBundleFromNetwork()
+      .then(function (bundle) {
+        return window.AutorackIDB.metaSet("bundle", bundle).then(function () {
+          applyBundle(bundle);
+        });
+      })
+      .catch(function () {
+        // Offline or the fetch failed. The cached bundle stays live; the
+        // header keeps saying stale, and the next heartbeat tries again.
+      });
   }
 
   function recordAndShowResult(rawPayload, normalized, matchResult, decodeMs, matchStartedAt) {
@@ -199,17 +261,31 @@
     var result, lineId = null, sku = null, description = null, needsConfirmation = false;
     var visualKind; // what the worker sees -- only ever ok/reject/duplicate (3 signals, per spec)
 
-    if (matchResult.resolved) {
+    var line = matchResult.resolved ? linesById[matchResult.manifestLineId] : null;
+
+    if (matchResult.resolved && !line) {
+      // Resolved to a manifest line the bundle does not contain. This is not
+      // a match, it is an internal inconsistency, and it must never be shown
+      // as a green OK -- that waves an item through the dock on the strength
+      // of a lookup that found nothing. Treat it the way we treat any
+      // non-confident outcome: unresolved, which is never auto-billed.
+      result = "unresolved";
+      visualKind = "reject";
+    } else if (matchResult.resolved) {
       lineId = matchResult.manifestLineId;
-      var line = linesById[lineId];
-      sku = line ? line.sku : null;
-      description = line ? line.description : null;
+      sku = line.sku;
+      description = line.description;
       needsConfirmation = !!matchResult.needsConfirmation;
-      if (sessionScannedLineIds[lineId]) {
+      // qty_expected is how many physical units this line covers. Units two
+      // through N are legitimate scans, not duplicates; only unit N+1 is.
+      // A missing/zero qtyExpected means one unit, the previous behaviour.
+      var expected = typeof line.qtyExpected === "number" && line.qtyExpected > 0 ? line.qtyExpected : 1;
+      var already = sessionScannedCounts[lineId] || 0;
+      if (already >= expected) {
         result = "duplicate";
       } else {
         result = "ok";
-        sessionScannedLineIds[lineId] = true;
+        sessionScannedCounts[lineId] = already + 1;
       }
       visualKind = result;
     } else {
@@ -247,9 +323,24 @@
       bundleVersion: currentBundleVersion,
       needsConfirmation: needsConfirmation,
     };
-    outbox.add(scan);
-
-    showResult(visualKind, sku, description);
+    // The outbox write is the load-bearing durability claim in the whole
+    // system ("every scan is written to IndexedDB immediately, before any
+    // network attempt"). It was fire-and-forget: nothing awaited it, nothing
+    // caught it, and showResult fired on the next line regardless -- so on
+    // an iOS storage eviction or a quota failure the worker got a green
+    // flash for a scan that no longer existed anywhere.
+    outbox.add(scan).then(
+      function () {
+        showResult(visualKind, sku, description);
+      },
+      function () {
+        sessionTally[result] = Math.max(0, (sessionTally[result] || 1) - 1);
+        if (result === "ok" && lineId !== null) {
+          sessionScannedCounts[lineId] = Math.max(0, (sessionScannedCounts[lineId] || 1) - 1);
+        }
+        showScanNotSaved();
+      }
+    );
   }
 
   // visualKind is always one of "ok"/"reject"/"duplicate" -- the 3 signals
@@ -279,26 +370,68 @@
     overlayEl.className = "result-overlay";
   }
 
+  function modalIsOpen() {
+    return manualEntryModal.style.display !== "none" ||
+      appealModal.style.display !== "none" ||
+      summaryOverlay.style.display !== "none";
+  }
+
+  // A scan that did not reach durable storage. Deliberately shaped like the
+  // reject treatment -- it requires a dismiss tap, so it cannot be missed the
+  // way a 900ms auto-hiding flash can.
+  function showScanNotSaved(message) {
+    window.AutorackFeedback.play("reject");
+    overlayEl.className = "result-overlay showing result-reject";
+    resultLabelEl.textContent = T("scanNotSavedLabel");
+    resultDetailEl.textContent = message || T("scanNotSavedDetail");
+    resultSkuEl.textContent = "";
+    awaitingDismiss = true;
+    dismissBtn.style.display = "inline-block";
+    appealOpenBtn.style.display = "none";
+  }
+
   dismissBtn.addEventListener("click", function () {
     hideResult();
     wedgeInput.focus();
   });
 
   function handleDecoded(rawPayload, decodeMs) {
-    if (awaitingDismiss || !matchIndex) return;
+    if (awaitingDismiss) return;
+    if (!matchIndex) {
+      // Never fail silently here: a phone with no index looks identical to a
+      // working one. Say so on every attempted scan.
+      showScanNotSaved(bundleFailed ? T("bundleCouldNotLoad") : null);
+      return;
+    }
+    if (modalIsOpen()) return; // a wedge burst while a modal is open is not a scan
     var matchStart = performance.now();
     var norm = window.Barcode.normalize(rawPayload, settings.looseSuffixLen);
     var matchResult = window.Barcode.matchAgainstIndex(matchIndex, rawPayload, {
       looseMatchEnabled: settings.looseMatchEnabled,
       suffixLen: settings.looseSuffixLen,
+      disabledKeys: disabledKeys,
     });
     recordAndShowResult(rawPayload, norm.normalized, matchResult, decodeMs, matchStart);
   }
 
   // --- Wedge scanner input: always-focused, invisible, Enter/Tab terminate ---
+  // While a modal is open the wedge scanner is still a keyboard, and its
+  // burst used to type itself into whatever was focused -- usually the appeal
+  // note field. Keep the (invisible) wedge input focused unless the worker
+  // has deliberately put the caret in a field of their own, so a stray scan
+  // is swallowed there and dropped by handleDecoded's modalIsOpen() guard
+  // rather than appearing as text in the note.
+  function workerIsTypingInAField() {
+    var el = document.activeElement;
+    if (!el || el === wedgeInput) return false;
+    var tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
+  }
+
   function keepWedgeFocused() {
-    var modalOpen = manualEntryModal.style.display !== "none" || appealModal.style.display !== "none" || summaryOverlay.style.display !== "none";
-    if (document.activeElement !== wedgeInput && !awaitingDismiss && !modalOpen) {
+    if (awaitingDismiss) return;
+    if (workerIsTypingInAField()) return;
+    if (document.activeElement !== wedgeInput) {
       wedgeInput.focus();
     }
   }
@@ -388,11 +521,20 @@
       sessionId: sessionId,
       note: appealNoteInput.value.trim(),
       photoBlob: selectedAppealPhoto,
-    });
-    appealModal.style.display = "none";
-    hideResult();
-    showToast(T("appealQueued"));
-    wedgeInput.focus();
+    }).then(
+      function () {
+        appealModal.style.display = "none";
+        hideResult();
+        showToast(T("appealQueued"));
+        wedgeInput.focus();
+      },
+      function () {
+        // "Appeal saved" was shown unconditionally, before anything knew
+        // whether the write happened. Photo Blobs are exactly what storage
+        // pressure evicts first.
+        alert(T("appealNotSaved"));
+      }
+    );
   });
 
   function showToast(message) {
@@ -483,9 +625,23 @@
       [tally.duplicate, T("summaryDuplicate")],
       [tally.unresolved, T("summaryNeedsReview")],
     ];
-    summaryStatsEl.innerHTML = rows.map(function (r) {
-      return '<div class="summary-stat"><div class="summary-stat-value">' + r[0] + '</div><div class="summary-stat-label">' + r[1] + "</div></div>";
-    }).join("");
+    // Element construction, not innerHTML. The counts are numbers today, but
+    // they arrive from /w/session-summary and this is the same pattern that
+    // made the header chip an XSS sink.
+    summaryStatsEl.textContent = "";
+    rows.forEach(function (r) {
+      var wrap = document.createElement("div");
+      wrap.className = "summary-stat";
+      var value = document.createElement("div");
+      value.className = "summary-stat-value";
+      value.textContent = String(r[0]);
+      var label = document.createElement("div");
+      label.className = "summary-stat-label";
+      label.textContent = r[1];
+      wrap.appendChild(value);
+      wrap.appendChild(label);
+      summaryStatsEl.appendChild(wrap);
+    });
     summaryOverlay.style.display = "flex";
   }
 
@@ -523,7 +679,27 @@
           return;
         }
       }
-      fetchServerSummaryOrLocal().then(renderSummary);
+      // Tell the server the session is over. Purely client-side logout left
+      // the token valid, so the scan screen could be reopened from browser
+      // history or by the next person to pick up a shared phone. Queued
+      // scans still sync afterwards -- ending a session revokes acquiring
+      // anything new, not draining what is already recorded.
+      endServerSession().then(function () {
+        fetchServerSummaryOrLocal().then(renderSummary);
+      });
+    });
+  }
+
+  function endServerSession() {
+    if (!navigator.onLine) return Promise.resolve();
+    return fetch("/w/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sessionId }),
+      keepalive: true,
+    }).catch(function () {
+      // Offline or the request failed. The summary still renders; the
+      // session simply outlives the logout, as it always did.
     });
   }
   logoutButton.addEventListener("click", logOut);
@@ -534,27 +710,70 @@
   // --- Bootstrap: unlock audio + start the camera's first 15s window on
   // the first tap, so the shift's first beep isn't swallowed by autoplay
   // policy, and camera permission is requested from a genuine user gesture. ---
-  var started = false;
-  function bootstrap() {
-    if (started) return;
-    started = true;
+  // Two separate things, deliberately not one flag.
+  //
+  // Audio unlock must happen on the FIRST input of any kind, including a
+  // wedge scan, or the shift's first beep is swallowed by autoplay policy.
+  // Starting the camera must happen only on a real tap: a wedge scanner is a
+  // keyboard, so a single bootstrap bound to keydown raised a camera
+  // permission prompt on phones that are wedge-only and never want one --
+  // and getUserMedia from a keydown is not a qualifying user gesture in
+  // every browser regardless.
+  //
+  // Sharing one `started` flag between them is what makes this subtle: a
+  // wedge scan would consume the bootstrap, and the real tap that followed
+  // would find started === true and never start the camera at all. Two
+  // flags, two lifetimes.
+  var audioUnlocked = false;
+  var cameraBootstrapped = false;
+
+  function bootstrapAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
     window.AutorackFeedback.unlockAudio();
-    turnCameraOn();
     wedgeInput.focus();
   }
-  document.addEventListener("click", bootstrap, { once: true });
-  document.addEventListener("touchend", bootstrap, { once: true });
-  document.addEventListener("keydown", bootstrap, { once: true });
+
+  function bootstrapCamera() {
+    bootstrapAudio();
+    if (cameraBootstrapped) return;
+    cameraBootstrapped = true;
+    turnCameraOn();
+  }
+
+  // Not {once: true} on keydown: it only unlocks audio, and it must stay
+  // armed until a tap arrives so the camera bootstrap is still available.
+  document.addEventListener("click", bootstrapCamera, { once: true });
+  document.addEventListener("touchend", bootstrapCamera, { once: true });
+  document.addEventListener("keydown", bootstrapAudio);
 
   // --- Init ---
   applyStaticText();
-  initBundle().then(function () {
-    outbox.init().then(function () {
+  // outbox.init() loads seqCounter from IndexedDB, and it must complete
+  // BEFORE any scan can be recorded. It used to run after initBundle()
+  // resolved -- but initBundle applies the cached bundle synchronously and
+  // then awaits a network refresh, so on a reload with flaky wifi there was a
+  // multi-second window where the index was live, the wedge scanner worked,
+  // and this.seq was still 0. init() then overwrote it from storage, and
+  // syncOnce sorts by seq.
+  outbox
+    .init()
+    .catch(function () {})
+    .then(function () {
+      return initBundle();
+    })
+    .catch(function () {
+      // initBundle already handles its own failures; this catches anything
+      // it could not (a rejected metaGet, say). The loops MUST still start:
+      // without them a phone that hit one IndexedDB hiccup at load never
+      // syncs again for the life of the page, and an unhandled rejection is
+      // all the signal there would have been.
+    })
+    .then(function () {
       outbox.startLoop();
+      appealQueue.startLoop();
+      setInterval(checkStaleness, HEARTBEAT_MS);
     });
-    appealQueue.startLoop();
-    setInterval(checkStaleness, HEARTBEAT_MS);
-  });
 
   if ("serviceWorker" in navigator) {
     // /w/join never loads this script (it has no <script> tags at all),

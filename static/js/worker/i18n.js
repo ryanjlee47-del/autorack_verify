@@ -44,6 +44,9 @@
       appealCancel: "Cancel",
       appealPhotoRequired: "A photo is required to appeal.",
       appealQueued: "Appeal saved -- your manager will review it.",
+      appealNotSaved: "Could not save the appeal on this phone. Try again.",
+      scanNotSavedLabel: "Scan NOT saved",
+      scanNotSavedDetail: "This phone could not store the scan. Scan it again.",
       summaryTitle: "Shift summary",
       summaryScanned: "scanned",
       summaryCaught: "caught",
@@ -86,6 +89,9 @@
       appealCancel: "Cancelar",
       appealPhotoRequired: "Se requiere una foto para apelar.",
       appealQueued: "Apelación guardada -- tu gerente la revisará.",
+      appealNotSaved: "No se pudo guardar la apelación en este teléfono. Inténtalo de nuevo.",
+      scanNotSavedLabel: "Escaneo NO guardado",
+      scanNotSavedDetail: "Este teléfono no pudo guardar el escaneo. Escanéalo de nuevo.",
       summaryTitle: "Resumen del turno",
       summaryScanned: "escaneados",
       summaryCaught: "detectados",
@@ -105,7 +111,12 @@
     var str = (table && table[key]) || STRINGS.en[key] || key;
     if (vars) {
       Object.keys(vars).forEach(function (k) {
-        str = str.replace("{" + k + "}", vars[k]);
+        // split/join, not String.replace with a string pattern: that
+        // replaces only the FIRST occurrence, so a translation that uses
+        // {count} twice (a normal thing for a translator to do, and not
+        // something the English source has to do first) rendered with a
+        // literal "{count}" left in it.
+        str = str.split("{" + k + "}").join(String(vars[k]));
       });
     }
     return str;

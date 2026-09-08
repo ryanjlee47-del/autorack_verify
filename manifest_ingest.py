@@ -13,6 +13,7 @@ import csv
 import hashlib
 import io
 import json
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import barcode
@@ -328,10 +329,33 @@ def _db_identity(conn) -> str:
 # client-reported REJECT before billing it (see app.py's w_sync) does
 # this per scan, potentially many times per sync batch and many batches
 # per shift, so the built index is cached and only rebuilt when the
-# shift's bundle_version actually changes. Each shift's entry is replaced
-# (not appended) on every version bump, so memory is bounded by "one
-# index per currently-active shift," not by history.
-_match_index_cache: dict[tuple[str, int], tuple[int, barcode.MatchIndex]] = {}
+# shift's bundle_version actually changes.
+#
+# The comment here used to claim memory was "bounded by one index per
+# currently-active shift, not by history." Replacing a shift's entry on a
+# version bump does bound the cache per shift -- but nothing ever removed a
+# SHIFT, so every shift that had ever synced kept a full MatchIndex resident
+# in every gunicorn worker until restart. At 15k lines per manifest that is
+# not a small leak, and "currently-active" was doing work no code performed.
+#
+# An OrderedDict with a hard cap makes the claim true: least-recently-used
+# eviction, so the working set is the shifts actually syncing right now.
+# Evicting a live shift's index costs one rebuild, which is exactly the cost
+# of a cache miss and is what the pre-cache code paid on every scan.
+MATCH_INDEX_CACHE_MAX_ENTRIES = 32
+
+_match_index_cache: OrderedDict[tuple[str, int], tuple[int, barcode.MatchIndex]] = OrderedDict()
+
+
+def clear_match_index_cache() -> None:
+    """Drop every cached index.
+
+    Required after anything that replaces the database file underneath the
+    process (see admin_api.run_restore): the cache is keyed on
+    (database identity, shift id, bundle_version), and a restored file can
+    reuse all three while holding entirely different manifest lines.
+    """
+    _match_index_cache.clear()
 
 
 def cached_match_index(conn, account, shift, manifest_ids: list[int]) -> barcode.MatchIndex:
@@ -340,9 +364,13 @@ def cached_match_index(conn, account, shift, manifest_ids: list[int]) -> barcode
     key = (_db_identity(conn), shift["id"])
     cached = _match_index_cache.get(key)
     if cached is not None and cached[0] == shift["bundle_version"]:
+        _match_index_cache.move_to_end(key)  # LRU: this shift is still active
         return cached[1]
     idx = build_match_index(conn, account, manifest_ids)
     _match_index_cache[key] = (shift["bundle_version"], idx)
+    _match_index_cache.move_to_end(key)
+    while len(_match_index_cache) > MATCH_INDEX_CACHE_MAX_ENTRIES:
+        _match_index_cache.popitem(last=False)
     return idx
 
 
@@ -372,16 +400,26 @@ def bundle_payload(conn, account, shift, manifest_ids: list[int]) -> dict:
     loose_enabled = bool(account["loose_match_enabled"])
     key_rows = db.get_line_keys_for_manifests(conn, manifest_ids)
     keys = []
+    # Omitting a colliding key from the bundle is NOT equivalent to the
+    # server's disable_key(), and the difference is a live divergence rather
+    # than a stylistic one. Collision analysis runs per manifest at commit
+    # time; matching runs per shift across every manifest in it. A key
+    # flagged in manifest A but clean in manifest B is dead on the server
+    # (disable_key suppresses the whole tier/key pair) and, if we merely
+    # omitted A's row, still live on the phone via B's row -- so the phone
+    # reports a confident `ok` the server would have called unresolved, and
+    # the server never re-verifies `ok`, so nobody ever sees the
+    # disagreement. Shipping the disabled set explicitly and having
+    # matchAgainstIndex honor it makes the two sides use one mechanism.
+    disabled_keys: dict[int, list[str]] = {}
     for row in key_rows:
         tier = row["tier"]
         if tier == int(barcode.Tier.SUFFIX) and not loose_enabled:
             continue
         if row["collision"]:
-            # Disabling loose matching for a colliding key is achieved by
-            # simply never shipping that key to the phone: an absent key
-            # yields zero candidates at that tier, which is exactly the
-            # ambiguity-guard fallthrough behavior we want, with no extra
-            # client-side "disabled keys" bookkeeping required.
+            bucket = disabled_keys.setdefault(tier, [])
+            if row["key"] not in bucket:
+                bucket.append(row["key"])
             continue
         keys.append({"manifestLineId": row["manifest_line_id"], "tier": tier, "key": row["key"]})
 
@@ -405,6 +443,8 @@ def bundle_payload(conn, account, shift, manifest_ids: list[int]) -> dict:
         },
         "lines": lines,
         "keys": keys,
+        # tier -> [key, ...]; mirrors MatchIndex.disabled_keys. See above.
+        "disabledKeys": {str(tier): sorted(ks) for tier, ks in disabled_keys.items()},
         "settings": {
             "looseMatchEnabled": loose_enabled,
             "looseSuffixLen": account["loose_suffix_len"],
@@ -452,5 +492,55 @@ def regenerate_keys(
 
 
 def content_hash(payload: dict) -> str:
+    """Hash of a whole bundle payload, envelope included.
+
+    Shipped to the phone as `contentHash` so it can detect a truncated or
+    corrupted download of the exact response it just received.
+    """
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+# The parts of a bundle that describe what the phone will MATCH against, as
+# opposed to which shift it belongs to.
+_CONTENT_KEYS = ("lines", "keys", "disabledKeys", "settings")
+
+
+def bundle_content_hash(payload: dict) -> str:
+    """Hash of a bundle's matching content, excluding shift identity.
+
+    shifts.bundle_hash is recorded at prepare time, before the shift row
+    exists -- so shift_prepare hashes a payload whose `shift.id` is None,
+    while /w/bundle later serves one carrying the real id. Hashing the whole
+    envelope therefore produced two values that could never be equal, which
+    is why the recorded hash was not merely unread but uncomparable: an
+    integrity check that could not have passed even if something had checked
+    it.
+
+    Hashing only the content makes the two ends comparable, and is also the
+    more useful question: "does this shift still serve the bundle it was
+    prepared with?" Shift label and date can change without the matching
+    content changing, and vice versa -- the second is the one that matters.
+    """
+
+    def canonical(value):
+        # Lists here are sets in disguise: `lines` becomes linesById on the
+        # phone and `keys` becomes a tiered lookup table, so neither one's
+        # order carries meaning. It does vary, though -- shift_prepare passes
+        # the manifest ids in the order the owner's form submitted them,
+        # while /w/bundle reads them back from shift_manifests -- so an
+        # order-sensitive hash reported a mismatch on every completely normal
+        # shift, which is worse than not checking at all: an integrity
+        # warning that always fires is one nobody reads.
+        if isinstance(value, list):
+            return sorted(
+                (canonical(item) for item in value),
+                key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+            )
+        if isinstance(value, dict):
+            return {k: canonical(v) for k, v in value.items()}
+        return value
+
+    content = {key: canonical(payload.get(key)) for key in _CONTENT_KEYS}
+    blob = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()

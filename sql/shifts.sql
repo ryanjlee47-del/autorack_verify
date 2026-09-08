@@ -39,11 +39,54 @@ SELECT * FROM sessions WHERE id = ?;
 -- name: get_session_by_token
 SELECT * FROM sessions WHERE token = ?;
 
+-- name: end_session
+-- Idempotent: re-logging-out keeps the first end time rather than moving it.
+UPDATE sessions
+SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE id = ? AND ended_at IS NULL;
+
 -- name: touch_session_with_skew
 UPDATE sessions SET last_seen = strftime('%Y-%m-%dT%H:%M:%fZ','now'), clock_skew_ms = ? WHERE id = ?;
 
 -- name: touch_session
 UPDATE sessions SET last_seen = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?;
+
+-- name: record_issued_bundle_version
+-- The bundle version the server actually served to this session, recorded
+-- at /w/bundle time. w_sync compares against THIS, not against the
+-- bundleVersion the phone claims in its sync payload -- the party holding
+-- the phones is the party being billed, so a client-supplied number cannot
+-- be what decides whether a reject gets verified and charged.
+--
+-- MAX(): a session can refetch an older cached bundle after a newer one
+-- (initBundle applies the cache before the network refresh lands), and the
+-- high-water mark is what "this phone has seen version N" means.
+UPDATE sessions
+SET bundle_version_issued = MAX(bundle_version_issued, ?)
+WHERE id = ?;
+
+-- name: line_ids_for_shift
+-- Every manifest_line reachable from a shift, with its expected quantity.
+-- Used to validate a client-supplied manifestLineId before storing it, and
+-- to decide at what count a repeat scan becomes a duplicate -- both per
+-- scan, so both are answered from one query per batch rather than one
+-- lookup per scan.
+SELECT ml.id AS id, ml.qty_expected AS qty_expected
+FROM manifest_lines ml
+JOIN shift_manifests sm ON sm.manifest_id = ml.manifest_id
+WHERE sm.shift_id = ?;
+
+-- name: line_scanned_count_for_shift
+-- How many times a manifest line has already been scanned OK across the
+-- whole shift, by any worker on any phone. The client-side duplicate check
+-- is per page-load and per device; this is the cross-worker one.
+SELECT COUNT(*) AS n
+FROM scans s
+JOIN sessions se ON se.id = s.session_id
+WHERE se.shift_id = ?
+  AND s.manifest_line_id = ?
+  AND s.result = 'ok'
+  AND s.uuid <> ?;
 
 -- name: scan_exists
 SELECT 1 FROM scans WHERE uuid = ?;
@@ -99,4 +142,39 @@ WHERE sh.account_id = ?
   AND ex.resolved_at IS NULL;
 
 -- name: recent_scans
-SELECT sc.* FROM scans sc JOIN sessions se ON se.id = sc.session_id JOIN shifts sh ON sh.id = se.shift_id WHERE sh.account_id = ? ORDER BY sc.ts_server DESC LIMIT ?;
+-- The manifest line label is LEFT JOINed rather than looked up per row.
+-- The Live floor view polls this continuously, and the caller used to issue
+-- one extra query per scan to fetch sku/description -- 101 queries for 100
+-- rows, on a repeating timer.
+--
+-- The join is also what scopes the label to this account. The standalone
+-- lookup was `WHERE id = ?` with no account predicate, so a manifest_line_id
+-- belonging to another account (which /w/sync used to accept unvalidated)
+-- would have had ITS sku and description rendered on this account's screen.
+SELECT sc.*, ml.sku AS line_sku, ml.description AS line_description
+FROM scans sc
+JOIN sessions se ON se.id = sc.session_id
+JOIN shifts sh ON sh.id = se.shift_id
+LEFT JOIN manifest_lines ml
+       ON ml.id = sc.manifest_line_id
+      AND ml.manifest_id IN (SELECT manifest_id FROM shift_manifests WHERE shift_id = sh.id)
+WHERE sh.account_id = ?
+ORDER BY sc.ts_server DESC
+LIMIT ?;
+
+-- name: recent_scans_after
+-- Incremental variant: only scans newer than a uuid the caller already has.
+-- db.recent_scans accepted an `after_id` argument and then never passed it
+-- to the query, so a caller adding incremental polling silently received
+-- full results and no error at all.
+SELECT sc.*, ml.sku AS line_sku, ml.description AS line_description
+FROM scans sc
+JOIN sessions se ON se.id = sc.session_id
+JOIN shifts sh ON sh.id = se.shift_id
+LEFT JOIN manifest_lines ml
+       ON ml.id = sc.manifest_line_id
+      AND ml.manifest_id IN (SELECT manifest_id FROM shift_manifests WHERE shift_id = sh.id)
+WHERE sh.account_id = ?
+  AND sc.ts_server > (SELECT ts_server FROM scans WHERE uuid = ?)
+ORDER BY sc.ts_server DESC
+LIMIT ?;

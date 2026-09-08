@@ -86,13 +86,17 @@ def print_qr(url: str) -> None:
 
 def prepare_offline_drill_shift(conn) -> tuple[str, str]:
     """Seed (or reuse) the demo account, commit a small manifest if none
-    exists, create a shift, and return (join_url, label)."""
-    info = seed.ensure_seeded(conn)
+    exists, create a shift, and return (shift_token, label).
+
+    The docstring used to say (join_url, label); it has always returned the
+    token, and main() builds the URL from it. The first `info =` assignment
+    was likewise dead -- it was overwritten on the only branch that read it.
+    """
     account_id = 1
-    account_row = db.get_account(conn, account_id)
-    if account_row is None:
-        info = seed.seed_demo_account(conn)
-        account_id = info["account_id"]
+    if db.get_account(conn, account_id) is None:
+        account_id = seed.seed_demo_account(conn)["account_id"]
+    else:
+        seed.ensure_seeded(conn)
 
     manifests = db.list_manifests(conn, account_id)
     manifest_ids = [m["id"] for m in manifests if m["status"] == "committed"]
@@ -112,15 +116,30 @@ def prepare_offline_drill_shift(conn) -> tuple[str, str]:
         manifest_ids = [mid]
 
     token = secrets.token_urlsafe(24)
-    expires = (datetime.now(UTC) + timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    # Milliseconds -- see auth._expiry for why the precision matters.
+    expires = (datetime.now(UTC) + timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    # A real content hash, like every other shift. The literal "pending" was
+    # written here and never replaced, so this shift's bundle_hash recorded
+    # nothing at all -- see app.py's shift_prepare, which computes the same
+    # value from the same function.
+    account = db.get_account(conn, account_id)
+    shift_date = datetime.now(UTC).date().isoformat()
+    bundle_hash = manifest_ingest.bundle_content_hash(
+        manifest_ingest.bundle_payload(
+            conn,
+            account,
+            {"id": None, "label": "Offline drill shift", "date": shift_date, "bundle_version": 0},
+            manifest_ids,
+        )
+    )
     shift_id = db.create_shift(
         conn,
         account_id,
         "Offline drill shift",
-        datetime.now(UTC).date().isoformat(),
+        shift_date,
         token,
         expires,
-        "pending",
+        bundle_hash,
         0,
     )
     for mid in manifest_ids:

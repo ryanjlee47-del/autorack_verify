@@ -35,10 +35,24 @@
     form.append("photo", appeal.photoBlob, "appeal.jpg");
     return fetch("/w/appeal", { method: "POST", body: form }).then(function (resp) {
       if (resp.status === 409) return false; // scan not synced yet -- retry later
-      if (!resp.ok) throw new Error("appeal upload failed: " + resp.status);
-      return window.AutorackIDB.appealRemove(appeal.uuid).then(function () {
-        return true;
-      });
+      if (resp.ok) {
+        return window.AutorackIDB.appealRemove(appeal.uuid).then(function () {
+          return true;
+        });
+      }
+      // The outbox drops what the server refuses (result.rejected); this
+      // queue needs the same concept or a permanently-invalid appeal is
+      // retried every five seconds until the phone is wiped, holding its
+      // photo Blob in IndexedDB the whole time. A 4xx that is not 409 is
+      // the server saying "never" -- a bad scanUuid, a scan belonging to
+      // another session, a payload it will not accept. Drop it. 5xx and
+      // network errors are "not now": keep and retry.
+      if (resp.status >= 400 && resp.status < 500) {
+        return window.AutorackIDB.appealRemove(appeal.uuid).then(function () {
+          return true;
+        });
+      }
+      throw new Error("appeal upload failed: " + resp.status);
     });
   }
 
@@ -47,6 +61,9 @@
     if (this.syncing || !navigator.onLine) return Promise.resolve(null);
     this.syncing = true;
 
+    // See outbox.js's syncOnce: without a catch on the OUTER promise an
+    // appealAll() rejection leaves syncing true permanently and this queue
+    // never drains again.
     return window.AutorackIDB.appealAll().then(function (all) {
       if (!all.length) {
         self.syncing = false;
@@ -60,7 +77,14 @@
         }, Promise.resolve())
         .then(function () {
           self.syncing = false;
+        })
+        .catch(function () {
+          self.syncing = false;
+          return null;
         });
+    }).catch(function () {
+      self.syncing = false;
+      return null;
     });
   };
 

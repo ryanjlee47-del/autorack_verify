@@ -54,7 +54,18 @@ def verify_password(password: str, encoded: str) -> bool:
 
 
 def _expiry(hours: int = SESSION_LIFETIME_HOURS) -> str:
-    return (datetime.now(UTC) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    """When a session issued now should stop being accepted.
+
+    Milliseconds, not microseconds. This value is compared against
+    strftime('%Y-%m-%dT%H:%M:%fZ','now') in SQL and against app.py's
+    _now_iso() in Python -- both of which emit MILLISECONDS -- and the
+    comparison is a plain string comparison, not a date comparison. A
+    microsecond string sorts *below* the millisecond string for the same
+    instant ('...123456Z' < '...123Z', because '4' < 'Z'), so an expiry
+    written at microsecond precision reads as already elapsed. Every
+    producer of an ISO instant in this codebase must use this format.
+    """
+    return (datetime.now(UTC) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def start_session(conn, user_id: int, account_id: int) -> str:

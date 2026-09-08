@@ -26,9 +26,23 @@ def _gtin_from_body11(body11: str) -> str:
 
 
 def _upce_case012(n, s1, s2, s6, s3, s4, s5) -> str:
-    body11 = f"{n}{s1}{s2}{s6}0000{s3}{s4}{s5}"
-    upca = _gtin_from_body11(body11)
-    return upca[0] + upca[1] + upca[2] + upca[3] + upca[8] + upca[9] + upca[10] + upca[-1]
+    """Build a real 8-digit UPC-E code for the S6-in-{0,1,2} compression case.
+
+    A UPC-E code is N S1 S2 S3 S4 S5 S6 C -- S6 last, immediately before the
+    check digit. This used to assemble the digits in the expansion's order
+    (N S1 S2 S6 S3 S4 S5), which put S6 fourth, so the "genuine UPC-E
+    compressed code" the demo advertises was not one: 04315674 expands to
+    043156000074 rather than the intended 043100005674, and the two lines
+    documented as demonstrating GTIN-tier collapsing shared no keys at all.
+
+    Rather than transcribe the digit order a second time, this now builds
+    the UPC-E body directly and rounds it through barcode.py's own
+    expansion, so the seed and the engine cannot disagree about what this
+    code means.
+    """
+    upce_body = f"{n}{s1}{s2}{s3}{s4}{s5}{s6}"
+    upca_body = barcode.upce_body_to_upca_body(upce_body)
+    return upce_body + barcode.compute_check_digit(upca_body)
 
 
 def _electronics_manifest_rows() -> list[dict]:
@@ -37,8 +51,13 @@ def _electronics_manifest_rows() -> list[dict]:
     for i, (mfr, prod) in enumerate(
         [("612345", "00101"), ("612345", "00102"), ("745123", "88231"), ("998877", "00099")]
     ):
-        body12 = "0" + mfr + prod  # 12-digit UPC-A body incl leading system digit, no check
-        upca = _gtin_from_body11(body12)
+        # mfr here is 6 digits (system digit included), unlike the 5-digit
+        # values in _grocery_manifest_rows -- so it must NOT get the extra
+        # "0" that function prepends. With it the body was 12 digits and
+        # _gtin_from_body11 returned 13, which then overran AI 01's
+        # fixed 14-digit field below and produced a 15-digit "GTIN".
+        body11 = mfr + prod  # 6-digit system+manufacturer + 5-digit product
+        upca = _gtin_from_body11(body11)
         rows.append(
             {
                 "line_no": i + 1,
@@ -51,7 +70,10 @@ def _electronics_manifest_rows() -> list[dict]:
     # Same physical products, but exported on this manifest as GS1-128
     # element strings with lot/serial metadata -- must match the plain
     # EAN-13/UPC-A lines above on GTIN if reused, but here they're new SKUs.
-    gs1_gtin = _gtin_from_body11("0" + "500001" + "00050")
+    # Same 6-digit-mfr convention as above: no extra "0". AI 01 is a
+    # fixed-length 14-digit field, so "00" + a 12-digit UPC-A is the only
+    # thing that fits it.
+    gs1_gtin = _gtin_from_body11("500001" + "00050")
     rows.append(
         {
             "line_no": 5,
@@ -73,6 +95,13 @@ def _electronics_manifest_rows() -> list[dict]:
     # A genuine UPC-E compressed code (case S6=1) alongside its UPC-A form
     # on a *different* line, to demonstrate GTIN-tier collapsing without
     # being the same manifest line.
+    #
+    # The companion line is the half that was missing: the comment described
+    # a pair, the code emitted only the compressed member of it, and the
+    # compressed member was not even a valid UPC-E (see _upce_case012). Both
+    # lines are here now, and tests/test_upce_vectors.py asserts they
+    # actually collapse to the same GTIN-14 -- which is the whole point of
+    # the demo and was previously true of nothing in it.
     upce = _upce_case012(0, 4, 3, 1, 5, 6, 7)
     rows.append(
         {
@@ -81,6 +110,15 @@ def _electronics_manifest_rows() -> list[dict]:
             "description": "Small accessory, printed as UPC-E",
             "qty_expected": 2,
             "raw_barcode": upce,
+        }
+    )
+    rows.append(
+        {
+            "line_no": 8,
+            "sku": "ELEC-COMPRESSED-1-UPCA",
+            "description": "Small accessory, same item printed as full UPC-A",
+            "qty_expected": 1,
+            "raw_barcode": barcode.upce_to_upca(upce),
         }
     )
     return rows

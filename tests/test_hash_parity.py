@@ -13,6 +13,7 @@ harness script, tests/_parity_harness.js) and asserts they agree, byte for
 byte, across a battery of adversarial inputs.
 """
 
+import ast
 import json
 import shutil
 import subprocess
@@ -152,3 +153,109 @@ def test_tier_order_matches_javascript():
     py_order = [int(t) for t in barcode.TIER_ORDER]
     js_order = _js_tier_order()
     assert py_order == js_order
+
+
+# ---------------------------------------------------------------------------
+# Unicode digits (finding A1/A2)
+#
+# str.isdigit() returns True for characters int() cannot parse (superscripts)
+# AND for non-ASCII decimal digits int() *can* parse (Arabic-Indic and
+# friends). barcode.js's isDigits is ASCII-only by construction, so every
+# .isdigit() in barcode.py was a divergence -- and the superscript case was
+# worse than a divergence: gtin_canonicalize gated on .isdigit() and then
+# handed each character to int(), raising ValueError out of normalize() on a
+# path with no handler anywhere in it. That is reachable from an
+# unauthenticated worker session via /w/sync's rawPayload, and because the
+# outbox only drops what the server names, one such payload wedged that
+# phone's sync queue permanently.
+#
+# These runs are 14 characters long on purpose: that is what reaches AI 01's
+# fixed-length branch, which is where the crash lived. The existing
+# adversarial corpus contains Unicode, but no run long enough to get there.
+# ---------------------------------------------------------------------------
+
+UNICODE_DIGIT_CASES = [
+    "(01)" + "²" * 14,  # SUPERSCRIPT TWO -- isdigit() true, int() raises
+    "(01)" + "³" * 14,  # SUPERSCRIPT THREE
+    "(01)" + "¹" * 14,  # SUPERSCRIPT ONE
+    "(01)" + "".join(chr(0x0660 + (i % 10)) for i in range(14)),  # ARABIC-INDIC
+    "(01)" + "".join(chr(0x06F0 + (i % 10)) for i in range(14)),  # EXTENDED ARABIC-INDIC
+    "(01)" + "".join(chr(0x0966 + (i % 10)) for i in range(14)),  # DEVANAGARI
+    "²" * 8,  # bare 8 "digits": the UPC-E canonicalization branch
+    "²" * 12,
+    # chr(0x0660) is ARABIC-INDIC DIGIT ZERO. Written as chr() rather than
+    # the literal glyph: it is visually indistinguishable from characters it
+    # is not, which is the whole reason this class of bug survived review.
+    chr(0x0660) * 12,  # bare 12: the UPC-A branch
+    chr(0x0660) * 13,
+    chr(0x0660) * 7,  # the 7/11 "check digit omitted" branch
+    chr(0x0660) * 11,
+    "1234" + chr(0x0660) + "5678",  # mixed ASCII and non-ASCII digits
+    chr(0x0660) + "1234567890",
+]
+
+
+def test_normalize_does_not_raise_on_unicode_digits():
+    """A1: the crash itself, independent of parity.
+
+    normalize() is called inside /w/sync's per-scan db.transaction with no
+    handler in the call chain, so an exception here is a 500 for the whole
+    batch, not a rejected scan.
+    """
+    for raw in UNICODE_DIGIT_CASES:
+        barcode.normalize(raw)  # must not raise
+
+
+def test_unicode_digit_keys_match_javascript():
+    """A2: the non-crashing half -- the server emitting keys the phone can
+    never compute, which is a phantom reject, which is a billable event
+    that was not earned."""
+    py = []
+    for raw in UNICODE_DIGIT_CASES:
+        norm = barcode.normalize(raw)
+        py.append(
+            {
+                "stripped": barcode.strip_control_chars(raw),
+                "normalized": norm.normalized,
+                "keys": {str(int(tier)): key for tier, key in norm.keys.items()},
+            }
+        )
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node.js is required to run the JS side of the parity test")
+    proc = subprocess.run(
+        [node, str(HARNESS)],
+        input=json.dumps(UNICODE_DIGIT_CASES),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"node harness failed: {proc.stderr}"
+    js = json.loads(proc.stdout)
+
+    for raw, p, j in zip(UNICODE_DIGIT_CASES, py, js, strict=True):
+        assert p["normalized"] == j["normalized"], f"normalize mismatch for {raw!r}"
+        assert p["keys"] == j["keys"], f"key mismatch for {raw!r}: py={p['keys']} js={j['keys']}"
+
+
+def test_no_isdigit_remains_in_the_engine():
+    """The fix is only durable if the next edit cannot reintroduce it.
+
+    str.isdigit() has no correct use in this module: every digit test here
+    must agree with barcode.js's ASCII-only isDigits(). barcode._is_digits
+    is the replacement.
+    """
+    source = (Path(__file__).parent.parent / "barcode.py").read_text()
+    # Parsed, not grepped: the docstring of _is_digits explains at length why
+    # .isdigit() is banned, and a text search cannot tell that prose from a
+    # call. The AST can -- it only sees real attribute accesses.
+    tree = ast.parse(source)
+    offenders = [
+        f"line {node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "isdigit"
+    ]
+    assert not offenders, "barcode.py must use _is_digits(), not .isdigit(): " + ", ".join(
+        offenders
+    )

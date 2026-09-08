@@ -59,6 +59,30 @@ _EDGE_TRIM_CHARS = "\x00 \t\n\r\x0b\x0c"
 GS_SEP = "\x1d"
 
 
+def _is_digits(s: str) -> bool:
+    """ASCII-only digit test -- the deliberate replacement for str.isdigit().
+
+    str.isdigit() returns True for characters int() cannot parse (superscripts
+    such as U+00B2) and for non-ASCII decimal digits (Arabic-Indic U+0660 and
+    friends) that int() *can* parse. Both are parity hazards against
+    barcode.js's isDigits(), which is ASCII-only by construction:
+
+      - superscripts: gtin_canonicalize gates on .isdigit() and then hands each
+        character to int(), so "(01)" + "\u00b2"*14 raised ValueError out of
+        normalize() -- a remote crash on a path with no handler.
+      - Arabic-Indic digits: they survive to gtin_canonicalize and int() parses
+        them, so the server emitted GTIN14/BODY_NO_CHECK keys the phone will
+        never compute. A phantom reject, i.e. a billable event not earned.
+
+    Every digit test in this module must use this function, never .isdigit().
+    tests/test_hash_parity.py carries a Unicode-digit corpus that fails if one
+    of them regresses.
+    """
+    if not s:
+        return False
+    return all("0" <= c <= "9" for c in s)
+
+
 def strip_control_chars(s: str) -> str:
     """Remove NUL, FS/GS/RS/US, and whitespace from anywhere in the string.
 
@@ -173,7 +197,7 @@ def parse_gs1(s: str) -> GS1Fields | None:
             else:
                 ai = working[pos : pos + 2]
                 pos += 2
-            if not ai.isdigit():
+            if not _is_digits(ai):
                 break
 
         if ai in FIXED_AI_LENGTHS:
@@ -226,7 +250,7 @@ def upce_body_to_upca_body(upce_body: str) -> str:
     is never an input to it -- so this is usable even when a scanner or
     manifest line has the check digit stripped off entirely.
     """
-    if len(upce_body) != 7 or not upce_body.isdigit():
+    if len(upce_body) != 7 or not _is_digits(upce_body):
         raise ValueError("UPC-E body must be exactly 7 digits (check digit excluded)")
     n, s1, s2, s3, s4, s5, s6 = tuple(upce_body)
     if s6 in "012":
@@ -241,7 +265,7 @@ def upce_body_to_upca_body(upce_body: str) -> str:
 
 def upce_to_upca(upce: str) -> str:
     """Expand an 8-digit UPC-E code (N S1 S2 S3 S4 S5 S6 C) to 12-digit UPC-A."""
-    if len(upce) != 8 or not upce.isdigit():
+    if len(upce) != 8 or not _is_digits(upce):
         raise ValueError("UPC-E input must be exactly 8 digits")
     return upce_body_to_upca_body(upce[:7]) + upce[7]
 
@@ -272,7 +296,7 @@ def gtin_canonicalize(digits: str) -> GtinInfo | None:
     these lengths, never a truncation or rejection of other lengths
     elsewhere in the pipeline.
     """
-    if not digits.isdigit():
+    if not _is_digits(digits):
         return None
     n = len(digits)
     upce = upca = ean13 = gtin14 = None
@@ -369,7 +393,7 @@ def normalize(raw: str, suffix_len: int = DEFAULT_SUFFIX_LEN) -> Normalized:
     gtin_source = None
     if gs1 and gs1.gtin:
         gtin_source = strip_control_chars(gs1.gtin)
-    elif normalized.isdigit() and len(normalized) in (8, 12, 13, 14):
+    elif _is_digits(normalized) and len(normalized) in (8, 12, 13, 14):
         gtin_source = normalized
 
     gtin_info = gtin_canonicalize(gtin_source) if gtin_source else None
@@ -381,7 +405,7 @@ def normalize(raw: str, suffix_len: int = DEFAULT_SUFFIX_LEN) -> Normalized:
     if gtin_info:
         keys[Tier.GTIN14] = gtin_info.gtin14
         keys[Tier.BODY_NO_CHECK] = gtin_info.body_no_check
-    elif normalized.isdigit() and len(normalized) in (7, 11):
+    elif _is_digits(normalized) and len(normalized) in (7, 11):
         # Unambiguous "check digit omitted" body: 7 digits can only be a
         # UPC-E body missing its check digit, 11 only a UPC-A body missing
         # its check digit (12/13-digit inputs are ambiguous with a
@@ -394,8 +418,8 @@ def normalize(raw: str, suffix_len: int = DEFAULT_SUFFIX_LEN) -> Normalized:
         upca_body = upce_body_to_upca_body(normalized) if len(normalized) == 7 else normalized
         keys[Tier.BODY_NO_CHECK] = "00" + upca_body
 
-    digits_only = "".join(ch for ch in normalized if ch.isdigit())
-    if normalized.isdigit() and digits_only:
+    digits_only = "".join(ch for ch in normalized if "0" <= ch <= "9")
+    if _is_digits(normalized) and digits_only:
         stripped_zeros = digits_only.lstrip("0") or "0"
         keys[Tier.DIGITS_STRIPPED] = stripped_zeros
 

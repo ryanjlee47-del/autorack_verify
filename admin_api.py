@@ -37,6 +37,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import hmac
+import os
 import secrets
 import sqlite3
 import tempfile
@@ -50,6 +51,7 @@ import backup
 import barcode
 import billing
 import db
+import maintenance
 import manifest_ingest
 import reports
 from sqlstore import SQL
@@ -59,12 +61,27 @@ from sqlstore import SQL
 TOKEN_FILENAME = "admin_api_token"  # noqa: S105
 MAX_TABLE_PAGE_LIMIT = 500
 
+# Upper bound on accounts.loose_suffix_len. barcode.MIN_SUFFIX_LEN is the
+# lower one and lives in the engine because both languages clamp to it;
+# the upper bound has no engine meaning, it just stops an operator typing a
+# value long enough that tier 6 can never produce a key. Enforced in the
+# database too -- see migrations/0009.
+MAX_SUFFIX_LEN = 20
+
 
 def _load_or_create_token(path: Path) -> str:
     """Mirrors app.py's _load_or_create_secret_key -- same reasoning:
     minting a fresh token per process would silently break any GUI that
     saved the previous one, including across the very restart the operator
-    triggers when deploying this feature."""
+    triggers when deploying this feature.
+
+    Created with O_CREAT|O_EXCL, not a plain write. Two workers starting
+    together (gunicorn --workers N on a first deploy) both find the file
+    absent, both mint a value, and both write -- so half the processes end
+    up with a different secret than the other half, and sessions/CSRF
+    tokens issued by one are rejected by the next. O_EXCL makes exactly one
+    writer win; the losers re-read what the winner wrote.
+    """
     try:
         existing = path.read_text().strip()
         if existing:
@@ -73,7 +90,12 @@ def _load_or_create_token(path: Path) -> str:
         pass
     token = secrets.token_hex(32)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return path.read_text().strip()
+    with os.fdopen(fd, "w") as fh:
+        fh.write(token)
     with contextlib.suppress(OSError):  # best effort, as in app.py
         path.chmod(0o600)
     return token
@@ -406,6 +428,21 @@ def act_account_update(conn, actor, params):
     before = _row(db.get_account(conn, account_id))
     if before is None:
         raise ApiError("account not found", 404)
+    # Validate before auditing, so a rejected update leaves no audit row
+    # claiming a change that never happened. The database enforces this too
+    # (migrations/0009), but a 400 here is a better answer than a 500 out of
+    # a trigger, and the operator gets told what the bound is.
+    if "loose_suffix_len" in fields:
+        try:
+            suffix_len = int(fields["loose_suffix_len"])
+        except (TypeError, ValueError) as exc:
+            raise ApiError("loose_suffix_len must be an integer", 400) from exc
+        if not barcode.MIN_SUFFIX_LEN <= suffix_len <= MAX_SUFFIX_LEN:
+            raise ApiError(
+                f"loose_suffix_len must be between {barcode.MIN_SUFFIX_LEN} and {MAX_SUFFIX_LEN}",
+                400,
+            )
+        fields["loose_suffix_len"] = suffix_len
     db.record_audit(
         conn,
         actor=actor,
@@ -461,7 +498,8 @@ def act_account_grant_credit(conn, actor, params):
 def act_account_impersonate_link(conn, actor, params):
     _require(params, "account_id")
     account_id = int(params["account_id"])
-    expires = (datetime.now(UTC) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    # Milliseconds -- see auth._expiry for why the precision matters.
+    expires = (datetime.now(UTC) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     token = db.create_impersonation_token(conn, account_id, None, expires)
     db.record_audit(
         conn,
@@ -672,7 +710,21 @@ def run_restore(kind: str, content: bytes, db_path: Path, photos_dir: Path) -> N
     """Shared by the /restore route (remote) and admin_gui.py's local
     mode. `content` is the uploaded backup file's raw bytes -- written to
     a temp file here so backup.restore_backup/restore_appeal_photos (which
-    both take a path) can operate on it unchanged."""
+    both take a path) can operate on it unchanged.
+
+    A database restore replaces the live file underneath a running process.
+    backup.restore_backup's precondition ("no other process holds the
+    database open") was documented and then not met: this ran inside the
+    Flask app with per-request connections open and match-index caches
+    populated, so requests in flight could read a half-restored file and
+    the caches would keep serving pre-restore data afterwards.
+
+    The maintenance gate closes the in-process half of that -- new requests
+    get 503, and every derived cache is dropped once the file has been
+    swapped. The cross-process half (gunicorn siblings, an operator's
+    script) is still an operational requirement, not something this can
+    enforce; see maintenance.py.
+    """
     if kind not in ("db", "photos"):
         raise ApiError("kind must be 'db' or 'photos'")
     suffix = ".zip" if kind == "photos" else ".db"
@@ -681,10 +733,17 @@ def run_restore(kind: str, content: bytes, db_path: Path, photos_dir: Path) -> N
         tmp_path = Path(tmp.name)
     try:
         if kind == "photos":
+            # Photo files are write-once after upload and are addressed by
+            # path, so extracting over them needs no gate.
             backup.restore_appeal_photos(tmp_path, photos_dir)
         else:
-            backup.backup_database(db_path)  # safety snapshot of current state first
-            backup.restore_backup(tmp_path, db_path)
+            with maintenance.restoring():
+                backup.backup_database(db_path)  # safety snapshot of current state first
+                backup.restore_backup(tmp_path, db_path)
+                # Keyed on (database identity, shift id, bundle_version) --
+                # a restored file can reuse all three while holding
+                # different manifest lines.
+                manifest_ingest.clear_match_index_cache()
     finally:
         tmp_path.unlink(missing_ok=True)
 

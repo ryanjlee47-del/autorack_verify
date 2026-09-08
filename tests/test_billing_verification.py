@@ -83,6 +83,21 @@ def rig(tmp_path):
     }
 
 
+def _issue_bundle(rig):
+    """Fetch the shift bundle the way a real phone does.
+
+    This is what records sessions.bundle_version_issued, which is now what
+    the billing gate reads. It used to read the bundleVersion the phone put
+    in its own sync payload -- but the party holding the phones is the party
+    being billed, so a client sending 0 was never charged for anything. The
+    staleness tests below therefore drive the server's record, not a field
+    in the request body.
+    """
+    resp = rig["client"].get("/w/bundle/" + rig["sid"])
+    assert resp.status_code == 200
+    return resp
+
+
 def _sync_reject(rig, raw_payload, scan_uuid=None, bundle_version=0):
     scan_uuid = scan_uuid or str(uuid.uuid4())
     resp = rig["client"].post(
@@ -251,6 +266,11 @@ def test_cache_is_invalidated_when_the_manifest_changes(rig):
     )
     shift_now = db.get_shift(rig["conn"], rig["shift_id"])
 
+    # The phone refetches the bundle after the manifest change, exactly as
+    # checkStaleness() now makes it do -- that is what brings this session's
+    # issued version up to the shift's current one and reopens the gate.
+    _issue_bundle(rig)
+    shift_now = db.get_shift(rig["conn"], rig["shift_id"])
     scan_uuid_2, resp = _sync_reject(rig, new_barcode, bundle_version=shift_now["bundle_version"])
     assert resp.status_code == 200
     assert (
@@ -266,11 +286,44 @@ def test_cache_is_invalidated_when_the_manifest_changes(rig):
 
 
 def test_stale_bundle_version_reject_is_neither_billed_nor_flagged(rig):
-    """Existing behavior, unchanged by this fix: a scan made against an
-    old bundle version isn't billed at all (the phone hasn't caught up
-    yet), so it must not spuriously trigger a manual_review exception
-    either -- that would defeat the point of waiting for a refresh."""
-    scan_uuid, resp = _sync_reject(rig, rig["real_barcode"], bundle_version=-1)
+    """A scan made against an old bundle version isn't billed at all (the
+    phone hasn't caught up yet), so it must not spuriously trigger a
+    manual_review exception either -- that would defeat the point of
+    waiting for a refresh.
+
+    Staleness is now established the only way the server can trust: this
+    session fetched bundle version N, the manifest then moved to N+1, and
+    the session has not refetched. The scan's own bundleVersion field is
+    deliberately set to a *current-looking* value here, to prove it no
+    longer influences the decision.
+    """
+    _issue_bundle(rig)  # issued version 0
+    account = db.get_account(rig["conn"], rig["account_id"])
+    db.insert_manifest_lines(
+        rig["conn"],
+        rig["manifest_id"],
+        [
+            {
+                "line_no": 98,
+                "sku": "LATER",
+                "description": "d",
+                "qty_expected": 1,
+                "raw_barcode": "0000055555",
+            }
+        ],
+    )
+    manifest_ingest.regenerate_keys(
+        rig["conn"],
+        rig["manifest_id"],
+        bool(account["loose_match_enabled"]),
+        account["loose_suffix_len"],
+    )
+    shift_now = db.get_shift(rig["conn"], rig["shift_id"])
+    assert shift_now["bundle_version"] > 0  # the shift moved on; the session did not
+
+    scan_uuid, resp = _sync_reject(
+        rig, rig["real_barcode"], bundle_version=shift_now["bundle_version"]
+    )
     assert resp.status_code == 200
     assert (
         db.query_one(rig["conn"], "SELECT 1 FROM billing_events WHERE scan_uuid = ?", (scan_uuid,))

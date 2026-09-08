@@ -95,6 +95,15 @@
     "30": "qty",
   };
 
+  // Every lookup into an object used as a map goes through this. A bare
+  // `table[key]` finds Object.prototype members -- "constructor", "toString",
+  // "valueOf", "hasOwnProperty" -- for keys that are not in the table at all.
+  // A barcode payload is attacker-influenced text, so those keys are reachable
+  // from the dock. See buildIndex/matchAgainstIndex for what that cost.
+  function has(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+  }
+
   function isDigits(s) {
     if (s.length === 0) return false;
     for (var i = 0; i < s.length; i++) {
@@ -109,8 +118,7 @@
     if (s[0] === "(") return true;
     if (s[0] === GS_SEP) return true;
     var two = s.slice(0, 2);
-    return Object.prototype.hasOwnProperty.call(FIXED_AI_LENGTHS, two) ||
-      Object.prototype.hasOwnProperty.call(VARIABLE_AIS, two);
+    return has(FIXED_AI_LENGTHS, two) || has(VARIABLE_AIS, two);
   }
 
   function parseGs1(raw) {
@@ -139,7 +147,7 @@
         pos = end + 1;
       } else {
         var two = working.slice(pos, pos + 2);
-        if (THREE_DIGIT_AI_PREFIXES[two]) {
+        if (has(THREE_DIGIT_AI_PREFIXES, two)) {
           ai = working.slice(pos, pos + 3);
           pos += 3;
         } else {
@@ -150,12 +158,12 @@
       }
 
       var value;
-      if (Object.prototype.hasOwnProperty.call(FIXED_AI_LENGTHS, ai)) {
+      if (has(FIXED_AI_LENGTHS, ai)) {
         var length = FIXED_AI_LENGTHS[ai];
         value = working.slice(pos, pos + length);
         if (value.length < length) break;
         pos += length;
-      } else if (VARIABLE_AIS[ai]) {
+      } else if (has(VARIABLE_AIS, ai)) {
         var stop;
         if (bracketed) {
           var nextParen = working.indexOf("(", pos);
@@ -288,6 +296,11 @@
   var DEFAULT_SUFFIX_LEN = 8;
   var MIN_SUFFIX_LEN = 6;
 
+  // Mirrors barcode.py's CONFIRMATION_REQUIRED_TIERS. Transcribed as a
+  // condition (`tier === Tier.SUFFIX`) it was invisible to the parity test
+  // that covers TIER_ORDER; as a named constant it is covered.
+  var CONFIRMATION_REQUIRED_TIERS = [Tier.SUFFIX];
+
   function normalize(raw, suffixLen) {
     if (suffixLen === undefined || suffixLen === null) suffixLen = DEFAULT_SUFFIX_LEN;
     if (suffixLen < MIN_SUFFIX_LEN) suffixLen = MIN_SUFFIX_LEN;
@@ -346,13 +359,23 @@
   // ---------------------------------------------------------------------
   function buildIndex(lineKeyRows) {
     // lineKeyRows: [{manifestLineId, tier, key}, ...]
-    var index = {};
+    //
+    // Every map here is Object.create(null), never {}. With a plain object
+    // literal a manifest line whose barcode text is "constructor" made
+    // `!byKey[row.key]` falsy (it found Function.prototype.constructor), so the
+    // array was never created and .indexOf threw -- which propagated out of
+    // applyBundle, left matchIndex null, and silently discarded every scan for
+    // the rest of the shift. The mirror defect is in matchAgainstIndex.
+    // Python's dict has no such inherited keys; this is what keeps the two
+    // engines equivalent. tests/_parity_harness.js covers both directions.
+    var index = Object.create(null);
     TIER_ORDER.forEach(function (t) {
-      index[t] = {};
+      index[t] = Object.create(null);
     });
     lineKeyRows.forEach(function (row) {
       var byKey = index[row.tier];
-      if (!byKey[row.key]) byKey[row.key] = [];
+      if (byKey === undefined) return;
+      if (!has(byKey, row.key)) byKey[row.key] = [];
       if (byKey[row.key].indexOf(row.manifestLineId) === -1) {
         byKey[row.key].push(row.manifestLineId);
       }
@@ -363,7 +386,14 @@
   function matchAgainstIndex(index, rawPayload, options) {
     options = options || {};
     var looseMatchEnabled = !!options.looseMatchEnabled;
-    var suffixLen = options.suffixLen || DEFAULT_SUFFIX_LEN;
+    // Explicit null/undefined test, not `||`: suffixLen 0 must clamp to
+    // MIN_SUFFIX_LEN the way barcode.py's max(suffix_len, MIN_SUFFIX_LEN)
+    // does, not fall back to DEFAULT_SUFFIX_LEN. The two produced different
+    // tier-6 keys, which is a phantom reject.
+    var suffixLen = options.suffixLen === undefined || options.suffixLen === null
+      ? DEFAULT_SUFFIX_LEN
+      : options.suffixLen;
+    if (suffixLen < MIN_SUFFIX_LEN) suffixLen = MIN_SUFFIX_LEN;
     var disabledKeys = options.disabledKeys || {};
 
     var norm = normalize(rawPayload, suffixLen);
@@ -375,20 +405,28 @@
       var key = tier === Tier.ALIAS ? norm.normalized : norm.keys[tier];
       var hits = [];
       if (key !== undefined && key !== null) {
-        var disabledForTier = disabledKeys[tier];
-        var isDisabled = disabledForTier && disabledForTier.indexOf(key) !== -1;
+        // has(): disabledKeys arrives deserialized from the bundle JSON, so
+        // it is a plain object literal and a bare lookup would find
+        // Object.prototype members for prototype-named tiers.
+        var disabledForTier = has(disabledKeys, tier) ? disabledKeys[tier] : null;
+        var isDisabled = Array.isArray(disabledForTier) && disabledForTier.indexOf(key) !== -1;
         if (!isDisabled) {
-          hits = (index[tier] && index[tier][key]) || [];
+          var byKey = index[tier];
+          if (byKey && has(byKey, key)) hits = byKey[key];
+          // An index built by buildIndex always yields an array here. A bundle
+          // deserialized from anywhere else might not, and `hits.length === 1`
+          // on a non-array is how a wrong item passes as OK.
+          if (!Array.isArray(hits)) hits = [];
         }
       }
       candidatesByTier[tier] = hits;
-      if (hits.length === 1) {
+      if (hits.length === 1 && hits[0] !== undefined && hits[0] !== null) {
         return {
           resolved: true,
           tier: tier,
           manifestLineId: hits[0],
           candidatesByTier: candidatesByTier,
-          needsConfirmation: tier === Tier.SUFFIX,
+          needsConfirmation: CONFIRMATION_REQUIRED_TIERS.indexOf(tier) !== -1,
         };
       }
     }
@@ -415,6 +453,7 @@
     TIER_ORDER: TIER_ORDER,
     DEFAULT_SUFFIX_LEN: DEFAULT_SUFFIX_LEN,
     MIN_SUFFIX_LEN: MIN_SUFFIX_LEN,
+    CONFIRMATION_REQUIRED_TIERS: CONFIRMATION_REQUIRED_TIERS,
     normalize: normalize,
     buildIndex: buildIndex,
     matchAgainstIndex: matchAgainstIndex,

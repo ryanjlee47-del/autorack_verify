@@ -33,7 +33,10 @@
 
   Outbox.prototype.nextSeq = function () {
     this.seq += 1;
-    window.AutorackIDB.metaSet("seqCounter", this.seq);
+    // Persisting the counter is best-effort -- the scan write itself is the
+    // durable one -- but the rejection must be swallowed explicitly rather
+    // than left as an unhandled promise rejection on the scan hot path.
+    window.AutorackIDB.metaSet("seqCounter", this.seq).catch(function () {});
     return this.seq;
   };
 
@@ -85,6 +88,12 @@
     if (!navigator.onLine) return Promise.resolve(null);
     this.syncing = true;
 
+    // Every exit from here must clear self.syncing. The outer promise
+    // previously had no .catch, so if outboxAll() itself rejected (storage
+    // evicted, connection torn down) syncing stayed true for the life of
+    // the page: the loop kept ticking and returning early, the outbox never
+    // drained again, and flushCurrentSession at logout returned instantly.
+    // No visible symptom, and every scan after that point was lost.
     return window.AutorackIDB.outboxAll().then(function (all) {
       if (!all.length) {
         self.syncing = false;
@@ -119,6 +128,9 @@
           self.syncing = false;
           return null;
         });
+    }).catch(function () {
+      self.syncing = false;
+      return null;
     });
   };
 
@@ -130,6 +142,14 @@
   Outbox.prototype.flushCurrentSession = function (timeoutMs) {
     var self = this;
     var deadline = Date.now() + (timeoutMs || 3000);
+    var POLL_MS = 150;
+
+    function wait(ms) {
+      return new Promise(function (resolve) {
+        setTimeout(resolve, ms);
+      });
+    }
+
     function attempt() {
       return window.AutorackIDB.outboxAll().then(function (all) {
         var mine = all.filter(function (row) {
@@ -138,7 +158,19 @@
         if (!mine.length || Date.now() > deadline || !navigator.onLine) {
           return mine.length;
         }
-        return self.syncOnce().then(attempt);
+        return self.syncOnce().then(function (result) {
+          // syncOnce() returns null immediately when the background loop is
+          // already mid-sync. Recursing on that with no delay is a tight
+          // loop for the whole timeout, and each turn of it calls
+          // outboxAll() again. Yield instead and let the in-flight sync
+          // finish -- it is draining the same rows we are waiting on.
+          if (result === null) return wait(POLL_MS).then(attempt);
+          return attempt();
+        });
+      }).catch(function () {
+        // Cannot read the outbox at all. Report "unknown but non-zero" so
+        // logOut() warns rather than silently claiming everything drained.
+        return 1;
       });
     }
     return attempt();

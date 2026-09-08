@@ -88,6 +88,13 @@
       },
       vibrate: [80, 60, 80],
     },
+    // NOT a fourth worker-facing signal, and deliberately so: the spec is
+    // three unmistakable answers, and app.js's showResult() only ever passes
+    // ok/reject/duplicate (an 'unresolved' scan is shown to the worker as a
+    // reject; the distinction is for billing and audit, not for the dock).
+    // This is the fallback for an unrecognised kind -- reachable only when a
+    // caller passes something unexpected, where a distinct tone is more
+    // useful than silence.
     unresolved: {
       sound: function () {
         tone(500, 250, 0, 0.2);
@@ -97,7 +104,13 @@
   };
 
   function play(kind) {
-    var signal = SIGNALS[kind] || SIGNALS.unresolved;
+    // hasOwnProperty, not a bare lookup: play("constructor") would otherwise
+    // find Function.prototype.constructor, and `signal.sound()` on it throws
+    // -- so an unexpected kind would kill the feedback instead of falling
+    // back to it. Same defect class as the index lookups in barcode.js.
+    var signal = Object.prototype.hasOwnProperty.call(SIGNALS, kind)
+      ? SIGNALS[kind]
+      : SIGNALS.unresolved;
     signal.sound();
     vibrate(signal.vibrate);
   }
