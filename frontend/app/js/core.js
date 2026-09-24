@@ -1,7 +1,7 @@
 // Owner dashboard plumbing: session token, API access, layout, routing.
 
 import { ApiError, download as rawDownload, request } from "../../shared/api.js";
-import { brandMark, h, mount, toast } from "../../shared/dom.js";
+import { brandLockup, h, mount, toast } from "../../shared/dom.js";
 
 const TOKEN_KEY = "ar.owner_token";
 
@@ -109,7 +109,7 @@ export function layout(active, content) {
   mount(root,
     h("div", { class: "shell" },
       h("aside", { class: "sidebar" },
-        h("a", { class: "sidebar-brand", href: "#/" }, brandMark(), h("span", null, "Autorack")),
+        h("div", { class: "sidebar-brand" }, brandLockup({ reverse: true, tagline: true, href: "#/" })),
         h("div", { class: "sidebar-wh", title: me.warehouse.name }, me.warehouse.name),
         h("nav", { class: "nav" }, ...navLinks),
         h("div", { class: "sidebar-foot" },

@@ -165,13 +165,22 @@ export function confirmDialog(title, message, { confirmLabel = "Confirm", danger
   ]).then((v) => v === true);
 }
 
-export const BARCODE_ICON =
-  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="5" width="2" height="14"/>' +
-  '<rect x="7" y="5" width="1" height="14"/><rect x="10" y="5" width="2" height="14"/><rect x="14" y="5" width="1" height="14"/>' +
-  '<rect x="17" y="5" width="1.5" height="14"/><rect x="20" y="5" width="1" height="14"/></svg>';
-
-export function brandMark() {
-  return h("span", { class: "brand-mark" }, svg(BARCODE_ICON));
+/**
+ * The Autorack logo lockup: mark + wordmark (+ the "Verified Logistics" tag).
+ * `reverse` is for navy backgrounds: the bars alone, as on the dark logo.
+ */
+export function brandLockup({ reverse = false, tagline = false, href = null } = {}) {
+  const mark = h("img", {
+    class: ["lockup-mark", reverse && "lockup-mark-reverse"],
+    src: reverse ? "/assets/brand/mark-reverse.svg" : "/assets/brand/mark.svg",
+    alt: "",
+    width: reverse ? "26" : "30",
+    height: reverse ? "22" : "30",
+  });
+  const text = h("span", { class: "lockup-text" },
+    h("span", { class: "lockup-word" }, "AUTORACK"),
+    tagline ? h("span", { class: "lockup-tag" }, "VERIFIED LOGISTICS") : null);
+  return h(href ? "a" : "span", { class: "lockup", href, "aria-label": "Autorack" }, mark, text);
 }
 
 export function uuid4() {

@@ -1,7 +1,7 @@
 // Printable pick sheets (one per page) and the phone-setup poster.
 
 import { request } from "../../shared/api.js";
-import { h, mount, svg } from "../../shared/dom.js";
+import { brandLockup, h, mount, svg } from "../../shared/dom.js";
 import { getToken } from "./core.js";
 
 const host = document.getElementById("sheets");
@@ -13,7 +13,7 @@ function sheet(o, warehouse) {
   return h("section", { class: "sheet" },
     h("header", { class: "sheet-head" },
       h("div", null,
-        h("div", { class: "sheet-wh" }, warehouse),
+        h("div", { class: "sheet-brand" }, brandLockup(), h("span", { class: "sheet-wh" }, warehouse)),
         h("div", { class: "sheet-order" }, o.external_order_number || o.id.slice(0, 8)),
         h("div", { class: "sheet-meta" }, `${o.line_count} lines · ${o.units_expected} units`),
         o.notes ? h("div", { class: "sheet-notes" }, o.notes) : null),
@@ -40,6 +40,7 @@ async function main() {
   if (params.get("setup")) {
     const link = await request("/api/warehouse/device-link", { token });
     mount(host, h("section", { class: "sheet poster" },
+      brandLockup({ tagline: true }),
       h("div", { class: "poster-title" }, "Set up your phone for scanning"),
       h("div", { class: "poster-wh" }, me.warehouse.name),
       h("div", { class: "poster-qr" }, svg(link.qr_svg)),

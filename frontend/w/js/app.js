@@ -9,7 +9,7 @@
 //    phone showed, the worker is told what to do about it physically.
 
 import { ApiError, request } from "../../shared/api.js";
-import { BARCODE_ICON, dialog, h, mount, svg, toast, uuid4 } from "../../shared/dom.js";
+import { brandLockup, dialog, h, mount, toast, uuid4 } from "../../shared/dom.js";
 import * as FX from "./feedback.js";
 import { T, getLang, setLang } from "./i18n.js";
 import { Scanner } from "./scanner.js";
@@ -145,8 +145,8 @@ function langToggle() {
 function topbar(...right) {
   return h("header", { class: "topbar" },
     h("div", { class: "topbar-left" },
-      h("span", { class: "brand-mark" }, svg(BARCODE_ICON)),
-      h("span", { class: "topbar-title" }, app.device ? app.device.warehouseName : T("appName"))),
+      brandLockup({ reverse: true }),
+      app.device ? h("span", { class: "topbar-title" }, app.device.warehouseName) : null),
     h("div", { class: "topbar-right" }, statusChip(), ...right));
 }
 

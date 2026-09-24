@@ -33,20 +33,41 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding-bottom: 10px;
-  border-bottom: 3px solid #111;
+  border-bottom: 2px solid #162238;
+}
+
+.sheet-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+  color: #162238;
+}
+
+.sheet-brand .lockup-mark {
+  width: 22px;
+  height: 22px;
+}
+
+.sheet-brand .lockup-word {
+  font-size: 13px;
 }
 
 .sheet-wh {
-  font-size: 13px;
+  padding-left: 12px;
+  border-left: 1px solid #bbb;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #444;
+  color: #555;
 }
 
 .sheet-order {
   font-family: var(--mono);
-  font-size: 34px;
-  font-weight: 800;
+  font-size: 32px;
+  font-weight: 700;
+  color: #162238;
 }
 
 .sheet-meta,
@@ -114,9 +135,33 @@ body {
   gap: 10px;
 }
 
+.poster {
+  padding-top: 18mm;
+}
+
+.poster > .lockup {
+  margin-bottom: 18px;
+  color: #162238;
+}
+
+.poster > .lockup .lockup-mark {
+  width: 48px;
+  height: 48px;
+}
+
+.poster > .lockup .lockup-word {
+  font-size: 26px;
+}
+
+.poster > .lockup .lockup-tag {
+  font-size: 11px;
+}
+
 .poster-title {
-  font-size: 38px;
-  font-weight: 900;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #162238;
 }
 
 .poster-wh {

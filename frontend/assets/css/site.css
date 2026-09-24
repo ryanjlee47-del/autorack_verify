@@ -1,13 +1,13 @@
-/* Marketing page. */
+/* Marketing page. Navy and white, like the logo; blue for emphasis only. */
 
 body {
-  background: var(--surface);
+  background: var(--bg);
 }
 
 .container {
   max-width: 1120px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 24px;
 }
 
 .site-nav {
@@ -18,64 +18,66 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 12px 20px;
-  background: var(--brand-ink);
+  padding: 14px max(24px, calc((100vw - 1120px) / 2 + 24px));
+  background: var(--navy);
   color: #fff;
 }
 
 .site-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   color: #fff;
-  font-weight: 800;
-  font-size: 19px;
-  text-decoration: none;
 }
 
 .site-nav nav {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 24px;
   flex-wrap: wrap;
 }
 
 .site-nav nav a:not(.btn) {
-  color: #d5d9de;
+  color: var(--on-navy-2);
   text-decoration: none;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.site-nav nav a:not(.btn):hover {
+  color: #fff;
 }
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-  gap: 40px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 48px;
   align-items: center;
   max-width: 1120px;
   margin: 0 auto;
-  padding: 72px 20px 56px;
+  padding: 88px 24px 72px;
 }
 
 .eyebrow {
-  margin: 0 0 8px;
-  color: var(--warn);
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 13px;
+  margin: 0 0 16px;
+  color: var(--blue);
+  font-size: 12px;
+  letter-spacing: 0.2em;
 }
 
 .hero h1 {
-  margin: 0 0 16px;
-  font-size: clamp(36px, 5vw, 58px);
-  line-height: 1.04;
-  letter-spacing: -0.02em;
+  margin: 0 0 18px;
+  font-size: clamp(36px, 5vw, 56px);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
 }
 
 .lede {
-  font-size: 19px;
+  font-size: 18px;
   color: var(--text-2);
-  max-width: 560px;
+  max-width: 540px;
+}
+
+.hero .row {
+  margin-top: 26px;
 }
 
 .hero-phone {
@@ -89,27 +91,26 @@ body {
   top: 0;
   width: 220px;
   height: 420px;
-  border: 10px solid #16181c;
-  border-radius: 34px;
+  border: 10px solid var(--navy);
+  border-radius: 30px;
   overflow: hidden;
-  background: #16181c;
+  background: var(--navy);
   box-shadow: var(--shadow-lg);
   z-index: 2;
 }
 
 .phone-back {
-  right: 190px;
+  right: 236px;
   top: 40px;
   transform: rotate(-6deg);
   z-index: 1;
-  opacity: 0.95;
 }
 
 .phone-top {
   padding: 10px;
   color: #fff;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   text-align: center;
 }
 
@@ -134,42 +135,61 @@ body {
 }
 
 .phone-icon {
-  font-size: 72px;
-  font-weight: 900;
+  font-size: 64px;
+  font-weight: 700;
   line-height: 1;
 }
 
 .phone-title {
-  font-size: 26px;
-  font-weight: 900;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.phone-back .phone-title {
+  font-size: 19px;
 }
 
 .phone-detail {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .band {
-  padding: 28px 0;
-  background: var(--brand);
-  color: var(--brand-ink);
+  padding: 32px 0;
+  background: var(--navy);
+  color: var(--on-navy-2);
+}
+
+.band strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #fff;
+  font-weight: 600;
 }
 
 .three {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 24px;
+  gap: 32px;
+}
+
+.three > div {
+  padding-left: 16px;
+  border-left: 2px solid var(--blue);
+  font-size: 14.5px;
 }
 
 .section {
-  padding: 64px 20px;
+  padding: 80px 24px;
 }
 
 .section h2,
 .cta h2 {
-  margin: 0 0 24px;
-  font-size: 32px;
-  letter-spacing: -0.01em;
+  margin: 0 0 32px;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .how {
@@ -178,70 +198,80 @@ body {
   padding: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 24px;
+  gap: 20px;
 }
 
 .how li,
 .features > div {
-  padding: 20px;
+  padding: 22px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg);
+  background: var(--surface);
 }
 
 .how h3,
 .features h3 {
-  margin: 8px 0 6px;
-  font-size: 18px;
+  margin: 10px 0 6px;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .how p,
 .features p {
   margin: 0;
   color: var(--text-2);
+  font-size: 14.5px;
 }
 
 .how-n {
   display: inline-grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--brand-ink);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--navy);
   color: #fff;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .features {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 20px;
+}
+
+.features > div {
+  border-top: 2px solid var(--navy);
 }
 
 .pricing {
   display: grid;
   grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-  gap: 28px;
+  gap: 32px;
   align-items: start;
 }
 
 .price-card {
-  padding: 24px;
-  border: 2px solid var(--brand);
-  border-radius: 14px;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--blue);
+  border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
 }
 
 .price {
-  font-size: 56px;
-  font-weight: 900;
+  font-size: 52px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
   line-height: 1;
 }
 
 .price span {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0;
   color: var(--text-2);
 }
 
@@ -251,8 +281,9 @@ body {
 
 .checklist {
   list-style: none;
-  margin: 16px 0;
+  margin: 18px 0;
   padding: 0;
+  font-size: 14.5px;
 }
 
 .checklist li {
@@ -264,43 +295,57 @@ body {
   content: "✓";
   position: absolute;
   left: 0;
-  color: var(--ok);
-  font-weight: 800;
+  color: var(--blue);
+  font-weight: 700;
 }
 
 .compare {
   width: 100%;
   border-collapse: collapse;
-  font-size: 15px;
+  font-size: 14.5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .compare th,
 .compare td {
-  padding: 12px 10px;
+  padding: 13px 14px;
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
 }
 
+.compare tbody th {
+  font-weight: 600;
+}
+
 .compare thead th {
-  font-size: 13px;
   color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: uppercase;
 }
 
 .compare td:last-child,
 .compare thead th:last-child {
-  background: var(--warn-bg);
+  background: var(--blue-soft);
+}
+
+.compare thead th:last-child {
+  color: var(--blue-strong);
 }
 
 #faq details {
-  padding: 14px 0;
+  padding: 16px 0;
   border-bottom: 1px solid var(--border);
 }
 
 #faq summary {
   cursor: pointer;
-  font-weight: 700;
-  font-size: 17px;
+  font-weight: 600;
+  font-size: 16px;
 }
 
 #faq p {
@@ -309,23 +354,33 @@ body {
 }
 
 .cta {
-  padding: 64px 20px;
-  background: var(--brand-ink);
+  padding: 72px 24px;
+  background: var(--navy);
   color: #fff;
   text-align: center;
 }
 
 .site-foot {
   display: flex;
-  gap: 20px;
-  padding: 24px 20px;
+  align-items: center;
+  gap: 24px;
+  padding: 28px 24px;
   color: var(--text-3);
+  font-size: 14px;
+}
+
+.foot-spacer {
+  flex: 1;
+}
+
+.site-foot .lockup {
+  color: var(--text);
 }
 
 @media (max-width: 900px) {
   .hero {
     grid-template-columns: minmax(0, 1fr);
-    padding-top: 40px;
+    padding-top: 48px;
   }
   .hero-phone {
     display: none;
@@ -342,8 +397,7 @@ body {
   .compare {
     font-size: 13px;
   }
-}
-
-.phone-back .phone-title {
-  font-size: 20px;
+  .site-foot {
+    flex-wrap: wrap;
+  }
 }

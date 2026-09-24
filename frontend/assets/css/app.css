@@ -1,24 +1,25 @@
 /* Owner dashboard: desktop-first, glanceable, calm. */
 
-.viz-root,
+/* Chart series uses the brand blue (it clears the chart validator's contrast
+   and lightness checks on both surfaces). */
 :root {
-  --series-1: #2a78d6;
+  --series-1: #3e7bfa;
   --chart-grid: #e6e8ec;
-  --chart-tick: #6d7682;
+  --chart-tick: #6b7486;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
-    --series-1: #3987e5;
-    --chart-grid: #2b3038;
-    --chart-tick: #8a929c;
+    --series-1: #5b8ffb;
+    --chart-grid: #28375a;
+    --chart-tick: #8b96ab;
   }
 }
 
 :root[data-theme="dark"] {
-  --series-1: #3987e5;
-  --chart-grid: #2b3038;
-  --chart-tick: #8a929c;
+  --series-1: #5b8ffb;
+  --chart-grid: #28375a;
+  --chart-tick: #8b96ab;
 }
 
 .boot {
@@ -29,7 +30,7 @@
 
 .shell {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 232px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -40,26 +41,23 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 16px 12px;
-  background: var(--brand-ink);
-  color: #e9ebee;
+  padding: 20px 0 16px;
+  background: var(--navy);
+  color: var(--on-navy);
 }
 
 .sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 8px 12px;
+  padding: 0 20px 18px;
   color: #fff;
-  font-weight: 800;
-  font-size: 18px;
-  text-decoration: none;
 }
 
 .sidebar-wh {
-  padding: 0 8px 12px;
-  color: #aab1ba;
-  font-size: 13px;
+  margin: 0 20px 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--navy-3);
+  color: var(--on-navy-2);
+  font-size: 12.5px;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -72,26 +70,30 @@
 }
 
 .nav-link {
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  color: #d5d9de;
+  padding: 9px 20px 9px 17px;
+  border-left: 3px solid transparent;
+  color: var(--on-navy-2);
   text-decoration: none;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .nav-link:hover {
-  background: rgb(255 255 255 / 7%);
+  background: var(--navy-2);
   color: #fff;
 }
 
 .nav-link.active {
-  background: var(--brand);
-  color: var(--brand-ink);
+  border-left-color: var(--blue);
+  background: var(--navy-2);
+  color: #fff;
+  font-weight: 600;
 }
 
 .sidebar-foot {
   margin-top: auto;
-  padding: 8px;
+  padding: 12px 20px 0;
+  border-top: 1px solid var(--navy-3);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -99,19 +101,20 @@
 }
 
 .sidebar-foot .muted {
-  color: #aab1ba;
+  color: var(--on-navy-2);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .sidebar-foot .link-btn {
-  color: #f5c542;
+  color: #8fb3ff;
+  font-weight: 500;
   text-align: left;
   padding: 0;
 }
 
 .main {
-  padding: 24px 28px 48px;
+  padding: 28px 32px 48px;
   max-width: 1280px;
   width: 100%;
 }
@@ -131,8 +134,9 @@
 
 .page-head h1 {
   margin: 0;
-  font-size: 26px;
-  line-height: 1.2;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
 .page-head p {
@@ -149,16 +153,19 @@
 
 .card {
   margin-bottom: 18px;
-  padding: 18px;
+  padding: 18px 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: var(--shadow);
 }
 
 .card-title {
-  margin: 0 0 12px;
-  font-size: 16px;
+  margin: 0 0 14px;
+  color: var(--text-2);
+  font-size: var(--label-size);
+  font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: uppercase;
 }
 
 details.card > summary {
@@ -201,20 +208,22 @@ details.card > summary {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: var(--shadow);
 }
 
 .tile-label {
-  color: var(--text-2);
-  font-size: 13px;
+  color: var(--text-3);
+  font-size: var(--label-size);
   font-weight: 600;
+  letter-spacing: var(--label-spacing);
+  text-transform: uppercase;
 }
 
 .tile-value {
-  margin-top: 2px;
+  margin-top: 6px;
   font-size: 28px;
-  font-weight: 800;
-  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 
 .tile-hint {
@@ -229,19 +238,29 @@ details.card > summary {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  border-left: 6px solid var(--brand);
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+
+.tile-hero .tile-label {
+  color: #8fb3ff;
 }
 
 .tile-hero .tile-value {
-  font-size: 56px;
+  font-size: 52px;
+}
+
+.tile-hero .tile-hint {
+  color: var(--on-navy-2);
 }
 
 .tile-warn {
-  border-left: 4px solid var(--warn);
+  box-shadow: inset 3px 0 0 var(--warn);
 }
 
 .tile-bad {
-  border-left: 4px solid var(--bad);
+  box-shadow: inset 3px 0 0 var(--bad);
 }
 
 /* Tables */
@@ -260,8 +279,8 @@ details.card > summary {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text-3);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
   text-align: left;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -339,40 +358,32 @@ details.card > summary {
 
 .tabs {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
 }
 
 .tab {
-  padding: 6px 12px;
-  border: 1px solid transparent;
-  border-radius: 999px;
+  margin-bottom: -1px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
   background: transparent;
-  color: var(--text-2);
+  color: var(--text-3);
   font: inherit;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
 }
 
 .tab:hover {
-  background: var(--surface-2);
+  color: var(--text);
 }
 
 .tab.active {
-  background: var(--brand-ink);
-  color: #fff;
-}
-
-:root[data-theme="dark"] .tab.active {
-  background: var(--brand);
-  color: var(--brand-ink);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .tab.active {
-    background: var(--brand);
-    color: var(--brand-ink);
-  }
+  border-bottom-color: var(--blue);
+  color: var(--text);
+  font-weight: 600;
 }
 
 .input.input-inline {
@@ -443,7 +454,7 @@ details.card > summary {
 
 .dropzone.drag,
 .dropzone:hover {
-  border-color: var(--brand-strong);
+  border-color: var(--blue);
   background: var(--surface-2);
 }
 
@@ -509,7 +520,7 @@ details.card > summary {
   position: absolute;
   left: 0;
   color: var(--ok);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .live-dot::before {
@@ -546,8 +557,8 @@ details.card > summary {
 .setup-code {
   margin-top: 12px;
   text-align: center;
-  font-size: 28px;
-  font-weight: 800;
+  font-size: 26px;
+  font-weight: 700;
   letter-spacing: 0.08em;
 }
 
@@ -555,16 +566,17 @@ details.card > summary {
   margin: 12px 0;
   text-align: center;
   font-family: var(--mono);
-  font-size: 56px;
-  font-weight: 800;
+  font-size: 52px;
+  font-weight: 700;
   letter-spacing: 0.3em;
 }
 
 /* Plan */
 
 .plan-price {
-  font-size: 44px;
-  font-weight: 800;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .plan-price span {
@@ -674,26 +686,22 @@ details.card > summary {
 
 .auth-card {
   width: min(420px, 100%);
-  padding: 28px;
+  padding: 32px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-top: 3px solid var(--navy);
+  border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
 }
 
 .auth-card h1 {
-  margin: 16px 0 6px;
-  font-size: 24px;
+  margin: 24px 0 6px;
+  font-size: 22px;
+  font-weight: 700;
 }
 
 .auth-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
   color: var(--text);
-  font-weight: 800;
-  font-size: 18px;
-  text-decoration: none;
 }
 
 /* Small screens: the owner may check in from a phone */
@@ -721,14 +729,22 @@ details.card > summary {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
-    padding: 10px 16px;
+    padding: 12px 16px 0;
   }
   .sidebar-wh,
   .sidebar-foot {
     display: none;
   }
   .sidebar-brand {
-    padding: 0;
+    padding: 0 0 8px;
+  }
+  .nav-link {
+    padding: 6px 10px;
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+  }
+  .nav-link.active {
+    border-bottom-color: var(--blue);
   }
   .nav {
     flex-direction: row;

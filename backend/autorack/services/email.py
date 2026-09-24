@@ -86,14 +86,14 @@ def _send_resend(msg: Email) -> None:
 
 
 def _layout(heading: str, body_html: str, button_label: str, url: str, footer: str) -> str:
-    return f"""<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#15191e">
+    return f"""<!doctype html><html><body style="margin:0;background:#f7f7f5;font-family:Inter,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#162238">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px">
-<table role="presentation" width="100%" style="max-width:480px;background:#fff;border-radius:12px;padding:32px" cellpadding="0" cellspacing="0">
-<tr><td style="font-weight:700;font-size:15px;letter-spacing:.08em;color:#0d7a5f">AUTORACK</td></tr>
-<tr><td style="padding-top:16px;font-size:22px;font-weight:700">{html.escape(heading)}</td></tr>
+<table role="presentation" width="100%" style="max-width:480px;background:#fff;border-radius:6px;border-top:3px solid #162238;padding:32px" cellpadding="0" cellspacing="0">
+<tr><td style="font-weight:700;font-size:16px;letter-spacing:.04em;color:#162238">AUTORACK<div style="font-size:9px;font-weight:600;letter-spacing:.22em;color:#3e7bfa;padding-top:3px">VERIFIED LOGISTICS</div></td></tr>
+<tr><td style="padding-top:20px;font-size:21px;font-weight:700">{html.escape(heading)}</td></tr>
 <tr><td style="padding-top:12px;font-size:15px;line-height:1.5">{body_html}</td></tr>
-<tr><td style="padding-top:24px"><a href="{html.escape(url, quote=True)}" style="display:inline-block;background:#0d7a5f;color:#fff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:8px">{html.escape(button_label)}</a></td></tr>
-<tr><td style="padding-top:24px;font-size:13px;color:#5b6570;line-height:1.5">{html.escape(footer)}</td></tr>
+<tr><td style="padding-top:24px"><a href="{html.escape(url, quote=True)}" style="display:inline-block;background:#3e7bfa;color:#fff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:4px">{html.escape(button_label)}</a></td></tr>
+<tr><td style="padding-top:24px;font-size:13px;color:#6b7486;line-height:1.5">{html.escape(footer)}</td></tr>
 </table></td></tr></table></body></html>"""
 
 

@@ -3,7 +3,7 @@
 // (#token=...), which browsers never send to any server.
 
 import { request } from "../../shared/api.js";
-import { brandMark, h, mount } from "../../shared/dom.js";
+import { brandLockup, h, mount } from "../../shared/dom.js";
 import { getToken, setToken } from "./core.js";
 
 const root = document.getElementById("auth");
@@ -11,7 +11,7 @@ const page = root.dataset.page;
 
 function frame(...children) {
   mount(root,
-    h("a", { class: "auth-brand", href: "/" }, brandMark(), h("span", null, "Autorack")),
+    h("div", { class: "auth-brand" }, brandLockup({ tagline: true, href: "/" })),
     ...children);
 }
 

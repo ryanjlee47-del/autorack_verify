@@ -151,8 +151,17 @@ frontend/              static site, no build step (Cloudflare Pages)
   w/                   worker PWA + service worker
   shared/              API client, DOM helpers, barcode engine
   _headers, build.sh   Pages headers/CSP and API configuration
-docs/                  deployment, architecture, operations
+docs/                  deployment, architecture, operations; docs/brand/ has the original logo files
 ```
+
+### Brand
+
+The UI follows the logo: navy `#162238`, blue `#3E7BFA`, off-white `#F7F7F5`,
+and Inter (self-hosted in `frontend/assets/fonts/` under the SIL Open Font
+License, so the phone app renders it offline). The mark is redrawn as SVG in
+`frontend/assets/brand/` (`mark.svg` on light backgrounds, `mark-reverse.svg`
+on navy); app icons in `frontend/assets/icons/` are generated from it. Green,
+red and amber are reserved for scan results.
 
 ## More
 
