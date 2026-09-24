@@ -1,0 +1,37 @@
+[project]
+name = "autorack"
+version = "1.0.0"
+description = "Autorack: warehouse picking verification (FastAPI backend)"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error::DeprecationWarning:autorack.*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = [
+    "S101",   # assert is fine in tests
+    "B008",   # FastAPI's Depends() in defaults is the framework idiom
+    "RUF012",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S107", "S311", "RUF001"]
+"alembic/*" = ["E501"]
+"autorack/services/email.py" = ["E501"]  # inline-styled HTML email markup
+
+[tool.mypy]
+python_version = "3.12"
+files = ["autorack"]
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+ignore_missing_imports = true

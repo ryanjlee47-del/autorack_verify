@@ -1,38 +1,23 @@
-# Secrets and live state. `data/` holds the SQLite database, the app secret
-# key (CSRF tokens derive from it) and the operator API bearer token --
-# anyone holding that token has full operator access over the network,
-# including unsafe SQL writes and credential resets. None of it belongs in
-# version control.
-data/
-certs/
-backup_data/
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
 
-# Operator GUI exports. The Billing and Tables tabs write CSVs to whatever
-# directory they are pointed at, which in practice is often the project
-# root -- billing-account-2.csv was sitting here. These contain real
-# account, worker and billing data.
-*.csv
-
-# Internal engineering record: unfinished work, scale limits, open
-# questions. Kept out of version control deliberately rather than merely
-# out of the README, because git history is permanent -- a file committed
-# once stays readable in every clone even after a later commit deletes it.
-# Back this up separately; it is not in the repo.
-docs/ENGINEERING_NOTES.md
-
+# Python
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-node_modules/
-.claude/
+*.egg-info/
 
-# Review documents (not part of the project)
-autorack-verify-architecture-recommendations*.pdf
-autorack-verify-code-review*.pdf
+# Node (frontend tests only; the frontend itself has no build step)
+node_modules/
+
+# Operator exports can contain real warehouse data
+*.csv
+!backend/autorack/templates/*.csv
+!backend/tests/fixtures/*.csv
+
+.claude/
