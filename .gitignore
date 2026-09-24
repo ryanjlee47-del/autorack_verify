@@ -21,3 +21,4 @@ node_modules/
 !backend/tests/fixtures/*.csv
 
 .claude/
+!samples/*.csv

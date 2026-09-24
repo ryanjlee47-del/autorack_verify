@@ -1,0 +1,9 @@
+order,what_to_scan_or_type,expected_result
+FMT-1,02532038,Right item (UPC-E form of 025300000208)
+FMT-1,012345678905,Right item (UPC-A form of 0012345678905)
+FMT-1,(01)00012345678905,Already have enough if scanned after the line above; otherwise right item (GS1 form)
+FMT-1,036000291452,Right item (order line had no check digit)
+FMT-1,vnd-88213,Right item (case and spaces ignored)
+FMT-2,012530684551,"Right item x3, then Already have enough"
+FMT-2,999999999993,Wrong item
+SO-1001..SO-1010,any barcode listed on that order in 01-basic-orders.csv,Right item

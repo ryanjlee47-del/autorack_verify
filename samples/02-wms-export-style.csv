@@ -1,0 +1,42 @@
+Order #,Customer,Ship Via,UPC,Item Description,Item Number,Qty Ordered,Bin Location
+PT-58201,Harbor Supply Co,FedEx 2Day,013196704898,Clipboard letter,SKU-1024,6,F-06-06
+PT-58201,Harbor Supply Co,FedEx 2Day,012604686818,Bubble mailer #5,SKU-1008,6,B-08-02
+PT-58201,Harbor Supply Co,FedEx 2Day,012530684551,Label roll 4x6 (250),SKU-1006,5,F-06-12
+PT-58201,Harbor Supply Co,FedEx 2Day,012863694722,Zip bags 6x9 (500),SKU-1015,2,C-06-03
+PT-58201,Harbor Supply Co,FedEx 2Day,012789692468,Safety glasses clear,SKU-1013,6,A-04-01
+PT-58201,Harbor Supply Co,FedEx 2Day,012641687946,Corrugated box 12x12x12,SKU-1009,3,C-09-09
+PT-58202,Harbor Supply Co,FedEx 2Day,013270707159,Kraft paper roll 30in,SKU-1026,4,B-08-08
+PT-58202,Harbor Supply Co,FedEx 2Day,012715690209,Nitrile gloves M (100),SKU-1011,3,E-02-11
+PT-58203,Harbor Supply Co,FedEx 2Day,013381710543,Desiccant pack (50),SKU-1029,4,E-02-05
+PT-58203,Harbor Supply Co,FedEx 2Day,013159703760,Marker black (12),SKU-1023,6,E-05-11
+PT-58203,Harbor Supply Co,FedEx 2Day,012715690209,Nitrile gloves M (100),SKU-1011,4,E-02-11
+PT-58203,Harbor Supply Co,FedEx 2Day,012567685682,Bubble mailer #2,SKU-1007,2,A-07-07
+PT-58203,Harbor Supply Co,FedEx 2Day,013085701502,Shelf label holder,SKU-1021,3,C-03-09
+PT-58203,Harbor Supply Co,FedEx 2Day,012900695859,Poly mailer 10x13,SKU-1016,2,D-07-10
+PT-58204,Valley Hardware,LTL Freight,012826693595,Box cutter,SKU-1014,2,B-05-08
+PT-58204,Valley Hardware,LTL Freight,013381710543,Desiccant pack (50),SKU-1029,5,E-02-05
+PT-58204,Valley Hardware,LTL Freight,013011699248,Dunnage air pillows,SKU-1019,4,A-01-07
+PT-58204,Valley Hardware,LTL Freight,012789692468,Safety glasses clear,SKU-1013,1,A-04-01
+PT-58204,Valley Hardware,LTL Freight,012752691337,Nitrile gloves L (100),SKU-1012,1,F-03-06
+PT-58204,Valley Hardware,LTL Freight,012604686818,Bubble mailer #5,SKU-1008,1,B-08-02
+PT-58205,Valley Hardware,FedEx 2Day,013048700375,Hand truck wheel,SKU-1020,3,B-02-02
+PT-58205,Valley Hardware,FedEx 2Day,012419681169,Packing tape 48mm,SKU-1003,5,C-03-03
+PT-58205,Valley Hardware,FedEx 2Day,012789692468,Safety glasses clear,SKU-1013,1,A-04-01
+PT-58205,Valley Hardware,FedEx 2Day,012863694722,Zip bags 6x9 (500),SKU-1015,6,C-06-03
+PT-58205,Valley Hardware,FedEx 2Day,012937696980,Void fill paper roll,SKU-1017,6,E-08-05
+PT-58206,Harbor Supply Co,LTL Freight,012456682297,Stretch wrap 18in,SKU-1004,4,D-04-10
+PT-58206,Harbor Supply Co,LTL Freight,012678689074,Corrugated box 18x12x6,SKU-1010,1,D-01-04
+PT-58206,Harbor Supply Co,LTL Freight,012826693595,Box cutter,SKU-1014,6,B-05-08
+PT-58206,Harbor Supply Co,LTL Freight,012530684551,Label roll 4x6 (250),SKU-1006,6,F-06-12
+PT-58207,Northside Grocers,FedEx 2Day,013418711673,Fragile tape 2in,SKU-1030,5,F-03-12
+PT-58207,Northside Grocers,FedEx 2Day,012456682297,Stretch wrap 18in,SKU-1004,5,D-04-10
+PT-58207,Northside Grocers,FedEx 2Day,013344709416,Strapping buckle (1000),SKU-1028,2,D-01-10
+PT-58207,Northside Grocers,FedEx 2Day,013085701502,Shelf label holder,SKU-1021,2,C-03-09
+PT-58207,Northside Grocers,FedEx 2Day,012678689074,Corrugated box 18x12x6,SKU-1010,3,D-01-04
+PT-58207,Northside Grocers,FedEx 2Day,013307708289,Edge protector 2in,SKU-1027,2,C-09-03
+PT-58208,Metro Office Depot,UPS Ground,012715690209,Nitrile gloves M (100),SKU-1011,2,E-02-11
+PT-58208,Metro Office Depot,UPS Ground,012900695859,Poly mailer 10x13,SKU-1016,1,D-07-10
+PT-58208,Metro Office Depot,UPS Ground,012345678905,Blue widget 12-pack,SKU-1001,2,A-01-01
+PT-58208,Metro Office Depot,UPS Ground,012456682297,Stretch wrap 18in,SKU-1004,5,D-04-10
+PT-58208,Metro Office Depot,UPS Ground,012752691337,Nitrile gloves L (100),SKU-1012,1,F-03-06
+PT-58208,Metro Office Depot,UPS Ground,012678689074,Corrugated box 18x12x6,SKU-1010,1,D-01-04

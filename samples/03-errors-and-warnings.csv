@@ -1,0 +1,13 @@
+order_number,barcode,quantity,description
+BAD-1,012345678905,2,Blue widget 12-pack (fine)
+BAD-1,012345678905,1,"Blue widget 12-pack (duplicate row -> merged, qty becomes 3)"
+BAD-1,,1,Missing barcode -> error
+BAD-2,1.23457E+11,1,Excel scientific notation -> error
+BAD-2,012382680039,two,Quantity not a number -> error
+BAD-3,012419681169,0,Quantity zero -> error
+BAD-3,012456682297,,Stretch wrap 18in (no quantity -> assumed 1)
+,,, 
+BAD-4,025300000208,1,"Same product as the next row, UPC-A form"
+BAD-4,02532038,1,"Same product, UPC-E form -> 'same product' warning"
+,,,
+BAD-5,012493683424,2,Cable ties 8in (100) (fine; order has one good line)

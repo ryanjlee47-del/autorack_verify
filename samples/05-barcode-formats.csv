@@ -1,0 +1,7 @@
+order_number,barcode,quantity,description,location
+FMT-1,025300000208,1,UPC-A on the order; scan UPC-E 02532038 -> should be RIGHT ITEM,A-01-01
+FMT-1,0012345678905,1,EAN-13 on the order; scan UPC-A 012345678905 -> RIGHT ITEM,A-01-02
+FMT-1,03600029145,1,Check digit missing on order; scan 036000291452 -> RIGHT ITEM,A-01-03
+FMT-1,VND-88213,2,Vendor code; scan 'vnd-88213' (lowercase) -> RIGHT ITEM,A-01-04
+FMT-2,012530684551,3,Label roll 4x6 (250); scan it 4 times -> 4th is ALREADY HAVE ENOUGH,B-02-01
+FMT-2,012567685682,1,Bubble mailer #2; scan 999999999993 instead -> WRONG ITEM,B-02-02
