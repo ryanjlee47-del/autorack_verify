@@ -162,3 +162,18 @@ def test_production_config_validation():
 def test_neon_url_is_rewritten_for_psycopg3():
     s = Settings(database_url="postgresql://u:p@ep-cool.neon.tech/db?sslmode=require")
     assert s.database_url.startswith("postgresql+psycopg://")
+
+
+def test_client_ip_falls_back_to_proxy_headers():
+    from starlette.requests import Request
+
+    from autorack.deps import client_ip
+
+    def req(client, headers):
+        scope = {"type": "http", "headers": [(k.encode(), v.encode()) for k, v in headers.items()], "client": client}
+        return Request(scope)
+
+    assert client_ip(req(("1.2.3.4", 1), {"x-real-ip": "9.9.9.9"})) == "1.2.3.4"
+    assert client_ip(req(None, {"x-real-ip": "9.9.9.9"})) == "9.9.9.9"
+    assert client_ip(req(None, {"x-forwarded-for": "5.5.5.5, 10.0.0.1"})) == "5.5.5.5"
+    assert client_ip(req(None, {})) is None

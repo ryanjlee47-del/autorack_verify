@@ -22,8 +22,18 @@ from .services.audit import Actor
 
 def client_ip(request: Request) -> str | None:
     # uvicorn runs with --proxy-headers behind the host's load balancer, so
-    # request.client is already the real client address.
-    return request.client.host if request.client else None
+    # request.client is normally the real client address. Served over a unix
+    # socket (PythonAnywhere) there is no peer address at all; fall back to
+    # what the host's proxy forwarded, or every visitor would share one
+    # rate-limit bucket.
+    if request.client and request.client.host:
+        return request.client.host
+    real = request.headers.get("x-real-ip", "").strip()
+    if real:
+        return real[:64]
+    forwarded = request.headers.get("x-forwarded-for", "")
+    first = forwarded.split(",")[0].strip()
+    return first[:64] or None
 
 
 def _bearer(request: Request) -> str | None:

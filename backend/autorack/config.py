@@ -20,7 +20,10 @@ DEV_SECRET = "dev-only-secret-change-me-dev-only-secret-change-me"  # noqa: S105
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # backend/.env, wherever the process was started from (some hosts, e.g.
+    # PythonAnywhere, don't start it in backend/). A .env in the working
+    # directory, if different, is read too and wins.
+    model_config = SettingsConfigDict(env_file=(REPO_ROOT / "backend" / ".env", ".env"), extra="ignore")
 
     environment: Literal["development", "test", "production"] = "development"
 
