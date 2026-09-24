@@ -1,0 +1,170 @@
+/* Pick sheets and the setup poster. Black on white, one order per page. */
+
+body {
+  background: #e9ebee;
+  color: #111;
+}
+
+.print-bar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet {
+  width: min(210mm, calc(100vw - 32px));
+  min-height: 270mm;
+  margin: 16px auto;
+  padding: 14mm 12mm;
+  background: #fff;
+  color: #111;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 3px solid #111;
+}
+
+.sheet-wh {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #444;
+}
+
+.sheet-order {
+  font-family: var(--mono);
+  font-size: 34px;
+  font-weight: 800;
+}
+
+.sheet-meta,
+.sheet-notes {
+  font-size: 14px;
+}
+
+.sheet-notes {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #111;
+}
+
+.sheet-qr {
+  text-align: center;
+  font-size: 11px;
+}
+
+.sheet-qr svg {
+  width: 34mm;
+  height: 34mm;
+  display: block;
+}
+
+.sheet-table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sheet-table th {
+  text-align: left;
+  border-bottom: 2px solid #111;
+  padding: 6px 4px;
+}
+
+.sheet-table td {
+  border-bottom: 1px solid #bbb;
+  padding: 8px 4px;
+  vertical-align: top;
+}
+
+.sheet-table .box {
+  width: 20px;
+  font-size: 18px;
+}
+
+.sheet-table .qty {
+  text-align: right;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.sheet-foot {
+  margin-top: auto;
+  padding-top: 12px;
+  font-size: 11px;
+  color: #555;
+}
+
+.poster {
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.poster-title {
+  font-size: 38px;
+  font-weight: 900;
+}
+
+.poster-wh {
+  font-size: 20px;
+  color: #444;
+}
+
+.poster-qr svg {
+  width: 110mm;
+  height: 110mm;
+}
+
+.poster-steps {
+  text-align: left;
+  font-size: 20px;
+}
+
+.poster-code {
+  font-size: 22px;
+}
+
+.poster-code .mono {
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.poster-es {
+  font-size: 16px;
+  color: #444;
+}
+
+@media print {
+  @page {
+    size: auto;
+    margin: 0;
+  }
+  body {
+    background: #fff;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .sheet {
+    width: auto;
+    min-height: 100vh;
+    margin: 0;
+    box-shadow: none;
+    page-break-after: always;
+    break-after: page;
+  }
+}

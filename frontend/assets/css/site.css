@@ -1,0 +1,349 @@
+/* Marketing page. */
+
+body {
+  background: var(--surface);
+}
+
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--brand-ink);
+  color: #fff;
+}
+
+.site-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font-weight: 800;
+  font-size: 19px;
+  text-decoration: none;
+}
+
+.site-nav nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.site-nav nav a:not(.btn) {
+  color: #d5d9de;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 40px;
+  align-items: center;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 72px 20px 56px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--warn);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 13px;
+}
+
+.hero h1 {
+  margin: 0 0 16px;
+  font-size: clamp(36px, 5vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  font-size: 19px;
+  color: var(--text-2);
+  max-width: 560px;
+}
+
+.hero-phone {
+  position: relative;
+  height: 420px;
+}
+
+.phone {
+  position: absolute;
+  right: 40px;
+  top: 0;
+  width: 220px;
+  height: 420px;
+  border: 10px solid #16181c;
+  border-radius: 34px;
+  overflow: hidden;
+  background: #16181c;
+  box-shadow: var(--shadow-lg);
+  z-index: 2;
+}
+
+.phone-back {
+  right: 190px;
+  top: 40px;
+  transform: rotate(-6deg);
+  z-index: 1;
+  opacity: 0.95;
+}
+
+.phone-top {
+  padding: 10px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.phone-flash {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fff;
+  text-align: center;
+  padding: 12px;
+}
+
+.phone-bad {
+  background: var(--flash-bad);
+}
+
+.phone-ok {
+  background: var(--flash-ok);
+}
+
+.phone-icon {
+  font-size: 72px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.phone-title {
+  font-size: 26px;
+  font-weight: 900;
+}
+
+.phone-detail {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.band {
+  padding: 28px 0;
+  background: var(--brand);
+  color: var(--brand-ink);
+}
+
+.three {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.section {
+  padding: 64px 20px;
+}
+
+.section h2,
+.cta h2 {
+  margin: 0 0 24px;
+  font-size: 32px;
+  letter-spacing: -0.01em;
+}
+
+.how {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.how li,
+.features > div {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.how h3,
+.features h3 {
+  margin: 8px 0 6px;
+  font-size: 18px;
+}
+
+.how p,
+.features p {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.how-n {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--brand-ink);
+  color: #fff;
+  font-weight: 800;
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.pricing {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.price-card {
+  padding: 24px;
+  border: 2px solid var(--brand);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.price {
+  font-size: 56px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.price span {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.price-card .btn {
+  width: 100%;
+}
+
+.checklist {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+}
+
+.checklist li {
+  position: relative;
+  padding: 5px 0 5px 24px;
+}
+
+.checklist li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: var(--ok);
+  font-weight: 800;
+}
+
+.compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.compare th,
+.compare td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.compare thead th {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.compare td:last-child,
+.compare thead th:last-child {
+  background: var(--warn-bg);
+}
+
+#faq details {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+#faq summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 17px;
+}
+
+#faq p {
+  color: var(--text-2);
+  max-width: 760px;
+}
+
+.cta {
+  padding: 64px 20px;
+  background: var(--brand-ink);
+  color: #fff;
+  text-align: center;
+}
+
+.site-foot {
+  display: flex;
+  gap: 20px;
+  padding: 24px 20px;
+  color: var(--text-3);
+}
+
+@media (max-width: 900px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    padding-top: 40px;
+  }
+  .hero-phone {
+    display: none;
+  }
+  .three,
+  .how,
+  .features,
+  .pricing {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .site-nav nav a:not(.btn) {
+    display: none;
+  }
+  .compare {
+    font-size: 13px;
+  }
+}
+
+.phone-back .phone-title {
+  font-size: 20px;
+}

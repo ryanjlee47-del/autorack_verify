@@ -45,8 +45,11 @@ class FrontendFiles(StaticFiles):
 
     async def get_response(self, path: str, scope: Scope) -> Any:
         response = await super().get_response(path, scope)
-        if path.endswith((".html", ".js", ".webmanifest", ".css")) or path in ("", ".") or path.endswith("/"):
-            # Always revalidate code, so a deploy reaches phones on next load.
+        # Code and pages always revalidate, so a deploy reaches phones on next
+        # load. Only icons and the vendored decoder are allowed to sit in cache.
+        if path.startswith(("assets/icons/", "w/vendor/")):
+            response.headers["Cache-Control"] = "public, max-age=86400"
+        else:
             response.headers["Cache-Control"] = "no-cache"
         if path.endswith("sw.js"):
             response.headers["Service-Worker-Allowed"] = "/w/"

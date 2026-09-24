@@ -1,0 +1,546 @@
+/* Worker PWA: one job, on a phone, on a warehouse floor. Large type, large
+   targets (gloves), and results you can read at arm's length. */
+
+html,
+body {
+  min-height: 100dvh;
+  background: var(--bg);
+  overscroll-behavior-y: none;
+}
+
+body {
+  font-size: 17px;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+  background: var(--brand-ink);
+  color: #fff;
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.topbar-left {
+  flex: 1 1 auto;
+}
+
+.topbar-right {
+  flex: 0 0 auto;
+}
+
+.topbar-title {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar .btn,
+.screen .btn-sm {
+  white-space: nowrap;
+}
+
+.topbar .btn {
+  background: transparent;
+  border-color: rgb(255 255 255 / 35%);
+  color: #fff;
+}
+
+.screen {
+  padding: 16px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.screen h1 {
+  margin: 4px 0 8px;
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.narrow {
+  max-width: 440px;
+}
+
+.center {
+  text-align: center;
+}
+
+.center .stack,
+.center .keypad,
+.center .stats {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+/* PIN pad */
+
+.pin-dots {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin: 24px 0 8px;
+}
+
+.pin-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--text-2);
+}
+
+.pin-dot.filled {
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.shake {
+  animation: shake 0.35s;
+}
+
+@keyframes shake {
+  25% {
+    transform: translateX(-10px);
+  }
+  75% {
+    transform: translateX(10px);
+  }
+}
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  max-width: 340px;
+}
+
+.key {
+  height: 76px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 30px;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.key:active {
+  background: var(--brand);
+  color: var(--brand-ink);
+}
+
+.key-fn {
+  font-size: 18px;
+  color: var(--text-2);
+}
+
+/* Order list */
+
+.order-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.order-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.order-row-main,
+.order-row-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.order-row-sub {
+  justify-content: space-between;
+  font-size: 15px;
+}
+
+.order-number {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: var(--mono);
+  margin-right: auto;
+}
+
+/* Pick screen */
+
+.pick-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.pick-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pick .banner {
+  margin-top: 10px;
+}
+
+.target {
+  margin: 14px 0;
+  padding: 16px;
+  border: 2px solid var(--brand);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.target-done {
+  border-color: var(--ok);
+  text-align: center;
+}
+
+.target-label {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.target-location {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.target-name {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.target-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  color: var(--text-2);
+}
+
+.target-qty {
+  margin-top: 10px;
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.action-scan {
+  grid-column: 1 / -1;
+  min-height: 76px;
+  font-size: 24px;
+}
+
+.section-title {
+  margin: 22px 0 8px;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.line {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.line-target {
+  border-color: var(--brand);
+  box-shadow: inset 4px 0 0 var(--brand);
+}
+
+.line-done {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.line-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.line-qty {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.line-done .line-qty {
+  color: var(--ok);
+}
+
+.line-sub {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--text-3);
+  font-size: 14px;
+}
+
+/* Camera */
+
+.camera {
+  position: relative;
+  margin-top: 12px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  aspect-ratio: 4 / 3;
+  max-height: 42dvh;
+  width: 100%;
+}
+
+.camera video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.camera-frame {
+  position: absolute;
+  inset: 22% 10%;
+  border: 3px solid var(--brand);
+  border-radius: 10px;
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 30%);
+  pointer-events: none;
+}
+
+.camera-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 65%));
+  color: #fff;
+  font-size: 14px;
+}
+
+.camera-bar span {
+  margin-right: auto;
+}
+
+.camera-bar .btn {
+  background: rgb(0 0 0 / 45%);
+  border-color: rgb(255 255 255 / 40%);
+  color: #fff;
+}
+
+.camera-dialog {
+  margin-top: 0;
+}
+
+.dialog-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Full-screen scan result */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: #fff;
+  text-align: center;
+  animation: pop 0.12s ease-out;
+}
+
+.overlay-ok {
+  background: var(--flash-ok);
+}
+
+.overlay-bad {
+  background: var(--flash-bad);
+}
+
+.overlay-warn {
+  background: var(--flash-warn);
+}
+
+.overlay-icon {
+  font-size: 120px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.overlay-title {
+  font-size: clamp(34px, 9vw, 56px);
+  font-weight: 900;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.overlay-detail {
+  max-width: 520px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.overlay-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(420px, 100%);
+  margin-top: 24px;
+}
+
+.btn-light {
+  background: #fff;
+  border-color: #fff;
+  color: #16181c;
+}
+
+.btn-ghost-light {
+  background: transparent;
+  border: 2px solid rgb(255 255 255 / 80%);
+  color: #fff;
+}
+
+/* Opaque from the first frame: a half-faded red in a bright aisle reads as nothing. */
+@keyframes pop {
+  from {
+    transform: scale(0.97);
+  }
+}
+
+.reason-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* Completion and summary */
+
+.complete-check {
+  display: grid;
+  place-items: center;
+  width: 140px;
+  height: 140px;
+  margin: 32px auto 8px;
+  border-radius: 50%;
+  background: var(--flash-ok);
+  color: #fff;
+  font-size: 84px;
+  font-weight: 900;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.stat {
+  padding: 16px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.stat-n {
+  font-size: 36px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-l {
+  color: var(--text-3);
+  font-size: 14px;
+}
+
+.screen .btn-xl {
+  width: 100%;
+}
+
+.center p.banner {
+  text-align: left;
+}
+
+@media (max-width: 360px) {
+  .actions {
+    grid-template-columns: 1fr 1fr;
+  }
+  .key {
+    height: 64px;
+  }
+}

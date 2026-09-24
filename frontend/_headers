@@ -1,0 +1,27 @@
+# Cloudflare Pages response headers. build.sh replaces __API_ORIGIN__ with the
+# API's origin (from AUTORACK_API_BASE) so the browser may call it.
+# Keep the CSP in sync with CSP in backend/autorack/main.py (a test checks).
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' __API_ORIGIN__; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'; worker-src 'self'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(self), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+/*.html
+  Cache-Control: no-cache
+/*.js
+  Cache-Control: no-cache
+/*.css
+  Cache-Control: no-cache
+/w/sw.js
+  Cache-Control: no-cache
+  Service-Worker-Allowed: /w/
+/w/manifest.webmanifest
+  Cache-Control: no-cache
+/w/vendor/*
+  Cache-Control: public, max-age=86400
+/assets/icons/*
+  Cache-Control: public, max-age=86400

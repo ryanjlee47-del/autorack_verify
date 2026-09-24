@@ -1,0 +1,32 @@
+# Render Blueprint: the API as a Docker web service. The database is Neon
+# (paste its pooled connection string into DATABASE_URL); the frontend is on
+# Cloudflare Pages. See docs/DEPLOYMENT.md.
+services:
+  - type: web
+    name: autorack-api
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: EMAIL_BACKEND
+        value: resend
+      - key: EMAIL_FROM
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: WEB_CONCURRENCY
+        value: "2"

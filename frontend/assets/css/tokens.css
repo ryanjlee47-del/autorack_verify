@@ -1,0 +1,151 @@
+/* Design tokens shared by every surface: landing page, owner dashboard,
+   worker PWA. System fonts only -- the worker app must render correctly
+   after a full shift offline, so nothing here depends on a download. */
+
+:root {
+  color-scheme: light dark;
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* Brand: safety yellow on warehouse black */
+  --brand: #f5b400;
+  --brand-strong: #d99d00;
+  --brand-ink: #16181c;
+
+  /* Surfaces */
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f3;
+  --border: #dde1e6;
+  --border-strong: #c3c9d1;
+  --text: #16181c;
+  --text-2: #4a525c;
+  --text-3: #6d7682;
+
+  /* Status: the three answers a scan can give, plus info */
+  --ok: #1a7f37;
+  --ok-bg: #e6f4ea;
+  --bad: #c62828;
+  --bad-bg: #fdecea;
+  --warn: #b35900;
+  --warn-bg: #fff3e0;
+  --info: #1f5fbf;
+  --info-bg: #e8f0fe;
+
+  /* Full-screen scan feedback: must read at arm's length in a bright aisle */
+  --flash-ok: #12833a;
+  --flash-bad: #c21f1f;
+  --flash-warn: #d97706;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 10%);
+  --shadow-lg: 0 12px 32px rgb(16 24 40 / 18%);
+  --focus: 0 0 0 3px rgb(245 180 0 / 55%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1114;
+    --surface: #171a1f;
+    --surface-2: #1f232a;
+    --border: #2b3038;
+    --border-strong: #3a414b;
+    --text: #eceef1;
+    --text-2: #b4bbc4;
+    --text-3: #8a929c;
+    --ok: #4cc774;
+    --ok-bg: #12301c;
+    --bad: #ff6b6b;
+    --bad-bg: #3a1616;
+    --warn: #f5a524;
+    --warn-bg: #3a2708;
+    --info: #7aa7ff;
+    --info-bg: #14243f;
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f1114;
+  --surface: #171a1f;
+  --surface-2: #1f232a;
+  --border: #2b3038;
+  --border-strong: #3a414b;
+  --text: #eceef1;
+  --text-2: #b4bbc4;
+  --text-3: #8a929c;
+  --ok: #4cc774;
+  --ok-bg: #12301c;
+  --bad: #ff6b6b;
+  --bad-bg: #3a1616;
+  --warn: #f5a524;
+  --warn-bg: #3a2708;
+  --info: #7aa7ff;
+  --info-bg: #14243f;
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+a {
+  color: var(--info);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--brand);
+  color: var(--brand-ink);
+}
+
+.brand-mark svg {
+  width: 18px;
+  height: 18px;
+}
