@@ -8,14 +8,6 @@
   --chart-tick: #6b7486;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) {
-    --series-1: #5b8ffb;
-    --chart-grid: #28375a;
-    --chart-tick: #8b96ab;
-  }
-}
-
 :root[data-theme="dark"] {
   --series-1: #5b8ffb;
   --chart-grid: #28375a;
@@ -42,20 +34,21 @@
   flex-direction: column;
   gap: 4px;
   padding: 20px 0 16px;
-  background: var(--navy);
-  color: var(--on-navy);
+  background: #ffffff;
+  border-right: 1px solid var(--border);
+  color: var(--text);
 }
 
 .sidebar-brand {
   padding: 0 20px 18px;
-  color: #fff;
+  color: var(--navy);
 }
 
 .sidebar-wh {
   margin: 0 20px 14px;
   padding-top: 14px;
-  border-top: 1px solid var(--navy-3);
-  color: var(--on-navy-2);
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
   font-size: 12.5px;
   font-weight: 500;
   white-space: nowrap;
@@ -72,28 +65,28 @@
 .nav-link {
   padding: 9px 20px 9px 17px;
   border-left: 3px solid transparent;
-  color: var(--on-navy-2);
+  color: var(--text-2);
   text-decoration: none;
   font-size: 14px;
   font-weight: 500;
 }
 
 .nav-link:hover {
-  background: var(--navy-2);
-  color: #fff;
+  background: var(--surface-2);
+  color: var(--navy);
 }
 
 .nav-link.active {
   border-left-color: var(--blue);
-  background: var(--navy-2);
-  color: #fff;
+  background: var(--blue-soft);
+  color: var(--blue-strong);
   font-weight: 600;
 }
 
 .sidebar-foot {
   margin-top: auto;
   padding: 12px 20px 0;
-  border-top: 1px solid var(--navy-3);
+  border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -101,13 +94,13 @@
 }
 
 .sidebar-foot .muted {
-  color: var(--on-navy-2);
+  color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .sidebar-foot .link-btn {
-  color: #8fb3ff;
+  color: var(--blue-strong);
   font-weight: 500;
   text-align: left;
   padding: 0;
@@ -238,21 +231,19 @@ details.card > summary {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  background: var(--navy);
-  border-color: var(--navy);
-  color: #fff;
+  box-shadow: inset 3px 0 0 var(--blue);
 }
 
 .tile-hero .tile-label {
-  color: #8fb3ff;
+  color: var(--blue-strong);
 }
 
 .tile-hero .tile-value {
   font-size: 52px;
 }
 
-.tile-hero .tile-hint {
-  color: var(--on-navy-2);
+.tile-hero .tile-value {
+  color: var(--navy);
 }
 
 .tile-warn {
@@ -688,10 +679,9 @@ details.card > summary {
   width: min(420px, 100%);
   padding: 32px;
   border: 1px solid var(--border);
-  border-top: 3px solid var(--navy);
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--surface);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 1px 2px rgb(22 34 56 / 4%), 0 16px 32px -16px rgb(22 34 56 / 14%);
 }
 
 .auth-card h1 {

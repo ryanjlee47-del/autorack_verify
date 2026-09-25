@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="theme-color" content="#162238">
+  <meta name="theme-color" content="#ffffff">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Autorack · Pick Verification</title>
   <meta name="description" content="Catch the wrong item before it ships. Barcode pick verification for small and mid-sized warehouses: phones, no WMS integration, $175/month flat.">
@@ -15,127 +15,227 @@
 </head>
 <body>
   <header class="site-nav">
-    <a class="lockup site-brand" href="/" aria-label="Autorack home">
-      <img class="lockup-mark lockup-mark-reverse" src="/assets/brand/mark-reverse.svg" alt="" width="26" height="22">
-      <span class="lockup-text"><span class="lockup-word">AUTORACK</span><span class="lockup-tag">VERIFIED LOGISTICS</span></span>
-    </a>
-    <nav>
-      <a href="#how">How it works</a>
-      <a href="#pricing">Pricing</a>
-      <a href="#faq">FAQ</a>
-      <a href="/app/login.html">Sign in</a>
-      <a class="btn btn-primary btn-sm" href="/app/signup.html">Start free trial</a>
-    </nav>
+    <div class="container nav-inner">
+      <a class="lockup site-brand" href="/" aria-label="Autorack home">
+        <img class="lockup-mark" src="/assets/brand/mark.svg" alt="" width="30" height="30">
+        <span class="lockup-text"><span class="lockup-word">AUTORACK</span><span class="lockup-tag">VERIFIED LOGISTICS</span></span>
+      </a>
+      <nav class="nav-links" aria-label="Main">
+        <a href="#how">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="nav-actions">
+        <a class="nav-signin" href="/app/login.html">Sign in</a>
+        <a class="btn btn-primary" href="/app/signup.html">Start free trial</a>
+      </div>
+    </div>
   </header>
 
   <main>
     <section class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">Pick verification · Small &amp; mid-sized warehouses</p>
+      <div class="container hero-inner">
+        <p class="hero-kicker">Pick verification for small and mid-sized warehouses</p>
         <h1>Catch the wrong item before it ships.</h1>
         <p class="lede">Workers scan each pick with the phone in their pocket. Autorack checks it against the order instantly: green for right, red for wrong. You see every mistake caught on a live dashboard. No WMS integration, no new hardware.</p>
-        <div class="row">
+        <div class="hero-actions">
           <a class="btn btn-primary btn-lg" href="/app/signup.html">Start 14-day free trial</a>
           <a class="btn btn-lg" href="#how">See how it works</a>
         </div>
-        <p class="small muted">$175/month per warehouse, flat. No card to start.</p>
+        <p class="hero-note">$175/month per warehouse, flat. No card to start.</p>
       </div>
-      <div class="hero-phone" aria-hidden="true">
-        <div class="phone">
-          <div class="phone-top">SO-1042 · 7 of 9 units</div>
-          <div class="phone-flash phone-bad">
-            <div class="phone-icon">✕</div>
-            <div class="phone-title">WRONG ITEM</div>
-            <div class="phone-detail">Not on this order. Put it back.</div>
+      <div class="container">
+        <!-- Screenshot slot: replace the placeholder div with
+             <img src="/assets/img/screenshot-dashboard.png" alt="Autorack dashboard" width="2400" height="1500"> -->
+        <figure class="shot shot-wide" data-screenshot="dashboard">
+          <div class="shot-placeholder"><span>Dashboard screenshot</span></div>
+        </figure>
+      </div>
+    </section>
+
+    <section class="strip">
+      <div class="container strip-grid">
+        <div class="strip-item">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+          <h3>No integration</h3>
+          <p>Export a CSV pick list from whatever system you run. That's the whole setup.</p>
+        </div>
+        <div class="strip-item">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.8a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16.1a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1"/></svg>
+          <h3>Works in dead zones</h3>
+          <p>Scans are checked on the phone and sync when the Wi-Fi comes back.</p>
+        </div>
+        <div class="strip-item">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+          <h3>English and Spanish</h3>
+          <p>Big buttons, loud feedback, readable at arm's length with gloves on.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="container">
+        <div class="section-head">
+          <p class="section-kicker">How it works</p>
+          <h2>Live in an afternoon</h2>
+        </div>
+        <ol class="steps-row">
+          <li>
+            <span class="step-n">01</span>
+            <h3>Import your pick list</h3>
+            <p>Upload the CSV your WMS or spreadsheet already exports: order number, barcode, quantity. Columns are recognised automatically, and you see a preview before anything is saved.</p>
+          </li>
+          <li>
+            <span class="step-n">02</span>
+            <h3>Workers scan every unit</h3>
+            <p>Phones link with one QR code on the wall; workers sign in with a 4-digit PIN. Camera or Bluetooth scanner. Three units means three scans, so quantities are verified too.</p>
+          </li>
+          <li>
+            <span class="step-n">03</span>
+            <h3>Watch mistakes get caught</h3>
+            <p>Orders in progress, mistakes caught today, and which workers or shelves keep causing trouble, on one page that updates itself.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="features">
+      <div class="container split">
+        <div class="split-media">
+          <!-- Screenshot slot: replace the placeholder div with
+               <img src="/assets/img/screenshot-phone.png" alt="Autorack scanner on a phone" width="780" height="1688"> -->
+          <figure class="shot shot-phone" data-screenshot="phone">
+            <div class="shot-placeholder"><span>Phone app screenshot</span></div>
+          </figure>
+        </div>
+        <div class="split-copy">
+          <p class="section-kicker">Features</p>
+          <h2>Built for the real floor</h2>
+          <div class="feature-list">
+            <div>
+              <h3>Smart matching, never a guess</h3>
+              <p>UPC-E vs UPC-A, GS1 case labels, a stray space from Excel, a missing check digit: the same product still scans green. Anything ambiguous goes to a supervisor instead of being guessed.</p>
+            </div>
+            <div>
+              <h3>Offline by design</h3>
+              <p>Each order downloads to the phone when it's opened. Scanning keeps working behind the racking or in the freezer, and syncs itself later.</p>
+            </div>
+            <div>
+              <h3>Every scan on record</h3>
+              <p>Right or wrong, every scan is kept permanently and can't be edited. If a customer disputes a shipment, you have the proof.</p>
+            </div>
+            <div>
+              <h3>Worker insights</h3>
+              <p>Spot a training gap or a look-alike product in a neighbouring bin before it turns into a pattern of returns.</p>
+            </div>
+            <div>
+              <h3>Pick sheets with QR codes</h3>
+              <p>Print sheets sorted by bin location. Scanning the sheet opens the order, or scan the order number your WMS already prints.</p>
+            </div>
+            <div>
+              <h3>Problems reach you</h3>
+              <p>Out of stock, damaged, a label that won't scan: workers flag it from the aisle and the order waits for you.</p>
+            </div>
           </div>
         </div>
-        <div class="phone phone-back">
-          <div class="phone-flash phone-ok">
-            <div class="phone-icon">✓</div>
-            <div class="phone-title">RIGHT ITEM</div>
+      </div>
+    </section>
+
+    <section class="section" id="pricing">
+      <div class="container">
+        <div class="section-head">
+          <p class="section-kicker">Pricing</p>
+          <h2>One price. Everything included.</h2>
+          <p class="section-sub">No per-scan fees, no per-seat fees. Your bill is the same in a slow week and a peak week.</p>
+        </div>
+        <div class="pricing">
+          <div class="price-card">
+            <div class="price-plan">Autorack</div>
+            <div class="price">$175<span>/month</span></div>
+            <div class="price-per">per warehouse</div>
+            <a class="btn btn-primary btn-lg" href="/app/signup.html">Start 14-day free trial</a>
+            <p class="price-note">No card to start. Cancel any time.</p>
+            <ul class="checklist">
+              <li>Unlimited workers, phones and scans</li>
+              <li>Offline scanning with automatic sync</li>
+              <li>CSV import, pick sheets, live dashboard</li>
+              <li>Full scan history and CSV exports</li>
+              <li>Email support</li>
+            </ul>
+          </div>
+          <div class="compare-wrap">
+            <table class="compare">
+              <thead><tr><th></th><th>Enterprise WMS verification</th><th>Typical small-warehouse tools</th><th>Autorack</th></tr></thead>
+              <tbody>
+                <tr><th>Price</th><td>$20,000+/month</td><td>From ~$300/month</td><td>$175/month flat</td></tr>
+                <tr><th>Integration</th><td>Custom project</td><td>Varies</td><td>None. CSV in</td></tr>
+                <tr><th>Hardware</th><td>Dedicated scanners</td><td>Often required</td><td>Phones you already have</td></tr>
+                <tr><th>Bill changes with volume</th><td>Often</td><td>Often</td><td>Never</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="band">
-      <div class="container three">
-        <div><strong>No integration.</strong> Export a CSV pick list from whatever system you run. That's the whole setup.</div>
-        <div><strong>Works in dead zones.</strong> Scans are checked on the phone and sync when the Wi-Fi comes back.</div>
-        <div><strong>English &amp; Spanish.</strong> Big buttons, loud feedback, readable at arm's length with gloves on.</div>
-      </div>
-    </section>
-
-    <section class="container section" id="how">
-      <h2>Live in an afternoon</h2>
-      <ol class="how">
-        <li><span class="how-n">1</span><h3>Import your pick list</h3><p>Upload the CSV your WMS or spreadsheet already exports: order number, barcode, quantity. Columns are recognised automatically, and you see a preview before anything is saved.</p></li>
-        <li><span class="how-n">2</span><h3>Workers scan every unit</h3><p>Phones link with one QR code on the wall; workers sign in with a 4-digit PIN. Camera or Bluetooth scanner. Three units means three scans, so quantities are verified too.</p></li>
-        <li><span class="how-n">3</span><h3>Watch mistakes get caught</h3><p>Orders in progress, mistakes caught today, and which workers or shelves keep causing trouble: on one page that updates itself.</p></li>
-      </ol>
-    </section>
-
-    <section class="container section">
-      <h2>Built for the real floor</h2>
-      <div class="features">
-        <div><h3>Smart matching, never a guess</h3><p>UPC-E vs UPC-A, GS1 case labels, a stray space from Excel, a missing check digit: the same product still scans green. Anything ambiguous goes to a supervisor instead of being guessed.</p></div>
-        <div><h3>Offline by design</h3><p>Each order downloads to the phone when it's opened. Scanning keeps working behind the racking or in the freezer, and syncs itself later.</p></div>
-        <div><h3>Every scan on record</h3><p>Right or wrong, every scan is kept permanently and can't be edited. If a customer disputes a shipment, you have the proof.</p></div>
-        <div><h3>Worker insights</h3><p>Spot a training gap or a look-alike product in a neighbouring bin before it turns into a pattern of returns.</p></div>
-        <div><h3>Pick sheets with QR codes</h3><p>Print sheets sorted by bin location. Scanning the sheet opens the order, or scan the order number your WMS already prints.</p></div>
-        <div><h3>Problems reach you</h3><p>Out of stock, damaged, a label that won't scan: workers flag it from the aisle and the order waits for you.</p></div>
-      </div>
-    </section>
-
-    <section class="container section" id="pricing">
-      <h2>One price. Everything included.</h2>
-      <div class="pricing">
-        <div class="price-card">
-          <div class="price">$175<span>/month</span></div>
-          <div class="muted">per warehouse</div>
-          <ul class="checklist">
-            <li>Unlimited workers, phones and scans</li>
-            <li>Offline scanning with automatic sync</li>
-            <li>CSV import, pick sheets, live dashboard</li>
-            <li>Full scan history and CSV exports</li>
-            <li>Email support</li>
-          </ul>
-          <a class="btn btn-primary btn-lg" href="/app/signup.html">Start 14-day free trial</a>
-          <p class="small muted">No card to start. Cancel any time.</p>
+    <section class="section section-alt" id="faq">
+      <div class="container">
+        <div class="section-head">
+          <p class="section-kicker">FAQ</p>
+          <h2>Questions</h2>
         </div>
-        <table class="compare">
-          <thead><tr><th></th><th>Enterprise WMS verification</th><th>Typical small-warehouse tools</th><th>Autorack</th></tr></thead>
-          <tbody>
-            <tr><th>Price</th><td>$20,000+/month</td><td>From ~$300/month</td><td><strong>$175/month flat</strong></td></tr>
-            <tr><th>Integration</th><td>Custom project</td><td>Varies</td><td><strong>None. CSV in</strong></td></tr>
-            <tr><th>Hardware</th><td>Dedicated scanners</td><td>Often required</td><td><strong>Phones you already have</strong></td></tr>
-            <tr><th>Bill changes with volume</th><td>Often</td><td>Often</td><td><strong>Never</strong></td></tr>
-          </tbody>
-        </table>
+        <dl class="faq">
+          <div><dt>Do we have to change our WMS?</dt><dd>No. Autorack sits alongside whatever you use. Orders come in by CSV (or typed in by hand for one-offs), and nothing is written back to your system.</dd></div>
+          <div><dt>What if the Wi-Fi drops mid-pick?</dt><dd>Keep scanning. The phone checks each scan itself and queues it, showing how many are waiting. When the connection returns everything syncs, and the server re-checks every scan.</dd></div>
+          <div><dt>What phones work?</dt><dd>Any recent iPhone or Android with a browser. Nothing to install from an app store: it adds itself to the home screen. Bluetooth "keyboard" barcode scanners work too.</dd></div>
+          <div><dt>Our barcodes don't match our pick list exactly.</dt><dd>Common format differences are handled automatically. For vendor labels that are truly different codes, teach Autorack once from the dashboard and that barcode counts as the item from then on.</dd></div>
+          <div><dt>How do workers sign in?</dt><dd>Each worker gets a 4-digit PIN. Phones are linked to your warehouse once by scanning a setup QR code. You can unlink a lost phone from the dashboard.</dd></div>
+          <div><dt>What happens if we stop paying?</dt><dd>Scanning pauses; your data stays available to view and export. Scans already made on phones still sync.</dd></div>
+        </dl>
       </div>
-    </section>
-
-    <section class="container section" id="faq">
-      <h2>Questions</h2>
-      <details><summary>Do we have to change our WMS?</summary><p>No. Autorack sits alongside whatever you use. Orders come in by CSV (or typed in by hand for one-offs), and nothing is written back to your system.</p></details>
-      <details><summary>What if the Wi-Fi drops mid-pick?</summary><p>Keep scanning. The phone checks each scan itself and queues it, showing how many are waiting. When the connection returns everything syncs, and the server re-checks every scan.</p></details>
-      <details><summary>What phones work?</summary><p>Any recent iPhone or Android with a browser. Nothing to install from an app store: it adds itself to the home screen. Bluetooth "keyboard" barcode scanners work too.</p></details>
-      <details><summary>Our barcodes don't match our pick list exactly.</summary><p>Common format differences are handled automatically. For vendor labels that are truly different codes, teach Autorack once from the dashboard and that barcode counts as the item from then on.</p></details>
-      <details><summary>How do workers sign in?</summary><p>Each worker gets a 4-digit PIN. Phones are linked to your warehouse once by scanning a setup QR code. You can unlink a lost phone from the dashboard.</p></details>
-      <details><summary>What happens if we stop paying?</summary><p>Scanning pauses; your data stays available to view and export. Scans already made on phones still sync.</p></details>
     </section>
 
     <section class="cta">
-      <h2>Stop shipping the wrong thing.</h2>
-      <a class="btn btn-primary btn-lg" href="/app/signup.html">Start your free trial</a>
+      <div class="container cta-inner">
+        <div>
+          <h2>Stop shipping the wrong thing.</h2>
+          <p>Set up in an afternoon. Free for 14 days.</p>
+        </div>
+        <div class="cta-actions">
+          <a class="btn btn-primary btn-lg" href="/app/signup.html">Start your free trial</a>
+          <a class="btn btn-lg" href="/app/login.html">Sign in</a>
+        </div>
+      </div>
     </section>
   </main>
 
-  <footer class="site-foot container">
-    <span class="lockup"><img class="lockup-mark" src="/assets/brand/mark.svg" alt="" width="30" height="30"><span class="lockup-text"><span class="lockup-word">AUTORACK</span><span class="lockup-tag">VERIFIED LOGISTICS</span></span></span>
-    <span class="foot-spacer"></span>
-    <a href="/w/">Scanner app</a>
-    <a href="/app/login.html">Owner sign-in</a>
+  <footer class="site-foot">
+    <div class="container foot-grid">
+      <div class="foot-brand">
+        <a class="lockup" href="/" aria-label="Autorack home">
+          <img class="lockup-mark" src="/assets/brand/mark.svg" alt="" width="30" height="30">
+          <span class="lockup-text"><span class="lockup-word">AUTORACK</span><span class="lockup-tag">VERIFIED LOGISTICS</span></span>
+        </a>
+        <p>Barcode pick verification for small and mid-sized warehouses.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Product</h4>
+        <a href="#how">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+      </div>
+      <div class="foot-col">
+        <h4>Get started</h4>
+        <a href="/app/signup.html">Start free trial</a>
+        <a href="/app/login.html">Owner sign-in</a>
+        <a href="/w/">Scanner app</a>
+      </div>
+    </div>
+    <div class="container foot-bottom">
+      <span>© 2026 Autorack</span>
+    </div>
   </footer>
 </body>
 </html>

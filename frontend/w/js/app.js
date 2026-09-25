@@ -145,7 +145,7 @@ function langToggle() {
 function topbar(...right) {
   return h("header", { class: "topbar" },
     h("div", { class: "topbar-left" },
-      brandLockup({ reverse: true }),
+      brandLockup(),
       app.device ? h("span", { class: "topbar-title" }, app.device.warehouseName) : null),
     h("div", { class: "topbar-right" }, statusChip(), ...right));
 }

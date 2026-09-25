@@ -109,7 +109,7 @@ export function layout(active, content) {
   mount(root,
     h("div", { class: "shell" },
       h("aside", { class: "sidebar" },
-        h("div", { class: "sidebar-brand" }, brandLockup({ reverse: true, tagline: true, href: "#/" })),
+        h("div", { class: "sidebar-brand" }, brandLockup({ tagline: true, href: "#/" })),
         h("div", { class: "sidebar-wh", title: me.warehouse.name }, me.warehouse.name),
         h("nav", { class: "nav" }, ...navLinks),
         h("div", { class: "sidebar-foot" },
