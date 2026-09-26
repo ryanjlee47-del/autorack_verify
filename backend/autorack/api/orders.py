@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .. import matching
 from ..config import get_settings
 from ..db import get_db
-from ..deps import OwnerContext, current_owner, require_owner_access
+from ..deps import OwnerContext, current_owner, require_manager, require_owner_access
 from ..errors import bad_request, conflict, not_found
 from ..models import (
     BarcodeAlias,
@@ -24,12 +24,13 @@ from ..models import (
     OrderFlag,
     OrderLineItem,
     OrderStatus,
+    Photo,
     ScanEvent,
     ScanResult,
     Worker,
     utcnow,
 )
-from ..services import audit, csv_import
+from ..services import audit, csv_import, usage
 from ..services import dashboard as dash
 from ..services import orders as order_svc
 from ..services.ratelimit import memory_limiter
@@ -51,6 +52,7 @@ class LineIn(BaseModel):
 
 class OrderCreate(BaseModel):
     external_order_number: str | None = Field(default=None, max_length=100)
+    customer: str | None = Field(default=None, max_length=200)
     notes: str | None = Field(default=None, max_length=2000)
     assigned_worker_id: uuid.UUID | None = None
     lines: list[LineIn] = Field(min_length=1, max_length=order_svc.MAX_LINES_PER_ORDER)
@@ -58,6 +60,7 @@ class OrderCreate(BaseModel):
 
 class OrderUpdate(BaseModel):
     external_order_number: str | None = Field(default=None, max_length=100)
+    customer: str | None = Field(default=None, max_length=200)
     notes: str | None = Field(default=None, max_length=2000)
     assigned_worker_id: uuid.UUID | None = None
     clear_assignment: bool = False
@@ -73,6 +76,9 @@ class LineUpdate(BaseModel):
 
 class FlagResolve(BaseModel):
     note: str | None = Field(default=None, max_length=500)
+    # Short picks only: "accept" ships the order short; "reopen" sends the
+    # missing units back to the pick list. Other flags just resolve.
+    action: Literal["resolve", "accept", "reopen"] = "resolve"
 
 
 def _check_worker(db: Session, ctx: OwnerContext, worker_id: uuid.UUID | None) -> None:
@@ -106,6 +112,8 @@ def list_orders(
         stmt = stmt.where(
             or_(
                 Order.external_order_number.ilike(like),
+                Order.customer.ilike(like),
+                Order.tracking_number.ilike(like.replace(" ", "")),
                 Order.id.in_(
                     select(OrderLineItem.order_id).where(
                         OrderLineItem.warehouse_id == ctx.warehouse.id,
@@ -150,8 +158,10 @@ def create_order(
         lines=[li.to_input() for li in body.lines],
         created_by_user_id=ctx.user.id,
         assigned_worker_id=body.assigned_worker_id,
+        customer=body.customer,
         actor=ctx.actor,
     )
+    usage.track(db, ctx.warehouse.id, "orders.manual")
     db.commit()
     return order_detail(order.id, ctx, db)
 
@@ -175,7 +185,7 @@ async def _read_upload(file: UploadFile) -> bytes:
 
 @router.post("/orders/import/preview")
 async def import_preview(
-    file: UploadFile = File(...), ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    file: UploadFile = File(...), ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     memory_limiter.check(
         f"import:{ctx.warehouse.id}", get_settings().import_requests_per_minute, 60, "Too many imports. Wait a minute."
@@ -196,6 +206,8 @@ async def import_commit(
     batch = csv_import.commit(
         db, ctx.warehouse, await _read_upload(file), file.filename, ctx.actor, ctx.user.id, skip_invalid_rows
     )
+    usage.track(db, ctx.warehouse.id, "orders.import")
+    db.commit()
     return _batch_dict(batch)
 
 
@@ -250,6 +262,9 @@ def pick_sheets(
                 "lines": [order_svc.line_dict(li) for li in lines],
             }
         )
+    if out:
+        usage.track(db, ctx.warehouse.id, "orders.pick_sheets", len(out))
+        db.commit()
     return out
 
 
@@ -261,7 +276,8 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
     order = _get(db, ctx, order_id)
     lines = order_svc.lines_for(db, order.id)
     workers = dash.worker_names(db, ctx.warehouse.id)
-    flags = db.scalars(select(OrderFlag).where(OrderFlag.order_id == order.id).order_by(OrderFlag.created_at))
+    flags = list(db.scalars(select(OrderFlag).where(OrderFlag.order_id == order.id).order_by(OrderFlag.created_at)))
+    photos = photos_by_flag(db, ctx.warehouse.id, [f.id for f in flags])
     errors_by_line: dict[uuid.UUID, int] = {}
     for lid in db.scalars(
         select(ScanEvent.intended_line_item_id).where(
@@ -273,23 +289,42 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
     return {
         **order_svc.order_summary(order, lines),
         "assigned_worker": workers.get(order.assigned_worker_id) if order.assigned_worker_id else None,
+        "shipped_by": workers.get(order.shipped_by_worker_id) if order.shipped_by_worker_id else None,
         "cancelled_at": order.cancelled_at.isoformat() if order.cancelled_at else None,
         "lines": [{**order_svc.line_dict(li), "mismatches": errors_by_line.get(li.id, 0)} for li in lines],
-        "flags": [
-            {
-                "id": str(f.id),
-                "reason": f.reason.value,
-                "note": f.note,
-                "line_item_id": str(f.line_item_id) if f.line_item_id else None,
-                "worker": workers.get(f.worker_id) if f.worker_id else None,
-                "created_at": f.created_at.isoformat(),
-                "resolved_at": f.resolved_at.isoformat() if f.resolved_at else None,
-                "resolution_note": f.resolution_note,
-            }
-            for f in flags
-        ],
+        "flags": [flag_dict(f, workers, photos.get(f.id, [])) for f in flags],
         "qr_svg": qr_svg(order_svc.order_qr_payload(order)),
     }
+
+
+def flag_dict(f: OrderFlag, workers: dict[uuid.UUID, str], photo_ids: list[str]) -> dict[str, Any]:
+    return {
+        "id": str(f.id),
+        "reason": f.reason.value,
+        "note": f.note,
+        "line_item_id": str(f.line_item_id) if f.line_item_id else None,
+        "short_quantity": f.short_quantity,
+        "short_reason": f.short_reason.value if f.short_reason else None,
+        "worker": workers.get(f.worker_id) if f.worker_id else None,
+        "created_at": f.created_at.isoformat(),
+        "resolved_at": f.resolved_at.isoformat() if f.resolved_at else None,
+        "resolution": f.resolution,
+        "resolution_note": f.resolution_note,
+        "photos": photo_ids,
+    }
+
+
+def photos_by_flag(db: Session, warehouse_id: uuid.UUID, flag_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[str]]:
+    out: dict[uuid.UUID, list[str]] = {}
+    if not flag_ids:
+        return out
+    for pid, fid in db.execute(
+        select(Photo.id, Photo.flag_id)
+        .where(Photo.warehouse_id == warehouse_id, Photo.flag_id.in_(flag_ids))
+        .order_by(Photo.created_at)
+    ):
+        out.setdefault(fid, []).append(str(pid))
+    return out
 
 
 @router.get("/orders/{order_id}")
@@ -301,7 +336,7 @@ def get_order(
 
 @router.patch("/orders/{order_id}")
 def update_order(
-    order_id: uuid.UUID, body: OrderUpdate, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    order_id: uuid.UUID, body: OrderUpdate, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     order = _get(db, ctx, order_id, lock=True)
     order_svc.ensure_editable(order)
@@ -315,6 +350,9 @@ def update_order(
     if body.notes is not None:
         order.notes = order_svc.clean(body.notes, 2000)
         changes["notes"] = order.notes
+    if body.customer is not None:
+        order.customer = order_svc.clean(body.customer, 200)
+        changes["customer"] = order.customer
     if body.clear_assignment:
         order.assigned_worker_id = None
         changes["assigned_worker_id"] = None
@@ -338,7 +376,7 @@ def update_order(
 
 @router.post("/orders/{order_id}/cancel")
 def cancel_order(
-    order_id: uuid.UUID, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    order_id: uuid.UUID, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     order = _get(db, ctx, order_id, lock=True)
     order_svc.cancel_order(db, order, ctx.actor)
@@ -348,7 +386,7 @@ def cancel_order(
 
 @router.post("/orders/{order_id}/lines", status_code=201)
 def add_line(
-    order_id: uuid.UUID, body: LineIn, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    order_id: uuid.UUID, body: LineIn, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     order = _get(db, ctx, order_id, lock=True)
     order_svc.add_line(db, ctx.warehouse, order, body.to_input(), ctx.actor)
@@ -368,7 +406,7 @@ def update_line(
     order_id: uuid.UUID,
     line_id: uuid.UUID,
     body: LineUpdate,
-    ctx: OwnerContext = Depends(current_owner),
+    ctx: OwnerContext = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     order = _get(db, ctx, order_id, lock=True)
@@ -380,7 +418,7 @@ def update_line(
 
 @router.delete("/orders/{order_id}/lines/{line_id}")
 def delete_line(
-    order_id: uuid.UUID, line_id: uuid.UUID, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    order_id: uuid.UUID, line_id: uuid.UUID, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     order = _get(db, ctx, order_id, lock=True)
     line = _get_line(db, order, line_id)
@@ -402,9 +440,25 @@ def resolve_flag(
     if not flag:
         raise not_found("Flag not found")
     if not flag.resolved_at:
+        is_short = flag.reason.value == "short_pick"
+        if body.action != "resolve" and not is_short:
+            raise bad_request("not_short_pick", "Only a short pick can be accepted or sent back.")
+        if order.status == OrderStatus.cancelled:
+            raise conflict("order_cancelled", "This order was cancelled.")
         flag.resolved_at = utcnow()
         flag.resolved_by_user_id = ctx.user.id
         flag.resolution_note = order_svc.clean(body.note, 500)
+        if is_short and body.action == "reopen" and flag.line_item_id:
+            # Back on the pick list: the missing units must be picked after all.
+            line = db.get(OrderLineItem, flag.line_item_id)
+            if line is not None:
+                line.short_quantity = max(0, line.short_quantity - (flag.short_quantity or 0))
+            flag.resolution = "reopened"
+            order_svc.bump(order)
+        elif is_short:
+            flag.resolution = "accepted"
+        else:
+            flag.resolution = "resolved"
         db.flush()
         order_svc.recompute_status(db, order)
         audit.record(
@@ -415,7 +469,9 @@ def resolve_flag(
             target_type="order",
             target_id=order.id,
             flag_id=flag.id,
+            resolution=flag.resolution,
         )
+        usage.track(db, ctx.warehouse.id, "flags.resolve")
         db.commit()
     return order_detail(order.id, ctx, db)
 
@@ -490,7 +546,7 @@ def list_aliases(ctx: OwnerContext = Depends(current_owner), db: Session = Depen
 
 @router.post("/aliases", status_code=201)
 def create_alias(
-    body: AliasCreate, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    body: AliasCreate, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     alias_key = matching.normalized_key(body.scanned_barcode)
     target_key = matching.normalized_key(body.target_barcode)
@@ -513,6 +569,7 @@ def create_alias(
     db.add(a)
     db.flush()
     _bump_orders_with_barcode(db, ctx, target_key)
+    usage.track(db, ctx.warehouse.id, "aliases.create")
     audit.record(
         db,
         ctx.actor,
@@ -529,7 +586,7 @@ def create_alias(
 
 @router.delete("/aliases/{alias_id}")
 def delete_alias(
-    alias_id: uuid.UUID, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    alias_id: uuid.UUID, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, bool]:
     a = db.scalar(
         select(BarcodeAlias).where(BarcodeAlias.id == alias_id, BarcodeAlias.warehouse_id == ctx.warehouse.id)
@@ -566,3 +623,111 @@ def _bump_orders_with_barcode(db: Session, ctx: OwnerContext, key: str) -> None:
         )
     ):
         order_svc.bump(order)
+
+
+# ---------------------------------------------------------------------------
+# Photos and shipment proof
+# ---------------------------------------------------------------------------
+
+
+def photo_response(photo: Photo) -> Response:
+    return Response(
+        content=photo.data,
+        media_type=photo.content_type,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+        },
+    )
+
+
+@router.get("/photos/{photo_id}", response_class=Response)
+def get_photo(
+    photo_id: uuid.UUID, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+) -> Response:
+    photo = db.scalar(select(Photo).where(Photo.id == photo_id, Photo.warehouse_id == ctx.warehouse.id))
+    if not photo:
+        raise not_found("Photo not found")
+    return photo_response(photo)
+
+
+@router.get("/photos")
+def list_photos(
+    limit: int = Query(60, ge=1, le=200),
+    ctx: OwnerContext = Depends(current_owner),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Recent problem photos across the warehouse, newest first."""
+    workers = dash.worker_names(db, ctx.warehouse.id)
+    rows = db.execute(
+        select(
+            Photo.id, Photo.created_at, Photo.worker_id, Photo.order_id, OrderFlag.reason, Order.external_order_number
+        )
+        .join(OrderFlag, OrderFlag.id == Photo.flag_id)
+        .join(Order, Order.id == Photo.order_id)
+        .where(Photo.warehouse_id == ctx.warehouse.id)
+        .order_by(Photo.created_at.desc())
+        .limit(limit)
+    )
+    return [
+        {
+            "id": str(pid),
+            "at": at.isoformat(),
+            "worker": workers.get(wid) if wid else None,
+            "order_id": str(oid),
+            "order_number": number,
+            "reason": reason.value,
+        }
+        for pid, at, wid, oid, reason, number in rows
+    ]
+
+
+@router.get("/orders/{order_id}/proof")
+def shipment_proof(
+    order_id: uuid.UUID, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Everything that proves what went into this parcel: each unit's scan,
+    who picked it, when, and the shipping label it left under."""
+    detail = order_detail(order_id, ctx, db)
+    workers = dash.worker_names(db, ctx.warehouse.id)
+    voided = set(
+        db.scalars(
+            select(ScanEvent.voids_scan_id).where(ScanEvent.order_id == order_id, ScanEvent.voids_scan_id.is_not(None))
+        )
+    )
+    picks = [
+        {
+            "line_item_id": str(s.line_item_id),
+            "scanned_barcode": s.scanned_barcode,
+            "worker": workers.get(s.worker_id),
+            "at": s.client_scanned_at.isoformat(),
+        }
+        for s in db.scalars(
+            select(ScanEvent)
+            .where(
+                ScanEvent.order_id == order_id,
+                ScanEvent.warehouse_id == ctx.warehouse.id,
+                ScanEvent.result == ScanResult.match,
+            )
+            .order_by(ScanEvent.client_scanned_at, ScanEvent.client_seq)
+        )
+        if s.id not in voided
+    ]
+    caught = (
+        db.scalar(
+            select(func.count())
+            .select_from(ScanEvent)
+            .where(ScanEvent.order_id == order_id, ScanEvent.result.in_(dash.ERROR_RESULTS))
+        )
+        or 0
+    )
+    usage.track(db, ctx.warehouse.id, "orders.proof")
+    db.commit()
+    detail.pop("qr_svg", None)
+    return {
+        **detail,
+        "warehouse": ctx.warehouse.name,
+        "picks": picks,
+        "errors_caught": caught,
+        "generated_at": utcnow().isoformat(),
+    }

@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .db import get_db
 from .errors import ApiError, forbidden, unauthorized
-from .models import Device, OwnerSession, User, UserRole, Warehouse, Worker, WorkerSession
+from .models import Device, Membership, OwnerSession, User, UserRole, Warehouse, Worker, WorkerSession
 from .services import access as access_svc
 from .services import auth as auth_svc
 from .services.audit import Actor
@@ -44,11 +45,16 @@ def _bearer(request: Request) -> str | None:
     return token.strip()
 
 
+def is_operator(user: User) -> bool:
+    return user.email.lower() in get_settings().operator_email_set
+
+
 @dataclass
-class OwnerContext:
+class UserContext:
+    """Signed in, whatever warehouse (if any) they're looking at."""
+
     user: User
     session: OwnerSession
-    warehouse: Warehouse
     ip: str | None
 
     @property
@@ -56,11 +62,11 @@ class OwnerContext:
         return Actor("user", str(self.user.id), self.user.email, self.ip)
 
     @property
-    def is_owner(self) -> bool:
-        return self.user.role == UserRole.owner
+    def is_operator(self) -> bool:
+        return is_operator(self.user)
 
 
-def current_owner(request: Request, db: Session = Depends(get_db)) -> OwnerContext:
+def current_user(request: Request, db: Session = Depends(get_db)) -> UserContext:
     token = _bearer(request)
     if not token:
         raise unauthorized()
@@ -68,10 +74,49 @@ def current_owner(request: Request, db: Session = Depends(get_db)) -> OwnerConte
     if not resolved:
         raise unauthorized()
     sess, user = resolved
-    wh = db.get(Warehouse, user.warehouse_id)
-    if not wh:
-        raise unauthorized()
-    return OwnerContext(user=user, session=sess, warehouse=wh, ip=client_ip(request))
+    return UserContext(user=user, session=sess, ip=client_ip(request))
+
+
+def require_operator(uctx: UserContext = Depends(current_user)) -> UserContext:
+    if not uctx.is_operator:
+        raise forbidden("This page is for Autorack staff.")
+    return uctx
+
+
+@dataclass
+class OwnerContext:
+    """A dashboard user acting on one warehouse, in one role."""
+
+    user: User
+    session: OwnerSession
+    warehouse: Warehouse
+    membership: Membership
+    ip: str | None
+
+    @property
+    def actor(self) -> Actor:
+        return Actor("user", str(self.user.id), self.user.email, self.ip)
+
+    @property
+    def role(self) -> UserRole:
+        return self.membership.role
+
+    @property
+    def is_owner(self) -> bool:
+        return self.role == UserRole.owner
+
+    @property
+    def can_manage(self) -> bool:
+        """Create and edit orders, workers, phones and barcode rules."""
+        return self.role in (UserRole.owner, UserRole.manager)
+
+
+def current_owner(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)) -> OwnerContext:
+    resolved = auth_svc.session_warehouse(db, uctx.user, uctx.session)
+    if not resolved:
+        raise forbidden("You don't have access to any warehouse.", "no_warehouse")
+    wh, membership = resolved
+    return OwnerContext(user=uctx.user, session=uctx.session, warehouse=wh, membership=membership, ip=uctx.ip)
 
 
 def require_owner_role(ctx: OwnerContext = Depends(current_owner)) -> OwnerContext:
@@ -80,7 +125,13 @@ def require_owner_role(ctx: OwnerContext = Depends(current_owner)) -> OwnerConte
     return ctx
 
 
-def require_owner_access(ctx: OwnerContext = Depends(current_owner)) -> OwnerContext:
+def require_manager(ctx: OwnerContext = Depends(current_owner)) -> OwnerContext:
+    if not ctx.can_manage:
+        raise forbidden("Supervisors can view and resolve problems, but not change this. Ask a manager.")
+    return ctx
+
+
+def require_owner_access(ctx: OwnerContext = Depends(require_manager)) -> OwnerContext:
     """For creating new work (orders, imports): needs a live subscription."""
     _enforce_access(ctx.warehouse)
     return ctx

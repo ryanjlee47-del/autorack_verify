@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..deps import OwnerContext, current_owner
+from ..deps import OwnerContext, current_owner, require_manager
 from ..errors import bad_request, not_found
 from ..models import Device, Worker, WorkerSession, utcnow
 from ..security import is_valid_pin
@@ -73,7 +73,7 @@ def list_workers(
 
 @router.post("/workers", status_code=201)
 def create_worker(
-    body: WorkerCreate, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    body: WorkerCreate, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     name = body.name.strip()
     if not name:
@@ -93,7 +93,10 @@ def create_worker(
 
 @router.patch("/workers/{worker_id}")
 def update_worker(
-    worker_id: uuid.UUID, body: WorkerUpdate, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    worker_id: uuid.UUID,
+    body: WorkerUpdate,
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     w = _get_worker(db, ctx, worker_id)
     changes = body.model_dump(exclude_none=True)
@@ -127,7 +130,7 @@ def update_worker(
 
 @router.post("/workers/{worker_id}/reset-pin")
 def reset_pin(
-    worker_id: uuid.UUID, body: PinReset, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    worker_id: uuid.UUID, body: PinReset, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     w = _get_worker(db, ctx, worker_id)
     if not w.active:
@@ -194,7 +197,10 @@ def _get_device(db: Session, ctx: OwnerContext, device_id: uuid.UUID) -> Device:
 
 @router.patch("/devices/{device_id}")
 def rename_device(
-    device_id: uuid.UUID, body: DeviceUpdate, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    device_id: uuid.UUID,
+    body: DeviceUpdate,
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     d = _get_device(db, ctx, device_id)
     d.label = body.label.strip() or d.label
@@ -213,7 +219,7 @@ def rename_device(
 
 @router.post("/devices/{device_id}/revoke")
 def revoke_device(
-    device_id: uuid.UUID, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+    device_id: uuid.UUID, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     d = _get_device(db, ctx, device_id)
     if not d.revoked_at:

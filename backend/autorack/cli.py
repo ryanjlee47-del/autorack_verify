@@ -43,7 +43,7 @@ def _find_warehouse(db: Session, ref: str) -> Warehouse:
         wh = db.get(Warehouse, uuid.UUID(ref))
     except ValueError:
         user = db.scalar(select(User).where(User.email == ref.strip().lower()))
-        wh = db.get(Warehouse, user.warehouse_id) if user else None
+        wh = db.get(Warehouse, user.warehouse_id) if user and user.warehouse_id else None
     if not wh:
         sys.exit(f"No warehouse matches {ref!r} (use its id or an owner's email).")
     return wh
@@ -203,6 +203,12 @@ def cmd_check_config(db: Session, a: argparse.Namespace) -> None:
     print("OK")
 
 
+def cmd_run_jobs(db: Session, a: argparse.Namespace) -> None:
+    from .services import jobs
+
+    print(jobs.run_all(db))
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="python -m autorack.cli", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -231,6 +237,7 @@ def main(argv: list[str] | None = None) -> None:
     c = add("end-sessions", cmd_end_sessions, "Sign every worker out of a warehouse")
     c.add_argument("warehouse")
     add("check-config", cmd_check_config, "Validate configuration for production")
+    add("run-jobs", cmd_run_jobs, "Send due emails now: daily summaries, alerts, trial and payment notices")
 
     c = add("seed-demo", cmd_seed_demo, "Create a demo warehouse with workers and orders")
     c.add_argument("--email", default="owner@dockside-demo.test")

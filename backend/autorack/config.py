@@ -84,6 +84,19 @@ class Settings(BaseSettings):
     sync_requests_per_minute: int = 240
     import_requests_per_minute: int = 12
 
+    # Photos workers attach to problems (JPEG/WebP, compressed on the phone)
+    max_photo_bytes: int = 1_500_000
+
+    # Operator (you, running Autorack): these emails can open /admin/ and see
+    # every warehouse. Comma-separated. They sign in like anyone else.
+    operator_emails: str = ""
+
+    # Background jobs (daily summary, alerts, trial and payment emails).
+    # Run in-process every minute; free hosts that sleep when idle should also
+    # call POST /api/cron/run with this secret from an external cron.
+    jobs_enabled: bool = True
+    cron_secret: str = ""
+
     log_level: str = "INFO"
 
     @field_validator("database_url")
@@ -97,6 +110,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def operator_email_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.operator_emails.split(",") if e.strip()}
 
     @property
     def stripe_enabled(self) -> bool:

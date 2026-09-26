@@ -81,14 +81,29 @@ COLUMN_SYNONYMS: dict[str, list[str]] = {
     ],
     "sku": ["sku", "item", "item number", "item no", "item code", "part", "part number", "part no", "product code"],
     "location": ["location", "bin", "bin location", "loc", "slot", "shelf", "aisle", "pick location"],
+    "customer": [
+        "customer",
+        "customer name",
+        "ship to",
+        "ship to name",
+        "shipto",
+        "account",
+        "account name",
+        "client",
+        "client name",
+        "buyer",
+        "recipient",
+        "sold to",
+        "company",
+    ],
 }
 REQUIRED = ("order_number", "barcode")
 
 TEMPLATE_CSV = (
-    "order_number,barcode,quantity,description,sku,location\r\n"
-    "SO-1001,012345678905,2,Blue widget (12 pk),WID-BLU-12,A-01-03\r\n"
-    "SO-1001,036000291452,1,Packing tape,TAPE-48,B-04-01\r\n"
-    "SO-1002,012345678905,1,Blue widget (12 pk),WID-BLU-12,A-01-03\r\n"
+    "order_number,barcode,quantity,description,sku,location,customer\r\n"
+    "SO-1001,012345678905,2,Blue widget (12 pk),WID-BLU-12,A-01-03,Acme Hardware\r\n"
+    "SO-1001,036000291452,1,Packing tape,TAPE-48,B-04-01,Acme Hardware\r\n"
+    "SO-1002,012345678905,1,Blue widget (12 pk),WID-BLU-12,A-01-03,Northside Supply\r\n"
 )
 
 
@@ -102,6 +117,7 @@ class ParsedOrder:
     lines: list[order_svc.LineInput] = field(default_factory=list)
     first_row: int = 0
     too_many_lines: bool = False
+    customer: str | None = None
 
 
 @dataclass
@@ -217,6 +233,7 @@ def parse(content: bytes) -> ParseResult:
             qty = 1
             defaulted_qty += 1
         po = orders.setdefault(number, ParsedOrder(number=number, first_row=row_no))
+        po.customer = po.customer or (cell(row, "customer")[:200] or None)
         po.lines.append(
             order_svc.LineInput(
                 barcode=barcode,
@@ -303,6 +320,7 @@ def preview(db: Session, wh: Warehouse, content: bytes) -> dict[str, Any]:
         "sample": [
             {
                 "order_number": o.number,
+                "customer": o.customer,
                 "lines": [
                     {
                         "barcode": li.barcode,
@@ -328,6 +346,7 @@ def commit(
     actor: Actor,
     user_id: uuid.UUID | None,
     skip_invalid_rows: bool = False,
+    source: OrderSource = OrderSource.csv,
 ) -> ImportBatch:
     pr = parse(content)
     if pr.errors and not skip_invalid_rows:
@@ -354,7 +373,8 @@ def commit(
             wh,
             external_order_number=po.number,
             lines=po.lines,
-            source=OrderSource.csv,
+            customer=po.customer,
+            source=source,
             import_batch_id=batch.id,
             created_by_user_id=user_id,
         )

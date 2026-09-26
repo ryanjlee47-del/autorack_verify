@@ -12,7 +12,7 @@ import re
 import uuid
 
 import pytest
-from conftest import add_worker, make_order, scan_event, signup, sync, worker_on_phone
+from conftest import JPEG, add_worker, make_order, scan_event, signup, sync, worker_on_phone
 
 # Bodies that pass validation, so the request reaches the tenancy check.
 BODIES: dict[tuple[str, str], dict] = {
@@ -30,6 +30,8 @@ NO_BODY = {
     ("POST", "/api/orders/{order_id}/cancel"),
     ("DELETE", "/api/orders/{order_id}/lines/{line_id}"),
     ("GET", "/api/orders/{order_id}/scans"),
+    ("GET", "/api/orders/{order_id}/proof"),
+    ("GET", "/api/photos/{photo_id}"),
     ("POST", "/api/devices/{device_id}/revoke"),
     ("DELETE", "/api/aliases/{alias_id}"),
     ("GET", "/api/worker/orders/{order_id}"),
@@ -45,6 +47,14 @@ def two_tenants(client):
     b_order = make_order(client, b, [("B-SECRET-BARCODE", 2)], number="B-SECRET-ORDER")
     flag = {**scan_event(b_phone, b_order["id"], ""), "kind": "flag", "reason": "damaged", "scanned_barcode": None}
     sync(client, b_phone, scan_event(b_phone, b_order["id"], "B-SECRET-BARCODE"), flag)
+    photo_id = str(uuid.uuid4())
+    r = client.post(
+        "/api/worker/photos",
+        params={"id": photo_id, "flag_id": flag["id"]},
+        content=JPEG,
+        headers={**b_phone.h, "Content-Type": "image/jpeg"},
+    )
+    assert r.status_code == 201, r.text
     client.post("/api/aliases", json={"scanned_barcode": "B-ALIAS", "target_barcode": "B-SECRET-BARCODE"}, headers=b.h)
     client.post("/api/team", json={"email": "b-manager@example.com"}, headers=b.h)
     ids = {
@@ -55,6 +65,8 @@ def two_tenants(client):
         "device_id": client.get("/api/devices", headers=b.h).json()[0]["id"],
         "user_id": next(u["id"] for u in client.get("/api/team", headers=b.h).json() if u["role"] == "manager"),
         "alias_id": client.get("/api/aliases", headers=b.h).json()[0]["id"],
+        "photo_id": photo_id,
+        "flag_event_id": flag["id"],
     }
     return a, a_phone, b, ids
 
@@ -64,8 +76,8 @@ def test_every_id_route_hides_other_tenants(app, client, two_tenants):
     checked = 0
     # The OpenAPI schema is the public, complete list of routes and methods.
     for path, operations in app.openapi()["paths"].items():
-        if "{" not in path:
-            continue
+        if "{" not in path or path.startswith("/api/admin/"):
+            continue  # admin routes cross tenants by design; see test_admin_routes_need_operator
         for method in operations:
             key = (method.upper(), path)
             assert key in BODIES or key in NO_BODY, f"New id route {key}: add it to this test"
@@ -146,3 +158,44 @@ def test_worker_assignment_rejects_foreign_worker(client, two_tenants):
     assert r.status_code == 400
     assert add_worker(client, a, "fine")  # sanity: A can still manage its own
     assert str(uuid.UUID(ids["worker_id"]))
+
+
+def test_admin_routes_need_operator(app, client, two_tenants):
+    a, _a_phone, _b, ids = two_tenants
+    wh_id = client.get("/api/auth/me", headers=a.h).json()["warehouse"]["id"]
+    for path, operations in app.openapi()["paths"].items():
+        if not path.startswith("/api/admin/"):
+            continue
+        url = path.replace("{warehouse_id}", wh_id).replace("{photo_id}", ids["photo_id"])
+        for method in operations:
+            r = client.request(method.upper(), url, headers=a.h, json={"status": "pilot"})
+            assert r.status_code == 403, (method, path, r.status_code)
+            r = client.request(method.upper(), url, json={"status": "pilot"})
+            assert r.status_code == 401, (method, path, r.status_code)
+
+
+def test_photos_and_flags_stay_in_their_warehouse(client, two_tenants):
+    a, a_phone, _b, ids = two_tenants
+    # A's phone can't hang a photo on B's flag.
+    r = client.post(
+        "/api/worker/photos",
+        params={"id": str(uuid.uuid4()), "flag_id": ids["flag_event_id"]},
+        content=JPEG,
+        headers={**a_phone.h, "Content-Type": "image/jpeg"},
+    )
+    assert r.status_code == 409
+    # ...nor replay B's photo id.
+    oid = make_order(client, a)["id"]
+    flag = {**scan_event(a_phone, oid, ""), "kind": "flag", "reason": "damaged", "scanned_barcode": None}
+    sync(client, a_phone, flag)
+    r = client.post(
+        "/api/worker/photos",
+        params={"id": ids["photo_id"], "flag_id": flag["id"]},
+        content=JPEG,
+        headers={**a_phone.h, "Content-Type": "image/jpeg"},
+    )
+    assert r.status_code == 400
+    for url in ("/api/photos", "/api/dashboard/flags", "/api/reports", "/api/onboarding"):
+        r = client.get(url, headers=a.h)
+        assert r.status_code == 200, url
+        assert ids["photo_id"] not in r.text and "B-SECRET" not in r.text, url

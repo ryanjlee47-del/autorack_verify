@@ -15,11 +15,11 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..deps import OwnerContext, current_owner, require_owner_role
+from ..deps import OwnerContext, current_owner, require_manager, require_owner_access, require_owner_role
 from ..errors import bad_request, conflict, not_found
 from ..matching import MAX_SUFFIX_LEN, MIN_SUFFIX_LEN
-from ..models import AuditLog, Order, OrderStatus, OwnerSession, User, UserRole, utcnow
-from ..services import audit, email
+from ..models import AuditLog, Membership, Order, OrderStatus, OwnerSession, User, UserRole, utcnow
+from ..services import audit, email, onboarding, usage
 from ..services import auth as auth_svc
 
 router = APIRouter(tags=["warehouse"])
@@ -39,6 +39,26 @@ class WarehouseUpdate(BaseModel):
     loose_match_enabled: bool | None = None
     suffix_len: int | None = Field(default=None, ge=MIN_SUFFIX_LEN, le=MAX_SUFFIX_LEN)
     owner_email: EmailStr | None = None
+    cost_per_error_cents: int | None = Field(default=None, ge=0, le=10_000_000)
+    daily_summary_enabled: bool | None = None
+    daily_summary_hour: int | None = Field(default=None, ge=0, le=23)
+    alert_on_flag: bool | None = None
+    alert_error_rate: bool | None = None
+    leaderboard_enabled: bool | None = None
+    require_ship_scan: bool | None = None
+    onboarding_dismissed: bool | None = None
+
+
+SETTING_FIELDS = (
+    "cost_per_error_cents",
+    "daily_summary_enabled",
+    "daily_summary_hour",
+    "alert_on_flag",
+    "alert_error_rate",
+    "leaderboard_enabled",
+    "require_ship_scan",
+    "onboarding_dismissed",
+)
 
 
 def warehouse_dict(ctx: OwnerContext) -> dict[str, Any]:
@@ -50,6 +70,7 @@ def warehouse_dict(ctx: OwnerContext) -> dict[str, Any]:
         "owner_email": wh.owner_email,
         "loose_match_enabled": wh.loose_match_enabled,
         "suffix_len": wh.suffix_len,
+        **{f: getattr(wh, f) for f in SETTING_FIELDS},
         "created_at": wh.created_at.isoformat(),
     }
 
@@ -93,6 +114,7 @@ def update_warehouse(
         target_id=wh.id,
         changes=changes,
     )
+    usage.track(db, wh.id, "settings.update")
     db.commit()
     return warehouse_dict(ctx)
 
@@ -130,22 +152,29 @@ class MemberUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
 
 
-def member_dict(u: User) -> dict[str, Any]:
+def member_dict(u: User, m: Membership) -> dict[str, Any]:
     return {
         "id": str(u.id),
         "email": u.email,
         "name": u.name,
-        "role": u.role.value,
-        "active": u.active,
+        "role": m.role.value,
+        "active": m.active and u.active,
+        "email_daily_summary": m.email_daily_summary,
+        "email_alerts": m.email_alerts,
         "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
-        "created_at": u.created_at.isoformat(),
+        "created_at": m.created_at.isoformat(),
     }
 
 
 @router.get("/team")
 def list_team(ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)) -> list[dict[str, Any]]:
-    users = db.scalars(select(User).where(User.warehouse_id == ctx.warehouse.id).order_by(User.created_at))
-    return [member_dict(u) for u in users]
+    rows = db.execute(
+        select(User, Membership)
+        .join(Membership, Membership.user_id == User.id)
+        .where(Membership.warehouse_id == ctx.warehouse.id)
+        .order_by(Membership.created_at)
+    )
+    return [member_dict(u, m) for u, m in rows]
 
 
 @router.post("/team", status_code=201)
@@ -153,11 +182,20 @@ def invite(
     body: InviteIn, ctx: OwnerContext = Depends(require_owner_role), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     addr = auth_svc.normalize_email(str(body.email))
-    if db.scalar(select(User).where(User.email == addr)):
-        raise conflict("email_taken", "That email already belongs to an Autorack user.")
-    user = User(warehouse_id=ctx.warehouse.id, email=addr, name=(body.name or "").strip() or None, role=body.role)
-    db.add(user)
-    db.flush()
+    user = db.scalar(select(User).where(User.email == addr))
+    if user is not None:
+        existing = db.scalar(
+            select(Membership).where(Membership.user_id == user.id, Membership.warehouse_id == ctx.warehouse.id)
+        )
+        if existing and existing.active:
+            raise conflict("already_member", "That person is already on this warehouse's team.")
+        if not user.active:
+            raise conflict("account_disabled", "That account is disabled.")
+    else:
+        user = User(warehouse_id=ctx.warehouse.id, email=addr, name=(body.name or "").strip() or None)
+        db.add(user)
+        db.flush()
+    membership = auth_svc.add_membership(db, user, ctx.warehouse.id, body.role)
     url = auth_svc.issue_magic_link(db, user, ctx.ip)
     audit.record(
         db,
@@ -169,11 +207,12 @@ def invite(
         email=addr,
         role=body.role.value,
     )
+    usage.track(db, ctx.warehouse.id, "team.invite")
     db.commit()
     # If sending fails they can still request a link from the sign-in page.
     with contextlib.suppress(email.EmailError):
         email.send(email.invite_email(addr, url, ctx.warehouse.name, ctx.user.name or ctx.user.email))
-    return member_dict(user)
+    return member_dict(user, membership)
 
 
 @router.patch("/team/{user_id}")
@@ -183,23 +222,42 @@ def update_member(
     ctx: OwnerContext = Depends(require_owner_role),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    user = db.scalar(select(User).where(User.id == user_id, User.warehouse_id == ctx.warehouse.id))
-    if not user:
+    row = db.execute(
+        select(User, Membership)
+        .join(Membership, Membership.user_id == User.id)
+        .where(User.id == user_id, Membership.warehouse_id == ctx.warehouse.id)
+    ).first()
+    if not row:
         raise not_found("Team member not found")
-    demoting = body.role is not None and body.role != UserRole.owner and user.role == UserRole.owner
-    deactivating = body.active is False and user.active and user.role == UserRole.owner
+    user, m = row
+    demoting = body.role is not None and body.role != UserRole.owner and m.role == UserRole.owner
+    deactivating = body.active is False and m.active and m.role == UserRole.owner
     if (demoting or deactivating) and auth_svc.active_owner_count(db, ctx.warehouse.id) <= 1:
         raise conflict("last_owner", "A warehouse needs at least one active owner.")
     if body.role is not None:
-        user.role = body.role
+        m.role = body.role
     if body.active is not None:
-        user.active = body.active
+        m.active = body.active
         if not body.active:
+            # Only sessions looking at this warehouse; they may run others.
             for s in db.scalars(
-                select(OwnerSession).where(OwnerSession.user_id == user.id, OwnerSession.revoked_at.is_(None))
+                select(OwnerSession).where(
+                    OwnerSession.user_id == user.id,
+                    OwnerSession.revoked_at.is_(None),
+                    OwnerSession.warehouse_id == ctx.warehouse.id,
+                )
             ):
-                s.revoked_at = utcnow()
-    if body.name is not None:
+                s.warehouse_id = None
+            if not db.scalar(
+                select(Membership.id).where(
+                    Membership.user_id == user.id, Membership.active.is_(True), Membership.id != m.id
+                )
+            ):
+                for s in db.scalars(
+                    select(OwnerSession).where(OwnerSession.user_id == user.id, OwnerSession.revoked_at.is_(None))
+                ):
+                    s.revoked_at = utcnow()
+    if body.name is not None and user.warehouse_id == ctx.warehouse.id:
         user.name = body.name.strip() or None
     audit.record(
         db,
@@ -211,7 +269,7 @@ def update_member(
         changes=body.model_dump(exclude_none=True),
     )
     db.commit()
-    return member_dict(user)
+    return member_dict(user, m)
 
 
 # ---------------------------------------------------------------------------
@@ -243,3 +301,28 @@ def audit_log(
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Getting started
+# ---------------------------------------------------------------------------
+
+
+@router.get("/onboarding")
+def onboarding_status(ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)) -> dict[str, Any]:
+    return onboarding.checklist(db, ctx.warehouse)
+
+
+@router.post("/onboarding/sample", status_code=201)
+def load_sample_orders(
+    ctx: OwnerContext = Depends(require_owner_access), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    result = onboarding.load_sample(db, ctx.warehouse, ctx.actor, ctx.user.id)
+    return {**result, "checklist": onboarding.checklist(db, ctx.warehouse)}
+
+
+@router.post("/onboarding/dismiss")
+def dismiss_onboarding(ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)) -> dict[str, Any]:
+    ctx.warehouse.onboarding_dismissed = True
+    db.commit()
+    return onboarding.checklist(db, ctx.warehouse)

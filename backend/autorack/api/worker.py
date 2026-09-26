@@ -31,9 +31,20 @@ from ..deps import (
     require_worker_access,
 )
 from ..errors import ApiError, bad_request, not_found
-from ..models import FlagReason, Order, OrderFlag, OrderStatus, ScanEvent, ScanResult, Warehouse, utcnow
+from ..models import (
+    FlagReason,
+    Order,
+    OrderFlag,
+    OrderStatus,
+    Photo,
+    ScanEvent,
+    ScanResult,
+    ShortReason,
+    Warehouse,
+    utcnow,
+)
 from ..security import is_valid_pin, normalize_join_code
-from ..services import audit, scans
+from ..services import audit, scans, usage
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
 from ..services import orders as order_svc
@@ -79,6 +90,7 @@ def device_info(dctx: DeviceContext = Depends(current_device)) -> dict[str, Any]
         "device": {"id": str(dctx.device.id), "label": dctx.device.label},
         "warehouse": {"id": str(dctx.warehouse.id), "name": dctx.warehouse.name},
         "access": _access_dict(dctx),
+        "require_ship_scan": dctx.warehouse.require_ship_scan,
         "pin_length": get_settings().pin_length,
         "server_time": utcnow().isoformat(),
     }
@@ -132,7 +144,26 @@ def open_orders(ctx: WorkerContext = Depends(require_worker_access), db: Session
     for r, o in zip(rows, orders, strict=True):
         r["version"] = o.version
         r["assigned_to_me"] = o.assigned_worker_id == ctx.worker.id
-    return {"orders": rows, "server_time": utcnow().isoformat()}
+    to_ship: list[dict[str, Any]] = []
+    if ctx.warehouse.require_ship_scan:
+        # Picked but no label scanned yet: the packing bench's queue.
+        ready = list(
+            db.scalars(
+                select(Order)
+                .where(Order.warehouse_id == ctx.warehouse.id, Order.status == OrderStatus.completed)
+                .order_by(Order.completed_at)
+                .limit(100)
+            )
+        )
+        to_ship = dash.order_rows(db, ctx.warehouse, ready)
+        for r, o in zip(to_ship, ready, strict=True):
+            r["version"] = o.version
+    return {
+        "orders": rows,
+        "to_ship": to_ship,
+        "require_ship_scan": ctx.warehouse.require_ship_scan,
+        "server_time": utcnow().isoformat(),
+    }
 
 
 @router.get("/orders/lookup")
@@ -158,6 +189,8 @@ def lookup_order(
         raise not_found("No order matches that code.")
     if order.status == OrderStatus.cancelled:
         raise bad_request("order_cancelled", "That order was cancelled.")
+    if order.status == OrderStatus.shipped:
+        raise bad_request("order_shipped", f"That order already shipped (tracking {order.tracking_number}).")
     return {"order_id": str(order.id), "status": order.status.value}
 
 
@@ -171,7 +204,7 @@ def order_payload(
 
 class SyncEventIn(BaseModel):
     id: uuid.UUID
-    kind: Literal["scan", "void", "flag"] = "scan"
+    kind: Literal["scan", "void", "flag", "short", "ship"] = "scan"
     order_id: uuid.UUID
     session_id: uuid.UUID
     client_scanned_at: datetime
@@ -185,6 +218,9 @@ class SyncEventIn(BaseModel):
     scan_event_id: uuid.UUID | None = None
     reason: FlagReason | None = None
     note: str | None = Field(default=None, max_length=500)
+    quantity: int | None = Field(default=None, ge=1, le=100_000)
+    short_reason: ShortReason | None = None
+    tracking_number: str | None = Field(default=None, max_length=200)
 
     @model_validator(mode="after")
     def check_kind(self) -> SyncEventIn:
@@ -194,6 +230,10 @@ class SyncEventIn(BaseModel):
             raise ValueError("void events need target_scan_id")
         if self.kind == "flag" and not self.reason:
             raise ValueError("flag events need reason")
+        if self.kind == "short" and not (self.line_item_id and self.quantity):
+            raise ValueError("short events need line_item_id and quantity")
+        if self.kind == "ship" and not self.tracking_number:
+            raise ValueError("ship events need tracking_number")
         return self
 
 
@@ -209,6 +249,13 @@ def sync(body: SyncIn, dctx: DeviceContext = Depends(current_device), db: Sessio
         raise bad_request("batch_too_large", f"Send at most {s.max_sync_events} events per request.")
     events = [scans.SyncEvent(**e.model_dump()) for e in body.events]
     outcome = scans.sync(db, dctx.device, dctx.warehouse, events)
+    applied: dict[str, int] = {}
+    for e in outcome.events:
+        if e.status == "applied":
+            applied[e.kind] = applied.get(e.kind, 0) + 1
+    for kind, n in applied.items():
+        usage.track(db, dctx.warehouse.id, f"floor.{kind}", n)
+    db.commit()
     return {
         "events": [e.as_dict() for e in outcome.events],
         "orders": outcome.orders,
@@ -232,7 +279,10 @@ def shift_summary(ctx: WorkerContext = Depends(current_worker), db: Session = De
         db.scalar(
             select(func.count(func.distinct(ScanEvent.order_id)))
             .join(Order, Order.id == ScanEvent.order_id)
-            .where(ScanEvent.worker_session_id == ctx.session.id, Order.status == OrderStatus.completed)
+            .where(
+                ScanEvent.worker_session_id == ctx.session.id,
+                Order.status.in_([OrderStatus.completed, OrderStatus.shipped]),
+            )
         )
         or 0
     )
@@ -253,3 +303,67 @@ def shift_summary(ctx: WorkerContext = Depends(current_worker), db: Session = De
         "orders_completed": orders_done,
         "flags": flags,
     }
+
+
+PHOTO_TYPES = {
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/webp": (b"RIFF",),
+}
+MAX_PHOTOS_PER_FLAG = 4
+
+
+@router.post("/photos", status_code=201)
+async def upload_photo(
+    request: Request,
+    id: uuid.UUID = Query(...),
+    flag_id: uuid.UUID = Query(...),
+    dctx: DeviceContext = Depends(current_device),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """A picture of a problem, attached to a flag or short pick the phone has
+    already synced. Raw image bytes in the body; compressed on the phone.
+
+    Device-authenticated like sync, so a photo taken offline still uploads
+    after the worker's session ended. Idempotent on the photo id.
+    """
+    s = get_settings()
+    memory_limiter.check(f"photo:{dctx.device.id}", 30, 60, "Too many photos. Wait a minute.")
+    existing = db.get(Photo, id)
+    if existing is not None:
+        if existing.warehouse_id != dctx.warehouse.id:
+            raise bad_request("id_conflict", "Duplicate id.")
+        return {"id": str(existing.id), "status": "duplicate"}
+    flag = db.scalar(select(OrderFlag).where(OrderFlag.id == flag_id, OrderFlag.warehouse_id == dctx.warehouse.id))
+    if not flag:
+        # The flag is still in the phone's outbox; it retries after syncing.
+        raise ApiError(409, "flag_not_synced", "Sync the problem report first.")
+    ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if ctype not in PHOTO_TYPES:
+        raise ApiError(415, "photo_type", "Photos must be JPEG, PNG or WebP.")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > s.max_photo_bytes:
+            raise ApiError(413, "photo_too_large", "That photo is too large.")
+    data = bytes(body)
+    if not data or not data.startswith(PHOTO_TYPES[ctype]):
+        raise bad_request("photo_invalid", "That file isn't a valid image.")
+    count = db.scalar(select(func.count()).select_from(Photo).where(Photo.flag_id == flag.id)) or 0
+    if count >= MAX_PHOTOS_PER_FLAG:
+        raise bad_request("photo_limit", f"At most {MAX_PHOTOS_PER_FLAG} photos per problem.")
+    db.add(
+        Photo(
+            id=id,
+            warehouse_id=dctx.warehouse.id,
+            flag_id=flag.id,
+            order_id=flag.order_id,
+            worker_id=flag.worker_id,
+            content_type=ctype,
+            size_bytes=len(data),
+            data=data,
+        )
+    )
+    usage.track(db, dctx.warehouse.id, "floor.photo")
+    db.commit()
+    return {"id": str(id), "status": "applied"}

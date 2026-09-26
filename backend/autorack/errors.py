@@ -31,8 +31,8 @@ def conflict(code: str, message: str, **extra: Any) -> ApiError:
     return ApiError(409, code, message, **extra)
 
 
-def forbidden(message: str = "You don't have permission to do that.") -> ApiError:
-    return ApiError(403, "forbidden", message)
+def forbidden(message: str = "You don't have permission to do that.", code: str = "forbidden") -> ApiError:
+    return ApiError(403, code, message)
 
 
 def unauthorized(message: str = "Please sign in again.", code: str = "unauthorized") -> ApiError:

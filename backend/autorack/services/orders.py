@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -99,6 +100,7 @@ def create_order(
     import_batch_id: uuid.UUID | None = None,
     created_by_user_id: uuid.UUID | None = None,
     assigned_worker_id: uuid.UUID | None = None,
+    customer: str | None = None,
     actor: Actor | None = None,
 ) -> Order:
     number = clean(external_order_number, 100)
@@ -111,6 +113,7 @@ def create_order(
     order = Order(
         warehouse_id=wh.id,
         external_order_number=number,
+        customer=clean(customer, 200),
         notes=clean(notes, 2000),
         source=source,
         import_batch_id=import_batch_id,
@@ -169,6 +172,8 @@ def order_number_in_use(db: Session, warehouse_id: uuid.UUID, number: str, exclu
 def ensure_editable(order: Order) -> None:
     if order.status == OrderStatus.cancelled:
         raise conflict("order_cancelled", "This order was cancelled.")
+    if order.status == OrderStatus.shipped:
+        raise conflict("order_shipped", "This order has shipped, so it can't be changed.")
 
 
 def add_line(db: Session, wh: Warehouse, order: Order, li: LineInput, actor: Actor) -> OrderLineItem:
@@ -270,6 +275,8 @@ def line_has_scans(db: Session, line_id: uuid.UUID) -> bool:
 def cancel_order(db: Session, order: Order, actor: Actor) -> None:
     if order.status == OrderStatus.cancelled:
         return
+    if order.status == OrderStatus.shipped:
+        raise conflict("order_shipped", "This order has already shipped.")
     order.status = OrderStatus.cancelled
     order.cancelled_at = utcnow()
     bump(order)
@@ -296,13 +303,14 @@ def recompute_status(db: Session, order: Order, lines: list[OrderLineItem] | Non
     """Derive the order's status from its lines and open flags.
 
     pending -> in_progress on the first scan; completed when every line has
-    its full quantity; flagged while any worker flag is unresolved (it wins
-    over completed: a flagged order needs a human before it ships).
+    its full quantity (or the rest was reported short); flagged while any
+    worker flag is unresolved (it wins over completed: a flagged order needs a
+    human before it ships). Cancelled and shipped are final.
     """
-    if order.status == OrderStatus.cancelled:
+    if order.status in (OrderStatus.cancelled, OrderStatus.shipped):
         return
     lines = lines if lines is not None else lines_for(db, order.id)
-    all_done = bool(lines) and all(li.scanned_quantity >= li.expected_quantity for li in lines)
+    all_done = bool(lines) and all(line_done(li) for li in lines)
     before = order.status
     if open_flag_count(db, order.id):
         order.status = OrderStatus.flagged
@@ -318,6 +326,50 @@ def recompute_status(db: Session, order: Order, lines: list[OrderLineItem] | Non
         order.completed_at = None
     if before != order.status:
         bump(order)
+
+
+def line_done(li: OrderLineItem) -> bool:
+    return li.scanned_quantity + li.short_quantity >= li.expected_quantity
+
+
+def line_remaining(li: OrderLineItem) -> int:
+    return max(0, li.expected_quantity - li.scanned_quantity - li.short_quantity)
+
+
+# ---------------------------------------------------------------------------
+# Shipping labels
+# ---------------------------------------------------------------------------
+
+_CARRIER_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("UPS", re.compile(r"^1Z[0-9A-Z]{16}$")),
+    # USPS labels often carry a 420+ZIP routing prefix before the number.
+    ("USPS", re.compile(r"^(420\d{5}(\d{4})?)?9[2-5]\d{20}$|^[A-Z]{2}\d{9}US$")),
+    ("FedEx", re.compile(r"^(\d{12}|\d{15}|\d{20}|96\d{20}|\d{34})$")),
+    ("DHL", re.compile(r"^(JD\d{18}|\d{10})$")),
+    ("Amazon", re.compile(r"^TBA\d{12}$")),
+]
+
+
+def normalize_tracking(raw: str) -> str:
+    return re.sub(r"[\s-]", "", raw or "").upper()[:100]
+
+
+def guess_carrier(tracking: str) -> str | None:
+    t = normalize_tracking(tracking)
+    for name, pattern in _CARRIER_PATTERNS:
+        if pattern.match(t):
+            return name
+    return None
+
+
+def tracking_in_use(db: Session, warehouse_id: uuid.UUID, tracking: str, exclude: uuid.UUID) -> Order | None:
+    return db.scalar(
+        select(Order).where(
+            Order.warehouse_id == warehouse_id,
+            Order.tracking_number == tracking,
+            Order.id != exclude,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +415,7 @@ def line_dict(line: OrderLineItem) -> dict[str, Any]:
         "expected_barcode": line.expected_barcode,
         "expected_quantity": line.expected_quantity,
         "scanned_quantity": line.scanned_quantity,
+        "short_quantity": line.short_quantity,
         "sku": line.sku,
         "description": line.sku_description,
         "location": line.location,
@@ -373,6 +426,7 @@ def order_summary(order: Order, lines: list[OrderLineItem]) -> dict[str, Any]:
     return {
         "id": str(order.id),
         "external_order_number": order.external_order_number,
+        "customer": order.customer,
         "status": order.status.value,
         "source": order.source.value,
         "version": order.version,
@@ -381,9 +435,13 @@ def order_summary(order: Order, lines: list[OrderLineItem]) -> dict[str, Any]:
         "created_at": order.created_at.isoformat(),
         "started_at": order.started_at.isoformat() if order.started_at else None,
         "completed_at": order.completed_at.isoformat() if order.completed_at else None,
+        "shipped_at": order.shipped_at.isoformat() if order.shipped_at else None,
+        "tracking_number": order.tracking_number,
+        "carrier": order.carrier,
         "line_count": len(lines),
         "units_expected": sum(li.expected_quantity for li in lines),
         "units_scanned": sum(min(li.scanned_quantity, li.expected_quantity) for li in lines),
+        "units_short": sum(li.short_quantity for li in lines),
     }
 
 
@@ -401,6 +459,7 @@ def offline_payload(db: Session, wh: Warehouse, order: Order) -> dict[str, Any]:
             "disabled_keys": index.disabled_rows(),
         },
         "open_flags": open_flag_count(db, order.id),
+        "require_ship_scan": wh.require_ship_scan,
         "fetched_at": utcnow().isoformat(),
     }
 

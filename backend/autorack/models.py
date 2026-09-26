@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -22,10 +22,12 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -75,14 +77,16 @@ class SubscriptionStatus(enum.StrEnum):
 
 
 class UserRole(enum.StrEnum):
-    owner = "owner"
-    manager = "manager"
+    owner = "owner"  # everything, including billing, settings and the team
+    manager = "manager"  # runs the operation; no billing, settings or team
+    supervisor = "supervisor"  # floor lead: watches, resolves flags; no billing, no editing orders
 
 
 class OrderStatus(enum.StrEnum):
     pending = "pending"
     in_progress = "in_progress"
     completed = "completed"
+    shipped = "shipped"  # completed, and its shipping label was scanned
     flagged = "flagged"
     cancelled = "cancelled"
 
@@ -90,6 +94,7 @@ class OrderStatus(enum.StrEnum):
 class OrderSource(enum.StrEnum):
     manual = "manual"
     csv = "csv"
+    sample = "sample"  # onboarding demo orders
 
 
 class ScanResult(enum.StrEnum):
@@ -105,6 +110,14 @@ class FlagReason(enum.StrEnum):
     out_of_stock = "out_of_stock"
     damaged = "damaged"
     label_unreadable = "label_unreadable"
+    short_pick = "short_pick"  # "found only 2 of 3"
+    other = "other"
+
+
+class ShortReason(enum.StrEnum):
+    out_of_stock = "out_of_stock"
+    damaged = "damaged"
+    not_found = "not_found"
     other = "other"
 
 
@@ -139,30 +152,71 @@ class Warehouse(Base):
     loose_match_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     suffix_len: Mapped[int] = mapped_column(Integer, default=8)
 
+    # What one mistake that reaches a customer costs this warehouse (returns,
+    # reshipping, credits, time). Drives the "money saved" estimate.
+    cost_per_error_cents: Mapped[int] = mapped_column(Integer, default=5000, server_default="5000")
+    # Notifications
+    daily_summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    daily_summary_hour: Mapped[int] = mapped_column(Integer, default=17, server_default="17")  # local time
+    alert_on_flag: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    alert_error_rate: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    # Features some floors want and some don't
+    leaderboard_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    require_ship_scan: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    onboarding_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     users: Mapped[list[User]] = relationship(back_populates="warehouse")
     workers: Mapped[list[Worker]] = relationship(back_populates="warehouse")
     orders: Mapped[list[Order]] = relationship(back_populates="warehouse")
 
-    __table_args__ = (CheckConstraint("suffix_len BETWEEN 6 AND 14", name="ck_warehouses_suffix_len"),)
+    __table_args__ = (
+        CheckConstraint("suffix_len BETWEEN 6 AND 14", name="ck_warehouses_suffix_len"),
+        CheckConstraint("daily_summary_hour BETWEEN 0 AND 23", name="ck_warehouses_summary_hour"),
+        CheckConstraint("cost_per_error_cents BETWEEN 0 AND 10000000", name="ck_warehouses_cost_per_error"),
+    )
 
 
 class User(Base):
-    """An owner or manager who signs in to the dashboard by magic link."""
+    """A person who signs in to the dashboard by magic link.
+
+    What they can do, and where, lives in `memberships`: one person can run
+    several warehouses, with a different role in each.
+    """
 
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    # Home warehouse: where a fresh sign-in lands. Empty only for an operator
+    # account that runs no warehouse of its own.
+    warehouse_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("warehouses.id"), index=True)
     email: Mapped[str] = mapped_column(String(320), unique=True)  # stored lowercased
     name: Mapped[str | None] = mapped_column(String(200))
-    role: Mapped[UserRole] = mapped_column(_enum(UserRole, "user_role"), default=UserRole.owner)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    warehouse: Mapped[Warehouse] = relationship(back_populates="users")
+    warehouse: Mapped[Warehouse | None] = relationship(back_populates="users")
+
+
+class Membership(Base):
+    """A user's role at one warehouse, and which emails they get from it."""
+
+    __tablename__ = "memberships"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    role: Mapped[UserRole] = mapped_column(_enum(UserRole, "membership_role"), default=UserRole.owner)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    email_daily_summary: Mapped[bool] = mapped_column(Boolean, default=True)
+    email_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship()
+
+    __table_args__ = (UniqueConstraint("user_id", "warehouse_id", name="uq_memberships_user_warehouse"),)
 
 
 class MagicLinkToken(Base):
@@ -188,6 +242,8 @@ class OwnerSession(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str | None] = mapped_column(String(300))
+    # The warehouse this session is looking at (users can switch).
+    warehouse_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("warehouses.id"))
 
     user: Mapped[User] = relationship()
 
@@ -276,6 +332,7 @@ class Order(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
     external_order_number: Mapped[str | None] = mapped_column(String(100))
+    customer: Mapped[str | None] = mapped_column(String(200), index=True)
     status: Mapped[OrderStatus] = mapped_column(
         _enum(OrderStatus, "order_status"), default=OrderStatus.pending, index=True
     )
@@ -291,11 +348,16 @@ class Order(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    # Pack-and-ship verification: the shipping label scanned onto the box.
+    tracking_number: Mapped[str | None] = mapped_column(String(100))
+    carrier: Mapped[str | None] = mapped_column(String(32))
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    shipped_by_worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
 
     warehouse: Mapped[Warehouse] = relationship(back_populates="orders")
     line_items: Mapped[list[OrderLineItem]] = relationship(back_populates="order", order_by="OrderLineItem.line_no")
     flags: Mapped[list[OrderFlag]] = relationship(back_populates="order", order_by="OrderFlag.created_at")
-    assigned_worker: Mapped[Worker | None] = relationship()
+    assigned_worker: Mapped[Worker | None] = relationship(foreign_keys=[assigned_worker_id])
 
     __table_args__ = (
         Index(
@@ -306,6 +368,7 @@ class Order(Base):
             postgresql_where=text("external_order_number IS NOT NULL AND status <> 'cancelled'"),
         ),
         Index("ix_orders_warehouse_status_created", "warehouse_id", "status", "created_at"),
+        Index("ix_orders_warehouse_tracking", "warehouse_id", "tracking_number"),
     )
 
 
@@ -322,6 +385,8 @@ class OrderLineItem(Base):
     normalized_barcode: Mapped[str] = mapped_column(String(200))
     expected_quantity: Mapped[int] = mapped_column(Integer, default=1)
     scanned_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    # Units a worker reported they couldn't find (see OrderFlag.short_quantity).
+    short_quantity: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     sku: Mapped[str | None] = mapped_column(String(100))
     sku_description: Mapped[str | None] = mapped_column(String(500))
     location: Mapped[str | None] = mapped_column(String(100))
@@ -333,6 +398,7 @@ class OrderLineItem(Base):
         UniqueConstraint("order_id", "normalized_barcode", name="uq_line_items_order_barcode"),
         CheckConstraint("expected_quantity >= 1", name="ck_line_items_expected_qty"),
         CheckConstraint("scanned_quantity >= 0", name="ck_line_items_scanned_qty"),
+        CheckConstraint("short_quantity >= 0", name="ck_line_items_short_qty"),
     )
 
 
@@ -389,13 +455,39 @@ class OrderFlag(Base):
     worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
     reason: Mapped[FlagReason] = mapped_column(_enum(FlagReason, "flag_reason"))
     note: Mapped[str | None] = mapped_column(String(500))
+    # Short picks: how many units couldn't be picked, and why.
+    short_quantity: Mapped[int | None] = mapped_column(Integer)
+    short_reason: Mapped[ShortReason | None] = mapped_column(_enum(ShortReason, "short_reason"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     resolution_note: Mapped[str | None] = mapped_column(String(500))
+    # accepted (ship it short) | reopened (pick again) | resolved (plain flag)
+    resolution: Mapped[str | None] = mapped_column(String(16))
 
     order: Mapped[Order] = relationship(back_populates="flags")
     worker: Mapped[Worker | None] = relationship()
+
+
+class Photo(Base):
+    """A picture a worker took of a problem (damaged box, empty bin...).
+
+    Stored in Postgres rather than on disk: free app hosts have no persistent
+    disk, and a phone-compressed JPEG is ~100-250 KB. Linked to a flag; the id
+    is generated on the phone so offline uploads are idempotent.
+    """
+
+    __tablename__ = "photos"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    flag_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("order_flags.id"), index=True)
+    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), index=True)
+    worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
+    content_type: Mapped[str] = mapped_column(String(32))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class BarcodeAlias(Base):
@@ -450,6 +542,33 @@ class StripeEvent(Base):
     type: Mapped[str] = mapped_column(String(100))
     warehouse_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("warehouses.id"))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class NotificationSent(Base):
+    """Every automatic email, once. The unique key makes each send idempotent,
+    so a job that runs twice (two processes, a retry) never emails twice."""
+
+    __tablename__ = "notifications_sent"
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    warehouse_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(48))
+    key: Mapped[str] = mapped_column(String(128))
+    recipients: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (UniqueConstraint("warehouse_id", "kind", "key", name="uq_notifications_once"),)
+
+
+class FeatureUsage(Base):
+    """Daily per-warehouse feature counters, for the operator's usage view."""
+
+    __tablename__ = "feature_usage"
+
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), primary_key=True)
+    feature: Mapped[str] = mapped_column(String(48), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class RateLimitHit(Base):

@@ -1,6 +1,7 @@
 """Scan ingestion: the single path by which picks reach the database.
 
-Online or offline, every scan, undo ("void") and flag a phone produces goes
+Online or offline, every scan, undo ("void"), flag, short pick ("found only 2
+of 3") and shipping-label scan ("ship") a phone produces goes
 through `sync()`. A live scan is just a batch of one. That means the offline
 path is not a separate, rarely exercised code path: it is the only path.
 
@@ -41,6 +42,7 @@ from ..models import (
     OrderStatus,
     ScanEvent,
     ScanResult,
+    ShortReason,
     Warehouse,
     WorkerSession,
     utcnow,
@@ -55,7 +57,7 @@ MAX_CLOCK_SKEW = timedelta(minutes=5)
 @dataclass
 class SyncEvent:
     id: uuid.UUID
-    kind: Literal["scan", "void", "flag"]
+    kind: Literal["scan", "void", "flag", "short", "ship"]
     order_id: uuid.UUID
     session_id: uuid.UUID
     client_scanned_at: datetime
@@ -69,6 +71,9 @@ class SyncEvent:
     scan_event_id: uuid.UUID | None = None
     reason: FlagReason | None = None
     note: str | None = None
+    quantity: int | None = None
+    short_reason: ShortReason | None = None
+    tracking_number: str | None = None
 
 
 @dataclass
@@ -152,7 +157,9 @@ def _order_state(db: Session, order: Order) -> dict[str, Any]:
         "status": order.status.value,
         "version": order.version,
         "lines": {str(li.id): li.scanned_quantity for li in lines},
+        "short": {str(li.id): li.short_quantity for li in lines if li.short_quantity},
         "open_flags": order_svc.open_flag_count(db, order.id),
+        "tracking_number": order.tracking_number,
     }
 
 
@@ -195,6 +202,11 @@ def _apply_order_group(
                     out[ev.id] = _apply_scan(db, device, wh, order, lines_by_id, index, sess, ev)
                 elif ev.kind == "void":
                     out[ev.id] = _apply_void(db, device, wh, order, lines_by_id, sess, ev)
+                elif ev.kind == "short":
+                    out[ev.id] = _apply_short(db, wh, order, lines_by_id, sess, ev)
+                elif ev.kind == "ship":
+                    order_svc.recompute_status(db, order, lines)
+                    out[ev.id] = _apply_ship(db, wh, order, lines, sess, ev)
                 else:
                     out[ev.id] = _apply_flag(db, wh, order, lines_by_id, sess, ev)
             touched = True
@@ -207,6 +219,13 @@ def _apply_order_group(
 
 
 def _existing_outcome(db: Session, wh: Warehouse, ev: SyncEvent) -> EventOutcome | None:
+    if ev.kind == "ship":
+        order = db.get(Order, ev.order_id)
+        tracking = order_svc.normalize_tracking(ev.tracking_number or "")
+        shipped = order is not None and order.warehouse_id == wh.id and order.status == OrderStatus.shipped
+        if shipped and order is not None and order.tracking_number == tracking:
+            return EventOutcome(str(ev.id), "ship", "duplicate", result="shipped")
+        return None
     if ev.kind in ("scan", "void"):
         prior = db.get(ScanEvent, ev.id)
         if prior is None:
@@ -226,12 +245,19 @@ def _existing_outcome(db: Session, wh: Warehouse, ev: SyncEvent) -> EventOutcome
         return None
     if flag.warehouse_id != wh.id:
         return EventOutcome(str(ev.id), ev.kind, "error", error={"code": "id_conflict", "message": "Duplicate id."})
-    return EventOutcome(str(ev.id), "flag", "duplicate", result="flagged")
+    return EventOutcome(str(ev.id), ev.kind, "duplicate", result="flagged")
 
 
 def _mark_started(order: Order, at: datetime) -> None:
     if order.started_at is None:
         order.started_at = min(at, utcnow())
+
+
+def _ensure_open(order: Order) -> None:
+    if order.status == OrderStatus.cancelled:
+        raise EventError("order_cancelled", "This order was cancelled. Put the items back.")
+    if order.status == OrderStatus.shipped:
+        raise EventError("order_shipped", "This order has already shipped.")
 
 
 def _apply_scan(
@@ -244,8 +270,7 @@ def _apply_scan(
     sess: WorkerSession,
     ev: SyncEvent,
 ) -> EventOutcome:
-    if order.status == OrderStatus.cancelled:
-        raise EventError("order_cancelled", "This order was cancelled. Put the items back.")
+    _ensure_open(order)
     raw = (ev.scanned_barcode or "")[:500]
     if not matching.normalized_key(raw):
         raise EventError("barcode_empty", "Empty barcode.")
@@ -253,7 +278,7 @@ def _apply_scan(
     mr = index.match(raw)
     line: OrderLineItem | None = lines_by_id.get(str(mr.line_id)) if mr.line_id is not None else None
     if mr.is_resolved and line is not None and not mr.needs_confirmation:
-        if line.scanned_quantity < line.expected_quantity:
+        if order_svc.line_remaining(line) > 0:
             result = ScanResult.match
             line.scanned_quantity += 1
         else:
@@ -312,6 +337,8 @@ def _apply_void(
         raise EventError("void_target_missing", "That scan can't be undone.")
     if target.result != ScanResult.match:
         raise EventError("void_not_match", "Only a counted pick can be undone.")
+    if order.status == OrderStatus.shipped:
+        raise EventError("order_shipped", "This order has already shipped.")
     if db.scalar(select(ScanEvent.id).where(ScanEvent.voids_scan_id == target.id)):
         raise EventError("void_already", "That scan was already undone.")
     line = lines_by_id.get(str(target.line_item_id))
@@ -349,8 +376,7 @@ def _apply_flag(
     sess: WorkerSession,
     ev: SyncEvent,
 ) -> EventOutcome:
-    if order.status == OrderStatus.cancelled:
-        raise EventError("order_cancelled", "This order was cancelled.")
+    _ensure_open(order)
     line_id = str(ev.line_item_id) if ev.line_item_id else None
     scan_id = ev.scan_event_id
     if scan_id is not None:
@@ -373,3 +399,84 @@ def _apply_flag(
     _mark_started(order, ev.client_scanned_at)
     db.flush()
     return EventOutcome(str(ev.id), "flag", "applied", result="flagged", line_item_id=line_id)
+
+
+def _apply_short(
+    db: Session,
+    wh: Warehouse,
+    order: Order,
+    lines_by_id: dict[str, OrderLineItem],
+    sess: WorkerSession,
+    ev: SyncEvent,
+) -> EventOutcome:
+    """'Found only 2 of 3': the rest of the line is reported missing.
+
+    Recorded as a flag (so the order waits for a human) that remembers how
+    many units and why. The line counts as done while the flag stands; a
+    manager either accepts it (ship short) or sends it back to be picked.
+    """
+    _ensure_open(order)
+    line = lines_by_id.get(str(ev.line_item_id)) if ev.line_item_id else None
+    if line is None:
+        raise EventError("line_missing", "That item isn't on this order any more.")
+    remaining = order_svc.line_remaining(line)
+    if remaining <= 0:
+        raise EventError("line_complete", "That item is already fully picked.")
+    qty = min(max(1, ev.quantity or remaining), remaining)
+    line.short_quantity += qty
+    db.add(
+        OrderFlag(
+            id=ev.id,
+            warehouse_id=wh.id,
+            order_id=order.id,
+            line_item_id=line.id,
+            worker_id=sess.worker_id,
+            reason=FlagReason.short_pick,
+            short_quantity=qty,
+            short_reason=ev.short_reason or ShortReason.not_found,
+            note=(ev.note or "").strip()[:500] or None,
+            created_at=min(ev.client_scanned_at, utcnow()),
+        )
+    )
+    _mark_started(order, ev.client_scanned_at)
+    order_svc.bump(order)
+    db.flush()
+    return EventOutcome(str(ev.id), "short", "applied", result="flagged", line_item_id=str(line.id))
+
+
+def _apply_ship(
+    db: Session,
+    wh: Warehouse,
+    order: Order,
+    lines: list[OrderLineItem],
+    sess: WorkerSession,
+    ev: SyncEvent,
+) -> EventOutcome:
+    """The shipping label on the packed box: ties this order to a tracking
+    number, which is the proof of what went out in which parcel."""
+    if order.status == OrderStatus.cancelled:
+        raise EventError("order_cancelled", "This order was cancelled. Don't ship it.")
+    if order.status == OrderStatus.shipped:
+        raise EventError("order_shipped", f"Already shipped with tracking {order.tracking_number}.")
+    if order.status == OrderStatus.flagged:
+        raise EventError("order_flagged", "This order has an open problem. A manager must clear it first.")
+    if order.status != OrderStatus.completed:
+        raise EventError("order_incomplete", "Finish picking every item before scanning the label.")
+    tracking = order_svc.normalize_tracking(ev.tracking_number or "")
+    if len(tracking) < 8:
+        raise EventError("tracking_invalid", "That doesn't look like a shipping label. Scan the big tracking barcode.")
+    keys = {li.normalized_barcode for li in lines}
+    if matching.normalized_key(tracking) in keys or matching.normalized_key(ev.tracking_number or "") in keys:
+        raise EventError("tracking_is_product", "That's a product barcode. Scan the shipping label.")
+    other = order_svc.tracking_in_use(db, wh.id, tracking, order.id)
+    if other:
+        label = other.external_order_number or str(other.id)[:8]
+        raise EventError("tracking_used", f"That label is already on order {label}. Check the box.")
+    order.tracking_number = tracking
+    order.carrier = order_svc.guess_carrier(tracking)
+    order.shipped_at = min(ev.client_scanned_at, utcnow())
+    order.shipped_by_worker_id = sess.worker_id
+    order.status = OrderStatus.shipped
+    order_svc.bump(order)
+    db.flush()
+    return EventOutcome(str(ev.id), "ship", "applied", result="shipped")

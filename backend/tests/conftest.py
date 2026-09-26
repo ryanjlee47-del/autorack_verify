@@ -41,6 +41,9 @@ from autorack.main import create_app
 from autorack.services import email
 from autorack.services.ratelimit import memory_limiter
 
+# Smallest thing that passes the upload's JPEG signature check.
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64 + b"\xff\xd9"
+
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -57,6 +60,10 @@ def _schema() -> Iterator[None]:
 
 
 TABLES = [
+    "feature_usage",
+    "notifications_sent",
+    "photos",
+    "memberships",
     "rate_limit_hits",
     "stripe_events",
     "audit_log",

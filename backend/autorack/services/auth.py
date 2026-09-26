@@ -15,6 +15,7 @@ from ..errors import ApiError, bad_request, conflict, unauthorized
 from ..models import (
     Device,
     MagicLinkToken,
+    Membership,
     OwnerSession,
     SubscriptionStatus,
     User,
@@ -56,9 +57,11 @@ def create_warehouse(
     timezone: str = "UTC",
     status: SubscriptionStatus = SubscriptionStatus.trialing,
     actor: Actor,
+    user: User | None = None,
 ) -> tuple[Warehouse, User]:
+    """A new warehouse, owned by a new user, or by `user` (adding a site)."""
     owner_email = normalize_email(owner_email)
-    if db.scalar(select(User).where(User.email == owner_email)):
+    if user is None and db.scalar(select(User).where(User.email == owner_email)):
         raise conflict("email_taken", "That email already has an Autorack account. Sign in instead.")
     s = get_settings()
     wh = Warehouse(
@@ -71,13 +74,72 @@ def create_warehouse(
     )
     db.add(wh)
     db.flush()
-    user = User(warehouse_id=wh.id, email=owner_email, role=UserRole.owner)
-    db.add(user)
-    db.flush()
+    if user is None:
+        user = User(warehouse_id=wh.id, email=owner_email)
+        db.add(user)
+        db.flush()
+    elif user.warehouse_id is None:
+        user.warehouse_id = wh.id
+    add_membership(db, user, wh.id, UserRole.owner)
     audit.record(
         db, actor, "warehouse.created", warehouse_id=wh.id, target_type="warehouse", target_id=wh.id, name=wh.name
     )
     return wh, user
+
+
+def add_membership(db: Session, user: User, warehouse_id: uuid.UUID, role: UserRole) -> Membership:
+    m = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.warehouse_id == warehouse_id))
+    if m is None:
+        is_owner = role == UserRole.owner
+        m = Membership(
+            user_id=user.id,
+            warehouse_id=warehouse_id,
+            role=role,
+            active=True,
+            email_daily_summary=is_owner,
+            email_alerts=role != UserRole.supervisor,
+        )
+        db.add(m)
+    else:
+        m.role = role
+        m.active = True
+    db.flush()
+    return m
+
+
+def memberships_for(db: Session, user: User) -> list[tuple[Membership, Warehouse]]:
+    rows = db.execute(
+        select(Membership, Warehouse)
+        .join(Warehouse, Warehouse.id == Membership.warehouse_id)
+        .where(Membership.user_id == user.id, Membership.active.is_(True))
+        .order_by(Warehouse.name, Warehouse.created_at)
+    )
+    return [(m, w) for m, w in rows]
+
+
+def session_warehouse(db: Session, user: User, sess: OwnerSession) -> tuple[Warehouse, Membership] | None:
+    """The warehouse this session is looking at, if the user may still see it.
+
+    Falls back to the home warehouse, then to any other: a user removed from
+    the warehouse they were viewing lands somewhere they're allowed to be.
+    """
+    for wid in (sess.warehouse_id, user.warehouse_id):
+        if wid is None:
+            continue
+        m = db.scalar(
+            select(Membership).where(
+                Membership.user_id == user.id, Membership.warehouse_id == wid, Membership.active.is_(True)
+            )
+        )
+        if m:
+            wh = db.get(Warehouse, wid)
+            if wh:
+                return wh, m
+    others = memberships_for(db, user)
+    if not others:
+        return None
+    m, wh = others[0]
+    return wh, m
 
 
 def _unique_join_code(db: Session) -> str:
@@ -128,10 +190,15 @@ def request_magic_link(db: Session, email_addr: str, ip: str | None) -> None:
         db, "magic_link_email", addr, 5, timedelta(minutes=15), "Too many sign-in links requested for this email."
     )
     user = db.scalar(select(User).where(User.email == addr, User.active.is_(True)))
+    if not user and addr in get_settings().operator_email_set and not db.scalar(select(User).where(User.email == addr)):
+        # First sign-in of an operator who runs no warehouse themselves.
+        user = User(warehouse_id=None, email=addr)
+        db.add(user)
+        db.flush()
     if not user:
         db.commit()  # keep the rate-limit hits
         return
-    wh = db.get(Warehouse, user.warehouse_id)
+    wh = db.get(Warehouse, user.warehouse_id) if user.warehouse_id else None
     url = issue_magic_link(db, user, ip)
     db.commit()
     try:
@@ -172,6 +239,7 @@ def verify_magic_link(db: Session, token: str, ip: str | None, user_agent: str |
             expires_at=now + timedelta(days=get_settings().owner_session_days),
             last_seen_at=now,
             user_agent=(user_agent or "")[:300] or None,
+            warehouse_id=user.warehouse_id,
         )
     )
     user.last_login_at = now
@@ -367,8 +435,14 @@ def active_owner_count(db: Session, warehouse_id: uuid.UUID) -> int:
     return (
         db.scalar(
             select(func.count())
-            .select_from(User)
-            .where(User.warehouse_id == warehouse_id, User.role == UserRole.owner, User.active.is_(True))
+            .select_from(Membership)
+            .join(User, User.id == Membership.user_id)
+            .where(
+                Membership.warehouse_id == warehouse_id,
+                Membership.role == UserRole.owner,
+                Membership.active.is_(True),
+                User.active.is_(True),
+            )
         )
         or 0
     )

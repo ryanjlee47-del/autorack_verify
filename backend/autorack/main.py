@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -26,9 +28,10 @@ from sqlalchemy.orm import Session
 from starlette.types import Scope
 
 from . import __version__
-from .api import auth, orders, people, reporting, warehouse, worker
+from .api import admin, auth, orders, people, reporting, warehouse, worker
 from .config import get_settings
-from .db import get_db
+from .db import get_db, get_sessionmaker
+from .services import jobs
 
 log = logging.getLogger("autorack")
 
@@ -65,7 +68,20 @@ def create_app() -> FastAPI:
     if problems:
         raise RuntimeError("Refusing to start with an unsafe production config:\n- " + "\n- ".join(problems))
 
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Emails on a schedule (daily summary, alerts, trial/payment notices).
+        # Tests drive jobs directly; see services/jobs.py for the cron route.
+        loop = None
+        if s.jobs_enabled and s.environment != "test":
+            loop = jobs.JobLoop(get_sessionmaker())
+            loop.start()
+        yield
+        if loop:
+            loop.stop()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Autorack API",
         version=__version__,
         description="Warehouse picking verification.",
@@ -160,8 +176,9 @@ def create_app() -> FastAPI:
             "version": __version__,
         }
 
-    for module in (auth, warehouse, people, orders, reporting, worker):
+    for module in (auth, warehouse, people, orders, reporting, worker, admin):
         api.include_router(module.router)
+    api.include_router(admin.cron_router)
     app.include_router(api)
 
     frontend: Path = s.frontend_dir

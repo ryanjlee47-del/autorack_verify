@@ -136,3 +136,39 @@ def invite_email(to: str, url: str, warehouse_name: str, inviter: str) -> Email:
             footer,
         ),
     )
+
+
+def _rows_html(rows: list[tuple[str, str]]) -> str:
+    cells = "".join(
+        f'<tr><td style="padding:7px 0;border-bottom:1px solid #e6e8ec;color:#4a5468">{html.escape(k)}</td>'
+        f'<td align="right" style="padding:7px 0;border-bottom:1px solid #e6e8ec;font-weight:600">{html.escape(v)}</td></tr>'
+        for k, v in rows
+    )
+    return f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;font-size:14px">{cells}</table>'
+
+
+def notice_email(
+    to: str,
+    subject: str,
+    heading: str,
+    lines: list[str],
+    button_label: str,
+    url: str,
+    footer: str,
+    rows: list[tuple[str, str]] | None = None,
+    extra_text: str = "",
+) -> Email:
+    """A plain notification: a few sentences, an optional table of numbers,
+    one button. Used by the daily summary, alerts and account emails."""
+    body = "".join(f'<p style="margin:0 0 10px">{html.escape(line)}</p>' for line in lines)
+    if rows:
+        body += _rows_html(rows)
+    if extra_text:
+        body += f'<p style="margin:14px 0 0;white-space:pre-line">{html.escape(extra_text)}</p>'
+    text = "\n\n".join(lines)
+    if rows:
+        text += "\n\n" + "\n".join(f"{k}: {v}" for k, v in rows)
+    if extra_text:
+        text += "\n\n" + extra_text
+    text += f"\n\n{button_label}: {url}\n\n{footer}\n"
+    return Email(to=to, subject=subject, text=text, html=_layout(heading, body, button_label, url, footer))

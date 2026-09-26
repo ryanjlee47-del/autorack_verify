@@ -25,6 +25,7 @@ from ..models import (
     OrderFlag,
     OrderLineItem,
     OrderStatus,
+    Photo,
     ScanEvent,
     ScanResult,
     Warehouse,
@@ -96,9 +97,30 @@ def summary(db: Session, wh: Warehouse, day: date | None = None) -> dict[str, An
             .select_from(Order)
             .where(
                 Order.warehouse_id == wh.id,
-                Order.status == OrderStatus.completed,
+                Order.status.in_([OrderStatus.completed, OrderStatus.shipped]),
                 Order.completed_at >= start,
                 Order.completed_at < end,
+            )
+        )
+        or 0
+    )
+    shipped_today = (
+        db.scalar(
+            select(func.count())
+            .select_from(Order)
+            .where(Order.warehouse_id == wh.id, Order.shipped_at >= start, Order.shipped_at < end)
+        )
+        or 0
+    )
+    open_flags = (
+        db.scalar(
+            select(func.count())
+            .select_from(OrderFlag)
+            .join(Order, Order.id == OrderFlag.order_id)
+            .where(
+                OrderFlag.warehouse_id == wh.id,
+                OrderFlag.resolved_at.is_(None),
+                Order.status != OrderStatus.cancelled,
             )
         )
         or 0
@@ -120,7 +142,10 @@ def summary(db: Session, wh: Warehouse, day: date | None = None) -> dict[str, An
             "in_progress": status_counts["in_progress"],
             "flagged": status_counts["flagged"],
             "completed_today": completed_today,
-            "completed_all_time": status_counts["completed"],
+            "completed_all_time": status_counts["completed"] + status_counts["shipped"],
+            "ready_to_ship": status_counts["completed"],
+            "shipped_today": shipped_today,
+            "open_problems": open_flags,
         },
         "today": {
             "scans": sum(v for k, v in today.items() if k != "void"),
@@ -131,8 +156,11 @@ def summary(db: Session, wh: Warehouse, day: date | None = None) -> dict[str, An
             "errors_caught": today["mismatch"] + today["over_pick"],
             "accuracy": _accuracy(today),
             "active_workers": active_workers,
+            "money_saved_cents": (today["mismatch"] + today["over_pick"]) * wh.cost_per_error_cents,
         },
+        "cost_per_error_cents": wh.cost_per_error_cents,
         "all_time": {
+            "money_saved_cents": (all_time["mismatch"] + all_time["over_pick"]) * wh.cost_per_error_cents,
             "errors_caught": all_time["mismatch"] + all_time["over_pick"],
             "units_verified": all_time["match"] - all_time["void"],
             "accuracy": _accuracy(all_time),
@@ -150,7 +178,10 @@ def live(db: Session, wh: Warehouse) -> dict[str, Any]:
             .where(
                 Order.warehouse_id == wh.id,
                 (Order.status.in_([OrderStatus.in_progress, OrderStatus.flagged]))
-                | and_(Order.status == OrderStatus.completed, Order.completed_at >= recent_cutoff),
+                | and_(
+                    Order.status.in_([OrderStatus.completed, OrderStatus.shipped]),
+                    Order.completed_at >= recent_cutoff,
+                ),
             )
             .order_by(Order.updated_at.desc())
             .limit(100)
@@ -158,7 +189,53 @@ def live(db: Session, wh: Warehouse) -> dict[str, Any]:
     )
     rows = order_rows(db, wh, orders)
     problems = recent_problems(db, wh, limit=25)
-    return {"orders": rows, "problems": problems, "generated_at": now.isoformat()}
+    return {"orders": rows, "problems": problems, "flags": open_flags(db, wh), "generated_at": now.isoformat()}
+
+
+def open_flags(db: Session, wh: Warehouse, limit: int = 50) -> list[dict[str, Any]]:
+    """Unresolved worker reports: the queue a manager or supervisor works."""
+    rows = list(
+        db.execute(
+            select(OrderFlag, Order.external_order_number, OrderLineItem)
+            .join(Order, Order.id == OrderFlag.order_id)
+            .outerjoin(OrderLineItem, OrderLineItem.id == OrderFlag.line_item_id)
+            .where(
+                OrderFlag.warehouse_id == wh.id,
+                OrderFlag.resolved_at.is_(None),
+                Order.status != OrderStatus.cancelled,
+            )
+            .order_by(OrderFlag.created_at.desc())
+            .limit(limit)
+        )
+    )
+    photos: dict[uuid.UUID, list[str]] = {}
+    if rows:
+        for pid, fid in db.execute(
+            select(Photo.id, Photo.flag_id).where(
+                Photo.warehouse_id == wh.id, Photo.flag_id.in_([f.id for f, _, _ in rows])
+            )
+        ):
+            photos.setdefault(fid, []).append(str(pid))
+    names = worker_names(db, wh.id)
+    return [
+        {
+            "id": str(f.id),
+            "order_id": str(f.order_id),
+            "order_number": number,
+            "reason": f.reason.value,
+            "note": f.note,
+            "short_quantity": f.short_quantity,
+            "short_reason": f.short_reason.value if f.short_reason else None,
+            "expected_quantity": line.expected_quantity if line else None,
+            "sku": line.sku if line else None,
+            "description": line.sku_description if line else None,
+            "location": line.location if line else None,
+            "worker": names.get(f.worker_id) if f.worker_id else None,
+            "created_at": f.created_at.isoformat(),
+            "photos": photos.get(f.id, []),
+        }
+        for f, number, line in rows
+    ]
 
 
 def order_rows(db: Session, wh: Warehouse, orders: list[Order]) -> list[dict[str, Any]]:
@@ -201,8 +278,10 @@ def order_rows(db: Session, wh: Warehouse, orders: list[Order]) -> list[dict[str
             {
                 "id": str(o.id),
                 "external_order_number": o.external_order_number,
+                "customer": o.customer,
                 "status": o.status.value,
                 "source": o.source.value,
+                "tracking_number": o.tracking_number,
                 "line_count": n or 0,
                 "units_expected": int(exp or 0),
                 "units_scanned": int(got or 0),
@@ -382,6 +461,7 @@ def trend(db: Session, wh: Warehouse, days: int = 30) -> dict[str, Any]:
                 "units_picked": b.get("match", 0) - b.get("void", 0),
                 "errors_caught": b.get("mismatch", 0) + b.get("over_pick", 0),
                 "reviews": b.get("review", 0),
+                "money_saved_cents": (b.get("mismatch", 0) + b.get("over_pick", 0)) * wh.cost_per_error_cents,
             }
         )
     return {"days": days, "series": series}
