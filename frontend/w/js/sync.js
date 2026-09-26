@@ -52,7 +52,7 @@ export class Sync {
   async emit() {
     let pending = 0;
     try {
-      pending = await store.outboxCount();
+      pending = (await store.outboxCount()) + (await store.photoCount());
     } catch {
       pending = -1;
     }
@@ -100,7 +100,10 @@ export class Sync {
   /** One batch. Resolves true if more events are waiting. */
   async syncOnce() {
     const all = await store.outboxAll();
-    if (!all.length) return false;
+    if (!all.length) {
+      await this.uploadPhotos();
+      return false;
+    }
     const batch = all.slice(0, BATCH);
     const resp = await request("/api/worker/sync", {
       method: "POST",
@@ -111,14 +114,41 @@ export class Sync {
     const settled = resp.events.filter(isSettled).map((o) => o.id);
     await store.outboxRemove(settled);
     await this.h.onResult(batch, resp);
+    if (all.length <= batch.length) await this.uploadPhotos();
     return all.length > batch.length;
+  }
+
+  /**
+   * Photos go up after the flag they belong to has synced (the server 409s
+   * until then). A photo the server refuses outright (too big, not an
+   * image) is dropped rather than retried forever.
+   */
+  async uploadPhotos() {
+    const photos = await store.photosAll();
+    for (const p of photos) {
+      try {
+        await request(`/api/worker/photos?id=${encodeURIComponent(p.id)}&flag_id=${encodeURIComponent(p.flag_id)}`, {
+          method: "POST",
+          deviceToken: this.h.deviceToken(),
+          blob: p.blob,
+          timeoutMs: 60000,
+        });
+        await store.photoRemove(p.id);
+      } catch (e) {
+        if (e.isNetwork || e.status >= 500 || e.status === 429) throw e;
+        // Its flag never made it (the order was cancelled meanwhile): give up after a few days.
+        if (e.code === "flag_not_synced" && Date.now() - (p.created || 0) < 3 * 86400000) continue;
+        await store.photoRemove(p.id);
+        if (this.h.onPhotoRejected) this.h.onPhotoRejected(e);
+      }
+    }
   }
 
   /** Try hard to empty the outbox (used at end of shift). Resolves with what's left. */
   async flush(timeoutMs = 6000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const left = await store.outboxCount().catch(() => 1);
+      const left = (await store.outboxCount().catch(() => 1)) + (await store.photoCount().catch(() => 1));
       if (!left) return 0;
       if (this.syncing) {
         await new Promise((r) => setTimeout(r, 150));
@@ -128,11 +158,15 @@ export class Sync {
         this.syncing = true;
         await this.syncOnce();
       } catch {
-        return store.outboxCount().catch(() => 1);
+        return this.leftCount();
       } finally {
         this.syncing = false;
       }
     }
-    return store.outboxCount().catch(() => 1);
+    return this.leftCount();
+  }
+
+  async leftCount() {
+    return (await store.outboxCount().catch(() => 1)) + (await store.photoCount().catch(() => 0));
   }
 }

@@ -3,15 +3,17 @@
 import {
   confirmDialog, dialog, fmtAgo, fmtDateTime, fmtNumber, h, mount, svg, toast,
 } from "../../../shared/dom.js";
-import { api, card, download, fail, layout, pageHeader, statusBadge, table, tz } from "../core.js";
+import { api, canManage, card, download, fail, layout, pageHeader, statusBadge, table, tz } from "../core.js";
 import { problemLabel } from "./dashboard.js";
+import { flagItem } from "./flags.js";
 
 const TABS = [
   ["open", "Open"],
   ["in_progress", "In progress"],
   ["flagged", "Flagged"],
   ["pending", "Not started"],
-  ["completed", "Completed"],
+  ["completed", "Ready to ship"],
+  ["shipped", "Shipped"],
   ["cancelled", "Cancelled"],
   ["", "All"],
 ];
@@ -19,6 +21,10 @@ const TABS = [
 function printSheets(ids) {
   if (!ids.length) return toast("Select orders to print first.", "warn");
   window.open(`/app/print.html?ids=${ids.join(",")}`, "_blank", "noopener");
+}
+
+function openProof(id) {
+  window.open(`/app/print.html?proof=${id}`, "_blank", "noopener");
 }
 
 // ---------------------------------------------------------------------------
@@ -34,7 +40,7 @@ export async function ordersView(params) {
   let offset = 0;
   let rows = [];
 
-  const search = h("input", { class: "input", type: "search", placeholder: "Search order #, barcode, SKU, description", value: q });
+  const search = h("input", { class: "input", type: "search", placeholder: "Search order #, customer, tracking, barcode, SKU", value: q });
   const go = (next) => {
     const p = new URLSearchParams({ status: next.status ?? status, q: next.q ?? search.value });
     location.hash = `#/orders?${p}`;
@@ -44,10 +50,12 @@ export async function ordersView(params) {
   });
 
   layout("#/orders", [
-    pageHeader("Orders", "Import your pick list, print sheets, and follow every order to verified.",
-      h("a", { class: "btn", href: "/api/orders/template.csv", onclick: (e) => { e.preventDefault(); download("/api/orders/template.csv", "autorack-orders-template.csv"); } }, "CSV template"),
-      h("a", { class: "btn", href: "#/orders/new" }, "New order"),
-      h("a", { class: "btn btn-primary", href: "#/orders/import" }, "Import CSV")),
+    canManage()
+      ? pageHeader("Orders", "Import your pick list, print sheets, and follow every order to verified.",
+        h("a", { class: "btn", href: "/api/orders/template.csv", onclick: (e) => { e.preventDefault(); download("/api/orders/template.csv", "autorack-orders-template.csv"); } }, "CSV template"),
+        h("a", { class: "btn", href: "#/orders/new" }, "New order"),
+        h("a", { class: "btn btn-primary", href: "#/orders/import" }, "Import CSV"))
+      : pageHeader("Orders", "Follow every order to verified and shipped."),
     h("div", { class: "toolbar" },
       h("div", { class: "tabs" }, ...TABS.map(([value, label]) =>
         h("button", { class: ["tab", status === value && "active"], onclick: () => go({ status: value }) }, label))),
@@ -79,6 +87,7 @@ export async function ordersView(params) {
         },
       },
       { label: "Order", render: (o) => h("span", { class: "mono strong" }, o.external_order_number || o.id.slice(0, 8)) },
+      { label: "Customer", render: (o) => o.customer || h("span", { class: "muted" }, "–") },
       { label: "Status", render: (o) => statusBadge(o.status) },
       { label: "Lines", align: "right", render: (o) => String(o.line_count) },
       { label: "Units", align: "right", render: (o) => `${o.units_scanned}/${o.units_expected}` },
@@ -117,7 +126,7 @@ export async function orderDetailView(id) {
     api(`/api/orders/${id}/scans`),
     api("/api/workers"),
   ]);
-  const editable = order.status !== "cancelled";
+  const editable = canManage() && order.status !== "cancelled" && order.status !== "shipped";
   const reload = () => orderDetailView(id).catch(fail);
   const linesById = new Map(order.lines.map((l) => [l.id, l]));
 
@@ -138,6 +147,9 @@ export async function orderDetailView(id) {
     h("option", { value: w.worker_id, selected: w.worker_id === order.assigned_worker_id }, w.name)));
 
   const openFlags = order.flags.filter((f) => !f.resolved_at);
+  const closedFlags = order.flags.filter((f) => f.resolved_at);
+  const flagLine = (f) => (f.line_item_id && linesById.get(f.line_item_id) ? lineName(linesById.get(f.line_item_id)) : "Whole order");
+  const shipped = order.status === "shipped";
 
   layout("#/orders", [
     h("a", { href: "#/orders", class: "back-link" }, "← Orders"),
@@ -145,10 +157,19 @@ export async function orderDetailView(id) {
       h("div", null,
         h("h1", { class: "row" }, h("span", { class: "mono" }, order.external_order_number || "Order"), statusBadge(order.status)),
         h("p", { class: "muted" },
-          `${order.line_count} lines · ${order.units_scanned}/${order.units_expected} units verified · created ${fmtDateTime(order.created_at, tz())}`,
-          order.completed_at ? ` · completed ${fmtDateTime(order.completed_at, tz())}` : "")),
+          order.customer ? [h("strong", null, order.customer), " · "] : null,
+          `${order.line_count} lines · ${order.units_scanned}/${order.units_expected} units verified`,
+          order.units_short ? ` · ${order.units_short} short` : "",
+          ` · created ${fmtDateTime(order.created_at, tz())}`,
+          order.completed_at ? ` · completed ${fmtDateTime(order.completed_at, tz())}` : ""),
+        shipped ? h("p", { class: "ship-line" },
+          "Shipped ", fmtDateTime(order.shipped_at, tz()), order.shipped_by ? ` by ${order.shipped_by}` : "",
+          " · ", order.carrier ? `${order.carrier} ` : "", h("span", { class: "mono strong" }, order.tracking_number)) : null),
       h("div", { class: "row" },
-        h("button", { class: "btn", onclick: () => printSheets([id]) }, "Print pick sheet"),
+        shipped || order.status === "completed"
+          ? h("button", { class: shipped ? "btn btn-primary" : "btn", onclick: () => openProof(id) }, "Shipment proof")
+          : null,
+        order.status !== "shipped" ? h("button", { class: "btn", onclick: () => printSheets([id]) }, "Print pick sheet") : null,
         editable ? h("button", {
           class: "btn btn-danger",
           onclick: async () => {
@@ -157,27 +178,8 @@ export async function orderDetailView(id) {
           },
         }, "Cancel order") : null)),
 
-    openFlags.length ? card(`Flagged by workers (${openFlags.length})`,
-      h("ul", { class: "feed" }, ...openFlags.map((f) => h("li", null,
-        h("div", { class: "row-between" },
-          h("span", null, h("span", { class: "badge badge-flagged" }, f.reason.replaceAll("_", " ")), " ",
-            f.line_item_id && linesById.get(f.line_item_id) ? lineName(linesById.get(f.line_item_id)) : "Whole order"),
-          h("span", { class: "muted small" }, `${f.worker || ""} · ${fmtAgo(f.created_at)}`)),
-        f.note ? h("div", null, `“${f.note}”`) : null,
-        h("div", { class: "row" },
-          h("button", {
-            class: "btn btn-sm btn-primary",
-            onclick: async () => {
-              const note = await dialog("Resolve flag", (close) => {
-                const input = h("input", { class: "input", placeholder: "What did you do? (optional)" });
-                return h("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); close(input.value); } }, input,
-                  h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
-                    h("button", { class: "btn btn-primary", type: "submit" }, "Resolve")));
-              });
-              if (note === null) return;
-              await api(`/api/orders/${id}/flags/${f.id}/resolve`, { method: "POST", body: { note } }).then(reload, fail);
-            },
-          }, "Resolve")))))) : null,
+    openFlags.length ? card(`Needs a decision (${openFlags.length})`,
+      h("ul", { class: "feed" }, ...openFlags.map((f) => flagItem(id, f, { item: flagLine(f), onDone: reload })))) : null,
 
     h("div", { class: "grid-main" },
       card("Lines",
@@ -190,7 +192,10 @@ export async function orderDetailView(id) {
         card("Assignment", assign, h("p", { class: "muted small" }, "Assigned orders show first on that worker's phone and are hidden from others.")),
         card("Notes", notesEditor(order, editable)))),
 
-    card("Scan history", scanHistory(order, scans, linesById, reload)),
+    closedFlags.length ? card("Resolved problems",
+      h("ul", { class: "feed" }, ...closedFlags.map((f) => flagItem(id, f, { item: flagLine(f), onDone: reload })))) : null,
+
+    card("Scan history", scanHistory(order, scans, linesById, reload, editable)),
   ]);
 }
 
@@ -205,7 +210,9 @@ function linesTable(order, editable, reload) {
     { label: "Barcode", render: (l) => h("span", { class: "mono" }, l.expected_barcode) },
     {
       label: "Verified", align: "right",
-      render: (l) => h("span", { class: l.scanned_quantity >= l.expected_quantity ? "ok-text" : null }, `${l.scanned_quantity}/${l.expected_quantity}`),
+      render: (l) => h("span", null,
+        h("span", { class: l.scanned_quantity >= l.expected_quantity ? "ok-text" : null }, `${l.scanned_quantity}/${l.expected_quantity}`),
+        l.short_quantity ? h("span", { class: "badge badge-warn badge-inline" }, `${l.short_quantity} short`) : null),
     },
     { label: "Wrong picks", align: "right", render: (l) => (l.mismatches ? h("span", { class: "bad-text" }, String(l.mismatches)) : "0") },
   ];
@@ -284,7 +291,7 @@ function notesEditor(order, editable) {
     }, "Save notes") : null);
 }
 
-function scanHistory(order, scans, linesById, reload) {
+function scanHistory(order, scans, linesById, reload, editable) {
   const resultLabel = { match: "Right item", void: "Undone", ...{ mismatch: problemLabel("mismatch"), over_pick: problemLabel("over_pick"), review: problemLabel("review") } };
   return table([
     { label: "When", render: (s) => h("span", { class: "muted" }, fmtDateTime(s.at, tz())) },
@@ -306,7 +313,7 @@ function scanHistory(order, scans, linesById, reload) {
     },
     {
       label: "",
-      render: (s) => (s.result === "mismatch" || s.result === "review") && order.status !== "cancelled"
+      render: (s) => (s.result === "mismatch" || s.result === "review") && editable
         ? h("button", { class: "btn btn-sm", onclick: () => teachAlias(s, order, reload) }, "This is actually…")
         : null,
     },
@@ -340,6 +347,7 @@ async function teachAlias(scan, order, reload) {
 export async function newOrderView() {
   const workers = await api("/api/workers");
   const number = h("input", { class: "input mono", placeholder: "e.g. SO-1042" });
+  const customer = h("input", { class: "input", placeholder: "Optional, for per-customer reports" });
   const notes = h("input", { class: "input", placeholder: "Optional" });
   const assign = h("select", { class: "input" }, h("option", { value: "" }, "Anyone"),
     ...workers.workers.filter((w) => w.active).map((w) => h("option", { value: w.worker_id }, w.name)));
@@ -367,7 +375,10 @@ export async function newOrderView() {
     try {
       const o = await api("/api/orders", {
         method: "POST",
-        body: { external_order_number: number.value.trim() || null, notes: notes.value || null, assigned_worker_id: assign.value || null, lines },
+        body: {
+          external_order_number: number.value.trim() || null, customer: customer.value.trim() || null,
+          notes: notes.value || null, assigned_worker_id: assign.value || null, lines,
+        },
       });
       toast("Order created", "ok");
       location.hash = `#/orders/${o.id}`;
@@ -382,8 +393,8 @@ export async function newOrderView() {
     h("form", { onsubmit: submit },
       card(null,
         h("div", { class: "form-grid" },
-          h("label", null, "Order number", number), h("label", null, "Assign to", assign),
-          h("label", { class: "span-2" }, "Notes", notes))),
+          h("label", null, "Order number", number), h("label", null, "Customer", customer),
+          h("label", null, "Assign to", assign), h("label", null, "Notes", notes))),
       card("Lines",
         h("div", { class: "table-wrap" },
           h("table", { class: "table table-form" },
@@ -409,7 +420,7 @@ export async function importView() {
   const fileInput = h("input", { type: "file", accept: ".csv,.tsv,.txt,text/csv", class: "visually-hidden", id: "csv-file" });
   const drop = h("label", { class: "dropzone", for: "csv-file" },
     h("strong", null, "Choose a CSV file"), h("span", { class: "muted" }, " or drop it here"),
-    h("div", { class: "muted small" }, "Columns: order_number, barcode, quantity, description (plus optional sku, location). Common header names like “Order #”, “UPC”, “Qty” and “Bin” are recognised."));
+    h("div", { class: "muted small" }, "Columns: order_number, barcode, quantity, description (plus optional sku, location, customer). Common header names like “Order #”, “UPC”, “Qty”, “Bin” and “Ship To” are recognised."));
 
   const pick = (f) => {
     file = f;
@@ -459,7 +470,7 @@ export async function importView() {
         h("label", { class: "row check" }, skip, "Import the valid rows and skip these")) : null,
       p.sample.length ? h("details", null, h("summary", null, "Sample of what will be created"),
         ...p.sample.map((o) => h("div", { class: "sample" },
-          h("strong", { class: "mono" }, o.order_number), h("span", { class: "muted" }, ` · ${o.line_count} lines`),
+          h("strong", { class: "mono" }, o.order_number), h("span", { class: "muted" }, `${o.customer ? ` · ${o.customer}` : ""} · ${o.line_count} lines`),
           h("ul", null, ...o.lines.map((l) => h("li", null, h("span", { class: "mono" }, l.barcode), ` × ${l.quantity}`, l.description ? ` — ${l.description}` : "")))))) : null,
       h("div", { class: "row" },
         h("button", {

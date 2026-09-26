@@ -273,7 +273,7 @@ def warehouse_detail(
         "summary": dash.summary(db, wh),
         "trend": dash.trend(db, wh, 14)["series"],
         "usage": [u for u in usage.totals(db, 30, wh.id) if u["count"]],
-        "team": team,
+        "members": team,
         "photos": _photo_rows(db, warehouse_id=wh.id, limit=24),
         "events": events,
     }

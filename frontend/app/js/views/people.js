@@ -1,7 +1,7 @@
 // Workers (PINs, performance) and phones (linking, revoking).
 
 import { confirmDialog, dialog, fmtAgo, fmtNumber, fmtPercent, h, svg, toast } from "../../../shared/dom.js";
-import { api, card, fail, isOwner, layout, pageHeader, table } from "../core.js";
+import { api, canManage, card, fail, isOwner, layout, pageHeader, table } from "../core.js";
 
 function showPin(name, pin) {
   return dialog(`PIN for ${name}`, (close) => [
@@ -97,7 +97,7 @@ export async function workersView(params) {
         class: "input input-inline",
         onchange: (e) => { location.hash = `#/workers?days=${e.target.value}`; },
       }, ...[7, 30, 90].map((d) => h("option", { value: String(d), selected: d === days }, `Last ${d} days`))),
-      h("button", { class: "btn btn-primary", onclick: () => addWorker(reload) }, "Add worker")),
+      canManage() ? h("button", { class: "btn btn-primary", onclick: () => addWorker(reload) }, "Add worker") : null),
     card(null,
       h("p", { class: "muted small" }, `Warehouse mistake rate over ${days} days: `, h("strong", null, fmtPercent(data.warehouse_error_rate)),
         ". A worker is highlighted when their rate is at least double that (and 3 points higher) over 30+ scans."),
@@ -115,8 +115,8 @@ export async function workersView(params) {
         { label: "Undos", align: "right", render: (w) => fmtNumber(w.undos ?? 0) },
         { label: "Flags", align: "right", render: (w) => fmtNumber(w.flags ?? 0) },
         { label: "Last active", render: (w) => h("span", { class: "muted" }, fmtAgo(w.last_active)) },
-        { label: "", render: rowActions },
-      ], workers, { empty: "No workers yet. Add one, then link a phone so they can sign in." })),
+        canManage() ? { label: "", render: rowActions } : null,
+      ].filter(Boolean), workers, { empty: "No workers yet. Add one, then link a phone so they can sign in." })),
   ]);
 }
 
@@ -158,7 +158,7 @@ export async function devicesView() {
         { label: "Signed in", render: (d) => d.current_worker || h("span", { class: "muted" }, "Nobody") },
         { label: "Last seen", render: (d) => h("span", { class: "muted" }, fmtAgo(d.last_seen_at)) },
         { label: "Linked", render: (d) => h("span", { class: "muted" }, fmtAgo(d.created_at)) },
-        {
+        canManage() && {
           label: "",
           render: (d) => h("div", { class: "row nowrap" },
             h("button", {
@@ -181,7 +181,7 @@ export async function devicesView() {
               },
             }, "Unlink")),
         },
-      ], active, { empty: "No phones linked yet." })),
+      ].filter(Boolean), active, { empty: "No phones linked yet." })),
     revoked.length ? h("details", { class: "card" }, h("summary", null, `Unlinked phones (${revoked.length})`),
       table([{ label: "Phone", key: "label" }, { label: "Unlinked", render: (d) => fmtAgo(d.revoked_at) }], revoked)) : null,
   ]);

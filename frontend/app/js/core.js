@@ -1,7 +1,7 @@
 // Owner dashboard plumbing: session token, API access, layout, routing.
 
-import { ApiError, download as rawDownload, request } from "../../shared/api.js";
-import { brandLockup, h, mount, toast } from "../../shared/dom.js";
+import { ApiError, imageUrl, download as rawDownload, request } from "../../shared/api.js";
+import { brandLockup, dialog, h, mount, toast } from "../../shared/dom.js";
 
 const TOKEN_KEY = "ar.owner_token";
 
@@ -62,26 +62,58 @@ export async function loadMe() {
 }
 
 export function tz() {
-  return ctx.me ? ctx.me.warehouse.timezone : undefined;
+  return ctx.me && ctx.me.warehouse ? ctx.me.warehouse.timezone : undefined;
 }
 
+export function role() {
+  return ctx.me && ctx.me.membership ? ctx.me.membership.role : null;
+}
+
+/** Billing, warehouse settings, the team. */
 export function isOwner() {
-  return ctx.me && ctx.me.user.role === "owner";
+  return role() === "owner";
+}
+
+/** Create and edit orders, workers, phones and barcode rules. Supervisors can't. */
+export function canManage() {
+  return role() === "owner" || role() === "manager";
+}
+
+export async function switchWarehouse(id) {
+  await api("/api/auth/switch", { method: "POST", body: { warehouse_id: id } });
+  location.hash = "#/";
+  location.reload();
 }
 
 // ---------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------
 
-const NAV = [
-  ["#/", "Dashboard"],
-  ["#/orders", "Orders"],
-  ["#/workers", "Workers"],
-  ["#/devices", "Phones"],
-  ["#/insights", "Insights"],
-  ["#/billing", "Billing"],
-  ["#/settings", "Settings"],
-];
+function nav() {
+  const wh = ctx.me.warehouse;
+  return [
+    ["#/", "Dashboard"],
+    ["#/orders", "Orders"],
+    ["#/reports", "Reports"],
+    wh.leaderboard_enabled ? ["#/board", "Floor board"] : null,
+    ["#/workers", "Workers"],
+    ["#/devices", "Phones"],
+    ["#/insights", "Insights"],
+    isOwner() ? ["#/billing", "Billing"] : null,
+    ["#/settings", "Settings"],
+  ].filter(Boolean);
+}
+
+function warehousePicker(me) {
+  if (me.warehouses.length < 2) {
+    return h("div", { class: "sidebar-wh", title: me.warehouse.name }, me.warehouse.name);
+  }
+  return h("select", {
+    class: "sidebar-wh sidebar-wh-select",
+    "aria-label": "Warehouse",
+    onchange: (e) => switchWarehouse(e.target.value).catch(fail),
+  }, ...me.warehouses.map((w) => h("option", { value: w.id, selected: w.id === me.warehouse.id }, w.name)));
+}
 
 export function accessBanner() {
   const a = ctx.me && ctx.me.access;
@@ -104,16 +136,18 @@ export function accessBanner() {
 export function layout(active, content) {
   const root = document.getElementById("app");
   const me = ctx.me;
-  const navLinks = NAV.map(([href, label]) =>
+  const navLinks = nav().map(([href, label]) =>
     h("a", { href, class: ["nav-link", active === href && "active"], "aria-current": active === href ? "page" : null }, label));
   mount(root,
     h("div", { class: "shell" },
       h("aside", { class: "sidebar" },
         h("div", { class: "sidebar-brand" }, brandLockup({ tagline: true, href: "#/" })),
-        h("div", { class: "sidebar-wh", title: me.warehouse.name }, me.warehouse.name),
+        warehousePicker(me),
         h("nav", { class: "nav" }, ...navLinks),
         h("div", { class: "sidebar-foot" },
-          h("div", { class: "small muted", title: me.user.email }, me.user.email),
+          me.is_operator ? h("a", { class: "small", href: "/admin/" }, "Operator console →") : null,
+          h("div", { class: "small muted", title: me.user.email }, me.user.email,
+            role() && role() !== "owner" ? ` · ${role()}` : ""),
           h("button", { class: "link-btn small", onclick: logout }, "Sign out"))),
       h("main", { class: "main", id: "main" }, accessBanner(), content)));
 }
@@ -150,6 +184,35 @@ export function table(columns, rows, { empty = "Nothing here yet.", onRow } = {}
 
 export function statusBadge(status) {
   return h("span", { class: `badge badge-${status}` }, String(status).replace("_", " "));
+}
+
+// ---------------------------------------------------------------------------
+// Worker photos: fetched with the session token, shown as thumbnails
+// ---------------------------------------------------------------------------
+
+/** Thumbnails for photo ids; click one to see it full size. `base` lets the
+ *  operator console reuse this with its own endpoint. */
+export function photoStrip(ids, { base = "/api/photos/" } = {}) {
+  if (!ids || !ids.length) return null;
+  return h("div", { class: "photo-strip" }, ...ids.map((id) => photoThumb(id, base)));
+}
+
+export function photoThumb(id, base = "/api/photos/", caption = null) {
+  const img = h("img", { class: "photo-thumb", alt: "Photo from the floor", loading: "lazy" });
+  const btn = h("button", { class: "photo-btn", type: "button", onclick: () => openPhoto(img.src, caption), "aria-label": "Open photo" }, img);
+  imageUrl(`${base}${id}`, getToken()).then((url) => { img.src = url; }, () => btn.classList.add("photo-missing"));
+  return btn;
+}
+
+function openPhoto(src, caption) {
+  if (!src) return;
+  dialog("Photo from the floor", (close) => [
+    h("img", { class: "photo-full", src, alt: caption || "Photo from the floor" }),
+    caption ? h("p", { class: "muted small" }, caption) : null,
+    h("div", { class: "dialog-actions" },
+      h("a", { class: "btn", href: src, download: "autorack-photo.jpg" }, "Download"),
+      h("button", { class: "btn btn-primary", onclick: () => close(true) }, "Close")),
+  ], { wide: true });
 }
 
 // ---------------------------------------------------------------------------

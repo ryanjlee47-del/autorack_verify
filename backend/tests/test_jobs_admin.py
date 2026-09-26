@@ -51,7 +51,7 @@ def test_daily_summary_sends_once_after_the_hour_with_money_saved(client, db):
     run(db, local_evening(18))
     msgs = to(owner.email)
     assert len(msgs) == 1
-    assert "1 mistakes caught" in msgs[0].subject and "$25" in msgs[0].subject
+    assert "1 mistake caught" in msgs[0].subject and "$25" in msgs[0].subject
     assert "Orders completed: 1" in msgs[0].text
     run(db, local_evening(19))
     assert len(to(owner.email)) == 1  # once per day
@@ -208,7 +208,7 @@ def test_operator_overview_detail_status_and_photos(client, db, operator):
     assert [r["name"] for r in ov["trials_ending"]] == ["Idle Co"]
 
     detail = client.get(f"/api/admin/warehouses/{busy.warehouse_id}", headers=operator).json()
-    assert detail["photos"][0]["id"] == pid and detail["team"][0]["role"] == "owner"
+    assert detail["photos"][0]["id"] == pid and detail["members"][0]["role"] == "owner" and detail["team"] == 1
     assert any(u["feature"] == "floor.scan" for u in detail["usage"])
     img = client.get(f"/api/admin/photos/{pid}", headers=operator)
     assert img.status_code == 200 and img.content == JPEG

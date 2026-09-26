@@ -463,3 +463,8 @@ label {
     transition: none !important;
   }
 }
+
+.badge-shipped {
+  background: var(--blue-soft);
+  color: var(--blue-strong);
+}

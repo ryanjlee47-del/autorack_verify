@@ -34,5 +34,9 @@ services:
         sync: false
       - key: STRIPE_PRICE_ID
         sync: false
+      - key: OPERATOR_EMAILS
+        sync: false
+      - key: CRON_SECRET
+        sync: false
       - key: WEB_CONCURRENCY
         value: "1"

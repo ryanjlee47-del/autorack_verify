@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  applyServerState, classify, corrections, displayLines, isOrderCode, lastUndoable, nextLine, orderIdFromCode,
-  progress, sortForWalking, toWire,
+  applyServerState, checkLabel, classify, corrections, displayLines, isOrderCode, lastUndoable, nextLine,
+  orderIdFromCode, progress, remaining, shippedTracking, sortForWalking, toWire,
 } from "../w/js/state.js";
 
 // A cached order as the API ships it (index rows computed by the server).
@@ -66,7 +66,7 @@ test("displayLines replays the queue on top of the server baseline", () => {
   const lines = displayLines(o, pending);
   assert.equal(lines.find((l) => l.id === "a").scanned_quantity, 1);
   assert.equal(lines.find((l) => l.id === "b").scanned_quantity, 0);
-  assert.deepEqual(progress(lines), { done: 1, total: 3, complete: false });
+  assert.deepEqual(progress(lines), { done: 1, total: 3, short: 0, complete: false });
 });
 
 test("nextLine walks by location, honours an unfinished choice", () => {
@@ -118,4 +118,54 @@ test("order QR codes", () => {
   assert.equal(orderIdFromCode(`AUTORACK:ORDER:${id.toUpperCase()}`), id);
   assert.equal(orderIdFromCode("AUTORACK:ORDER:nope"), null);
   assert.equal(orderIdFromCode("012345678905"), null);
+});
+
+
+test("short picks count as accounted for, and block over-scanning", () => {
+  const o = order();
+  const pending = [
+    { id: "s1", kind: "scan", order_id: "o1", client_seq: 1, local: { result: "match", lineId: "a" } },
+    { id: "x1", kind: "short", order_id: "o1", client_seq: 2, line_item_id: "a", quantity: 5, local: { lineId: "a" } },
+  ];
+  const lines = displayLines(o, pending);
+  const a = lines.find((l) => l.id === "a");
+  assert.equal(a.scanned_quantity, 1);
+  assert.equal(a.short_quantity, 1); // capped at what was left
+  assert.equal(remaining(a), 0);
+  assert.equal(classify(o, lines, "025300000208").result, "over_pick");
+  assert.equal(nextLine(lines, "a").id, "b");
+  const p = progress(lines);
+  assert.deepEqual(p, { done: 2, total: 3, short: 1, complete: false });
+});
+
+test("server short quantities replace the baseline", () => {
+  const o = order();
+  const { order: updated } = applyServerState(o, {
+    status: "flagged", version: 3, open_flags: 1, lines: { a: 1, b: 1 }, short: { a: 1 }, tracking_number: null,
+  });
+  assert.equal(updated.lines[0].short_quantity, 1);
+  assert.equal(updated.lines[1].short_quantity, 0);
+  assert.ok(progress(updated.lines).complete);
+});
+
+test("shipping labels: product barcodes and junk are refused", () => {
+  const o = order();
+  assert.deepEqual(checkLabel(o, "02532038"), { ok: false, reason: "product" });
+  assert.deepEqual(checkLabel(o, "123"), { ok: false, reason: "short" });
+  assert.deepEqual(checkLabel(o, "1z 999 aa1-0123456784"), { ok: true, tracking: "1Z999AA10123456784" });
+});
+
+test("shipped tracking comes from the queue or the server", () => {
+  const o = order();
+  assert.equal(shippedTracking(o, []), null);
+  assert.equal(shippedTracking(o, [{ order_id: "o1", kind: "ship", tracking_number: "1Z9" }]), "1Z9");
+  assert.equal(shippedTracking({ ...o, status: "shipped", tracking_number: "940" }, []), "940");
+});
+
+test("short and ship events keep their wire fields", () => {
+  const w = toWire({
+    id: "e", kind: "short", line_item_id: "a", quantity: 2, short_reason: "damaged", tracking_number: "T",
+    local: { lineId: "a" },
+  });
+  assert.deepEqual(Object.keys(w).sort(), ["id", "kind", "line_item_id", "quantity", "short_reason", "tracking_number"]);
 });

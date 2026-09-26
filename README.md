@@ -43,10 +43,35 @@ Flat **$175/month per warehouse**. 14-day trial, free pilots.
    - **Wrong item** (red): not on this order; put it back.
    - **Already have enough** (amber): the line is complete; put the extra back.
    - **Can't verify** (amber): ambiguous; set it aside for a supervisor.
-6. Workers can **undo** a miscount and **flag a problem** (out of stock,
-   damaged, label won't scan). A flagged order waits for the owner.
-7. The owner sees orders in motion, mistakes caught today, and which workers or
-   SKUs keep causing trouble.
+6. Workers can **undo** a miscount, **flag a problem** (out of stock,
+   damaged, label won't scan) and report a **short pick** ("found only 2 of
+   3", with a reason). Either can carry **photos**. A flagged order waits for a
+   manager or supervisor, who resolves it, ships it short, or sends it back to
+   be picked.
+7. **Pack and ship** (optional, or required per warehouse): after picking,
+   the worker scans the parcel's shipping label. The order is tied to its
+   tracking number (carrier recognised) and a printable **proof of shipment**
+   lists every unit scanned, by whom and when.
+8. The owner sees orders in motion, mistakes caught and **money saved**
+   (mistakes × their cost of one mis-ship), problems waiting with their
+   photos, and which workers or SKUs keep causing trouble; **reports** by
+   customer, item, worker and day over any range (print to PDF); an optional
+   **floor board** with a TV mode.
+9. **Emails**: a daily summary at the hour each warehouse picks, instant
+   alerts for flagged problems and error-rate spikes, and trial-ending /
+   payment-failed notices. Each person chooses which they get.
+
+Roles: **owner** (everything incl. billing), **manager** (orders, workers,
+phones), **supervisor** (watches and resolves problems; read-only otherwise).
+One sign-in can run **several warehouses** and switch between them.
+
+New warehouses get a **setup checklist** and can load 12 sample orders with a
+printable barcode sheet, to try scanning before importing anything.
+
+The **operator console** at `/admin/` (for emails in `OPERATOR_EMAILS`) shows
+every warehouse: sign-ups, trials ending, pilots and whether they use it,
+feature usage, the photos workers take, and activity; it can make a warehouse
+a pilot or extend its trial.
 
 ## Design decisions (and where they differ from the design doc)
 

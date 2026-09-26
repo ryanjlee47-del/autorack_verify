@@ -213,3 +213,164 @@ body {
     break-after: page;
   }
 }
+
+/* Shipment proof and reports */
+
+.doc {
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.doc-head {
+  padding-bottom: 10px;
+  border-bottom: 2px solid #162238;
+}
+
+.doc-title {
+  margin: 10px 0 2px;
+  font-size: 24px;
+  color: #162238;
+}
+
+.doc-sub {
+  color: #555;
+  font-size: 13px;
+}
+
+.doc-h2 {
+  margin: 16px 0 6px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #162238;
+}
+
+.doc-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+  margin: 12px 0 0;
+}
+
+.doc-kv dt {
+  color: #666;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.doc-kv dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+}
+
+.doc-small td,
+.doc-small th {
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+.doc-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.doc-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.doc-photo {
+  margin: 0;
+  width: 46mm;
+  break-inside: avoid;
+}
+
+.doc-photo img {
+  width: 100%;
+  height: 36mm;
+  object-fit: cover;
+  border: 1px solid #ccc;
+}
+
+.doc-photo figcaption {
+  font-size: 10px;
+  color: #555;
+}
+
+.doc-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+
+.doc-stat {
+  padding: 10px 12px;
+  border: 1px solid #d5d9e0;
+  border-radius: 4px;
+}
+
+.doc-stat-v {
+  font-size: 22px;
+  font-weight: 700;
+  color: #162238;
+}
+
+.doc-stat-l {
+  color: #666;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.doc .table-wrap {
+  overflow: visible;
+}
+
+.doc .table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.doc .table th,
+.doc .table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid #e3e6ea;
+  text-align: left;
+}
+
+.doc .table th {
+  color: #555;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.doc .table .t-right {
+  text-align: right;
+}
+
+.doc .empty {
+  color: #777;
+  padding: 6px 0;
+}
+
+.doc .muted {
+  color: #666;
+}
+
+.doc .small {
+  font-size: 10.5px;
+}
+
+.doc .mono {
+  font-family: var(--mono);
+}
+
+.doc-report tr,
+.doc tr {
+  break-inside: avoid;
+}

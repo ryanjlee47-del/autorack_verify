@@ -79,11 +79,30 @@ Magic links are the only way owners sign in, so email must work.
 key, set `EMAIL_BACKEND=resend`. Any SMTP relay (Postmark, SES, Mailgun) works
 with `EMAIL_BACKEND=smtp`.
 
-## 6. Daily housekeeping
+## 6. Scheduled emails and housekeeping
 
-Schedule `python -m autorack.cli prune` once a day (Render cron job, Railway
-cron, or `fly machine run --schedule daily`). It deletes expired sign-in links,
-old sessions and rate-limit rows. Nothing breaks if it doesn't run; tables just grow.
+The API sends the daily summary, instant alerts, and trial/payment emails from
+a background loop that runs every minute (`JOBS_ENABLED=true`, the default). It
+also prunes expired sign-in links and sessions hourly. Every email is recorded
+once in `notifications_sent`, so running the jobs twice never double-sends.
+
+**Free hosts that sleep when idle (Render free)** don't run the loop while
+asleep. Set `CRON_SECRET` to a random string and have a free external
+scheduler (cron-job.org, or a GitHub Actions `schedule`) call, every 10-15 min:
+
+```
+curl -X POST https://YOUR-API/api/cron/run -H "X-Cron-Secret: $CRON_SECRET"
+```
+
+That wakes the service and runs anything due. The route is hidden (404) while
+`CRON_SECRET` is empty. You can also run `python -m autorack.cli run-jobs`.
+
+## 7. Operator console
+
+Set `OPERATOR_EMAILS` (comma-separated) to your own address(es). Sign in at
+`/app/login.html` with one of them; you'll land on `/admin/` (or see an
+"Operator console" link in the dashboard if you also run a warehouse). The
+first sign-in creates the account automatically.
 
 ## Checklist before real customers
 

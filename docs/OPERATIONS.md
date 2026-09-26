@@ -1,5 +1,13 @@
 # Operations
 
+Most day-to-day operator work is in the **operator console** at `/admin/`
+(emails listed in `OPERATOR_EMAILS`): overview, trials ending, pilots, per-warehouse
+health and setup progress, feature usage, worker photos, activity, and buttons
+to make a warehouse a pilot, extend a trial, or cancel. Everything done there is
+written to that warehouse's activity log under your email.
+
+The CLI covers the rest.
+
 All operator tasks are CLI commands, run where the API runs (Render shell,
 `railway run`, `fly ssh console`), from `backend/`:
 
@@ -14,7 +22,8 @@ python -m autorack.cli <command> --help
 | `set-status owner@acme.com --status pilot` | Make a warehouse a free pilot (or `trialing --trial-days 30` to extend a trial). |
 | `list-warehouses` | See every warehouse, its status and whether it can scan. |
 | `end-sessions owner@acme.com` | Sign every worker out (e.g. after a security concern). |
-| `prune` | Daily housekeeping. |
+| `prune` | Housekeeping (the job loop also does this hourly). |
+| `run-jobs` | Send any due emails now (summaries, alerts, trial/payment notices). |
 | `check-config` | Validate production settings. |
 | `seed-demo` | Demo data for local development. Refuses in production. |
 

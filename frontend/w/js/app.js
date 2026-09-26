@@ -12,6 +12,7 @@ import { ApiError, request } from "../../shared/api.js";
 import { brandLockup, dialog, h, mount, toast, uuid4 } from "../../shared/dom.js";
 import * as FX from "./feedback.js";
 import { T, getLang, setLang } from "./i18n.js";
+import { takePhoto } from "./photo.js";
 import { Scanner } from "./scanner.js";
 import * as S from "./state.js";
 import { requestPersistence, store } from "./store.js";
@@ -24,6 +25,8 @@ const CAMERA_IDLE_MS = 20000;
 const MATCH_OVERLAY_MS = 900;
 const PREFETCH_LIMIT = 40;
 const FLAG_REASONS = ["wrong_item_in_location", "out_of_stock", "damaged", "label_unreadable", "other"];
+const SHORT_REASONS = ["out_of_stock", "not_found", "damaged", "other"];
+const MAX_PHOTOS = 4;
 
 const root = document.getElementById("app");
 
@@ -151,7 +154,9 @@ function topbar(...right) {
 }
 
 function rerender() {
-  const screens = { link: showLink, pin: showPin, orders: showOrders, pick: showPick, locked: showLocked };
+  const screens = {
+    link: showLink, pin: showPin, orders: showOrders, pick: showPick, complete: showComplete, locked: showLocked,
+  };
   (screens[app.screen] || showPin)();
 }
 
@@ -321,10 +326,12 @@ async function showOrders() {
       listEl));
 
   let orders;
+  let toShip = [];
   let offline = false;
   try {
     const r = await api("/api/worker/orders");
     orders = r.orders;
+    toShip = r.to_ship || [];
     await store.metaSet("orderList", orders);
   } catch (e) {
     if (!e.isNetwork) return;
@@ -334,19 +341,30 @@ async function showOrders() {
   if (app.screen !== "orders") return;
   note.textContent = offline ? T("ordersOfflineList") : "";
   const cached = new Map((await store.allOrders()).map((o) => [o.id, o]));
-  renderOrderList(listEl, orders, cached);
+  renderOrderList(listEl, orders, cached, toShip);
   if (!offline) prefetch(orders, cached).then(async () => {
     if (app.screen !== "orders") return;
-    renderOrderList(listEl, orders, new Map((await store.allOrders()).map((o) => [o.id, o])));
+    renderOrderList(listEl, orders, new Map((await store.allOrders()).map((o) => [o.id, o])), toShip);
   });
 }
 
-function renderOrderList(listEl, orders, cached) {
+function renderOrderList(listEl, orders, cached, toShip = []) {
+  const shipRows = toShip.length
+    ? [
+      h("h2", { class: "section-title" }, T("ordersToShip"), " · ", String(toShip.length)),
+      ...toShip.map((o) => h("button", { class: "order-row order-row-ship", onclick: () => openOrder(o.id) },
+        h("div", { class: "order-row-main" },
+          h("span", { class: "order-number" }, o.external_order_number || o.id.slice(0, 8)),
+          h("span", { class: "badge badge-completed" }, T("status_completed"))),
+        h("div", { class: "order-row-sub" }, h("span", null, T("shipScan"))))),
+      h("h2", { class: "section-title" }, T("ordersTitle")),
+    ]
+    : [];
   if (!orders.length) {
-    mount(listEl, h("p", { class: "empty" }, T("ordersEmpty")));
+    mount(listEl, ...shipRows, h("p", { class: "empty" }, T("ordersEmpty")));
     return;
   }
-  mount(listEl, ...orders.map((o) => {
+  mount(listEl, ...shipRows, ...orders.map((o) => {
     const c = cached.get(o.id);
     const ready = c && c.version >= o.version;
     const pct = o.units_expected ? Math.round((100 * o.units_scanned) / o.units_expected) : 0;
@@ -395,6 +413,10 @@ async function openOrder(id) {
   }
   if (order.status === "cancelled") {
     toast(T("orderCancelled"), "bad");
+    return;
+  }
+  if (order.status === "shipped") {
+    toast(T("orderShipped"), "warn");
     return;
   }
   app.order = order;
@@ -502,19 +524,28 @@ function renderPickBody() {
         target.sku ? h("span", { class: "mono" }, target.sku) : null,
         h("span", { class: "mono muted" }, target.expected_barcode)),
       h("div", { class: "target-qty" },
-        T("pickQty", { done: target.scanned_quantity, total: target.expected_quantity })))
-    : h("section", { class: "target target-done" }, h("div", { class: "target-name" }, T("orderComplete")));
+        T("pickQty", { done: target.scanned_quantity, total: target.expected_quantity }),
+        target.short_quantity ? h("span", { class: "short-tag" }, T("shortLine", { n: target.short_quantity })) : null))
+    : h("section", { class: "target target-done" },
+      h("div", { class: "target-name" }, T("orderComplete")),
+      ...shipControls());
 
   mount(document.getElementById("pick-body"),
     targetCard,
-    h("div", { class: "actions" },
-      h("button", { class: "btn btn-primary btn-xl action-scan", onclick: startCamera }, T("pickCamera")),
-      h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
-      h("button", { class: "btn btn-lg", onclick: () => flagProblem(null) }, T("pickFlag")),
-      h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo"))),
+    target
+      ? h("div", { class: "actions" },
+        h("button", { class: "btn btn-primary btn-xl action-scan", onclick: startCamera }, T("pickCamera")),
+        h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
+        h("button", { class: "btn btn-lg", onclick: shortPick }, T("pickShort")),
+        h("button", { class: "btn btn-lg", onclick: () => flagProblem(null) }, T("pickFlag")),
+        h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo")))
+      : h("div", { class: "actions" },
+        h("button", { class: "btn btn-lg", onclick: () => flagProblem(null) }, T("pickFlag")),
+        h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo"))),
     h("h2", { class: "section-title" }, T("pickAllLines")),
     h("ul", { class: "lines" }, ...S.sortForWalking(lines).map((l) => {
-      const done = l.scanned_quantity >= l.expected_quantity;
+      const done = S.remaining(l) === 0;
+      const short = l.short_quantity || 0;
       return h("li", {
         class: ["line", done && "line-done", target && l.id === target.id && "line-target"],
         onclick: () => {
@@ -525,8 +556,10 @@ function renderPickBody() {
       },
       h("div", { class: "line-main" },
         h("span", { class: "line-name" }, lineLabel(l)),
-        h("span", { class: "line-qty" }, done ? `✓ ${l.expected_quantity}` : `${l.scanned_quantity}/${l.expected_quantity}`)),
+        h("span", { class: "line-qty" },
+          done && !short ? `✓ ${l.expected_quantity}` : `${l.scanned_quantity}/${l.expected_quantity}`)),
       h("div", { class: "line-sub" },
+        short ? h("span", { class: "short-tag" }, T("shortLine", { n: short })) : null,
         l.location ? h("span", null, l.location) : null,
         h("span", { class: "mono" }, l.expected_barcode)));
     })));
@@ -665,15 +698,100 @@ function showResult(r) {
 }
 
 function showComplete() {
+  if (!app.order) return showOrders();
   stopCamera();
-  FX.play("ok");
+  if (app.screen !== "complete") FX.play("ok");
+  const prog = S.progress(currentLines());
   setScreen("complete",
     topbar(),
     h("main", { class: "screen narrow center complete" },
       h("div", { class: "complete-check" }, "✓"),
       h("h1", null, T("orderComplete")),
-      h("p", { class: "muted" }, T("orderCompleteDetail", { order: app.order.external_order_number || "" })),
-      h("button", { class: "btn btn-primary btn-xl", onclick: showOrders }, T("orderCompleteNext"))));
+      h("p", { class: "muted" }, prog.short
+        ? T("orderCompleteShort", { n: prog.short })
+        : T("orderCompleteDetail", { order: app.order.external_order_number || "" })),
+      h("div", { class: "stack" }, ...shipControls({ big: true }))));
+}
+
+// ---------------------------------------------------------------------------
+// Pack and ship: the shipping label, scanned onto the order
+// ---------------------------------------------------------------------------
+
+function shipControls({ big = false } = {}) {
+  const order = app.order;
+  const tracking = S.shippedTracking(order, pendingFor(order.id));
+  const size = big ? "btn-xl" : "btn-lg";
+  if (tracking !== null) {
+    return [
+      h("p", { class: "ship-done" }, "✓ ", T("shippedAlready", { tracking })),
+      h("button", { class: ["btn btn-primary", size], onclick: showOrders }, T("shipNext")),
+    ];
+  }
+  const blocked = order.open_flags > 0 || order.status === "flagged";
+  const required = order.require_ship_scan;
+  if (blocked) {
+    const short = S.progress(currentLines()).short > 0;
+    return [
+      h("p", { class: "banner banner-warn" }, short ? T("orderWaitingShort") : T("shipFlagged")),
+      h("button", { class: ["btn btn-primary", size], onclick: showOrders }, T("orderCompleteNext")),
+    ];
+  }
+  return [
+    required ? h("p", { class: "muted" }, T("shipRequired")) : h("p", { class: "muted" }, T("shipHelp")),
+    h("button", { class: ["btn", required ? "btn-primary" : "", size], onclick: () => scanOnce(handleLabel) }, T("shipScan")),
+    h("button", { class: ["btn", size], onclick: typeTracking }, T("shipType")),
+    required ? null : h("button", { class: ["btn btn-primary", size], onclick: showOrders }, T("orderCompleteNext")),
+  ];
+}
+
+function typeTracking() {
+  dialog(T("shipType"), (close) => {
+    const input = h("input", {
+      class: "input input-xl mono", autocomplete: "off", autocapitalize: "characters", spellcheck: "false",
+    });
+    return h("form", {
+      class: "stack",
+      onsubmit: (e) => {
+        e.preventDefault();
+        close(input.value);
+      },
+    }, input, h("div", { class: "dialog-actions" },
+      h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("cancel")),
+      h("button", { class: "btn btn-primary", type: "submit" }, T("manualSubmit"))));
+  }).then((v) => v && handleLabel(v));
+}
+
+async function handleLabel(raw) {
+  const order = app.order;
+  if (!order) return;
+  const check = S.checkLabel(order, raw);
+  if (!check.ok) {
+    FX.play("bad");
+    toast(check.reason === "product" ? T("shipProduct") : T("shipTooShort"), "bad", 6000);
+    return;
+  }
+  const ev = {
+    id: uuid4(),
+    kind: "ship",
+    order_id: order.id,
+    session_id: app.session.id,
+    client_scanned_at: new Date().toISOString(),
+    client_seq: await store.nextSeq().catch(() => Date.now()),
+    tracking_number: String(raw).trim().slice(0, 200),
+    offline: !app.status.online,
+    local: {},
+  };
+  try {
+    await store.outboxAdd(ev);
+  } catch {
+    toast(T("storageFailed"), "bad");
+    return;
+  }
+  app.pending.push(ev);
+  FX.play("ok");
+  toast(`${T("shipDone")} · ${T("shipDoneDetail", { tracking: check.tracking })}`, "ok", 5000);
+  if (app.sync) app.sync.kick();
+  showOrders();
 }
 
 function typeBarcode() {
@@ -736,6 +854,7 @@ async function undoLast() {
 async function flagProblem(scanId) {
   const lines = currentLines();
   const target = S.nextLine(lines, app.targetLineId);
+  const photos = [];
   const result = await dialog(T("flagTitle"), (close) => {
     const which = h("select", { class: "input" },
       h("option", { value: "" }, T("flagWholeOrder")),
@@ -744,6 +863,7 @@ async function flagProblem(scanId) {
     const note = h("input", { class: "input", placeholder: T("flagNote"), maxlength: "500" });
     return h("div", { class: "stack" },
       h("label", null, T("flagWhich")), which,
+      photoPicker(photos),
       h("div", { class: "reason-grid" }, ...FLAG_REASONS.map((reason) =>
         h("button", {
           class: "btn btn-lg",
@@ -774,10 +894,145 @@ async function flagProblem(scanId) {
     return;
   }
   app.pending.push(ev);
+  await savePhotos(photos, ev.id);
   app.order = { ...app.order, open_flags: (app.order.open_flags || 0) + 1 };
   toast(T("flagSent"), "ok");
   renderPickBody();
   if (app.sync) app.sync.kick();
+}
+
+/** "Add photo" button with thumbnails; fills `photos` with Blobs. */
+function photoPicker(photos) {
+  const thumbs = h("div", { class: "photo-thumbs" });
+  const label = h("span", null, T("photoAdd"));
+  const btn = h("button", {
+    class: "btn btn-lg photo-btn",
+    type: "button",
+    onclick: async () => {
+      if (photos.length >= MAX_PHOTOS) return;
+      const blob = await takePhoto();
+      if (!blob) return;
+      photos.push(blob);
+      const url = URL.createObjectURL(blob);
+      thumbs.appendChild(h("img", { src: url, alt: "", class: "photo-thumb" }));
+      label.textContent = photos.length >= MAX_PHOTOS ? T("photoCount", { n: photos.length }) : T("photoMore");
+      if (photos.length >= MAX_PHOTOS) btn.disabled = true;
+    },
+  }, "📷 ", label);
+  return h("div", { class: "photo-picker" }, btn, thumbs);
+}
+
+async function savePhotos(photos, flagId) {
+  for (const blob of photos) {
+    try {
+      await store.photoAdd({ id: uuid4(), flag_id: flagId, blob, created: Date.now() });
+    } catch {
+      toast(T("photoFailed"), "warn");
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Short picks: "found only 2 of 3"
+// ---------------------------------------------------------------------------
+
+async function shortPick() {
+  const lines = currentLines();
+  const open = S.sortForWalking(lines).filter((l) => S.remaining(l) > 0);
+  if (!open.length) {
+    toast(T("shortNothing"));
+    return;
+  }
+  const target = S.nextLine(lines, app.targetLineId) || open[0];
+  const photos = [];
+  const result = await dialog(T("shortTitle"), (close) => {
+    let lineId = target.id;
+    let qty = S.remaining(target);
+    let reason = null;
+    const lineOf = () => open.find((l) => l.id === lineId);
+    const qtyLabel = h("div", { class: "qty-value" });
+    const qtyHint = h("div", { class: "muted small" });
+    const paintQty = () => {
+      const left = S.remaining(lineOf());
+      qty = Math.min(Math.max(1, qty), left);
+      qtyLabel.textContent = String(qty);
+      qtyHint.textContent = T("shortOf", { n: qty, left });
+    };
+    const which = h("select", {
+      class: "input",
+      onchange: () => {
+        lineId = which.value;
+        qty = S.remaining(lineOf());
+        paintQty();
+      },
+    }, ...open.map((l) => h("option", { value: l.id, selected: l.id === lineId },
+      `${lineLabel(l)} (${l.scanned_quantity}/${l.expected_quantity})`)));
+    const submit = h("button", { class: "btn btn-primary btn-lg", disabled: true, onclick: () => {
+      close({ lineId, qty, reason, note: note.value.trim() || null });
+    } }, T("shortSubmit"));
+    const reasonBtns = SHORT_REASONS.map((r) => h("button", {
+      class: "btn btn-lg",
+      type: "button",
+      "aria-pressed": "false",
+      onclick: (e) => {
+        reason = r;
+        for (const b of reasonBtns) b.setAttribute("aria-pressed", String(b === e.currentTarget));
+        submit.disabled = false;
+      },
+    }, T(`shortReason_${r}`)));
+    const note = h("input", { class: "input", placeholder: T("flagNote"), maxlength: "500" });
+    paintQty();
+    return h("div", { class: "stack" },
+      h("label", null, T("shortWhich")), which,
+      h("label", null, T("shortHowMany")),
+      h("div", { class: "qty-stepper" },
+        h("button", { class: "btn btn-lg", type: "button", "aria-label": "−", onclick: () => {
+          qty -= 1;
+          paintQty();
+        } }, "−"),
+        qtyLabel,
+        h("button", { class: "btn btn-lg", type: "button", "aria-label": "+", onclick: () => {
+          qty += 1;
+          paintQty();
+        } }, "+")),
+      qtyHint,
+      h("label", null, T("shortWhy")),
+      h("div", { class: "reason-grid" }, ...reasonBtns),
+      photoPicker(photos),
+      note,
+      h("div", { class: "dialog-actions" },
+        h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("cancel")),
+        submit));
+  });
+  if (!result) return;
+  const ev = {
+    id: uuid4(),
+    kind: "short",
+    order_id: app.order.id,
+    session_id: app.session.id,
+    client_scanned_at: new Date().toISOString(),
+    client_seq: await store.nextSeq().catch(() => Date.now()),
+    line_item_id: result.lineId,
+    quantity: result.qty,
+    short_reason: result.reason,
+    note: result.note,
+    offline: !app.status.online,
+    local: { lineId: result.lineId },
+  };
+  try {
+    await store.outboxAdd(ev);
+  } catch {
+    toast(T("storageFailed"), "bad");
+    return;
+  }
+  app.pending.push(ev);
+  await savePhotos(photos, ev.id);
+  app.order = { ...app.order, open_flags: (app.order.open_flags || 0) + 1 };
+  app.targetLineId = null;
+  toast(T("shortSent", { n: result.qty }), "warn", 5000);
+  if (app.sync) app.sync.kick();
+  if (S.progress(currentLines()).complete) showComplete();
+  else renderPickBody();
 }
 
 // ---------------------------------------------------------------------------
@@ -891,6 +1146,7 @@ function onKeydown(e) {
     if (code.length >= 3) {
       e.preventDefault();
       if (app.screen === "pick") handleScan(code);
+      else if (app.screen === "complete") handleLabel(code);
       else if (app.screen === "orders") openFromCode(code);
     }
     return;
@@ -924,10 +1180,16 @@ async function onSyncResult(batch, resp) {
     }
     if (needsRefetch) needRefetch.push(id);
   }
+  const kinds = new Map(batch.map((e) => [e.id, e.kind]));
   for (const o of resp.events) {
     if (o.status !== "error") continue;
     if (o.error && o.error.code === "order_cancelled") {
       toast(T("orderCancelled"), "bad", 9000);
+      FX.play("bad");
+    } else if (o.error && ["ship", "short", "flag"].includes(kinds.get(o.id))) {
+      // A label or report the server refused (label already used, order not
+      // finished...): the worker has to know it didn't count.
+      toast(T("syncRefused", { message: o.error.message }), "bad", 10000);
       FX.play("bad");
     }
   }
@@ -942,6 +1204,8 @@ async function onSyncResult(batch, resp) {
   }
   if (app.screen === "pick" && app.order && !app.overlay && !document.querySelector("dialog[open]")) {
     renderPickBody();
+  } else if (app.screen === "complete" && app.order && touched.has(app.order.id)) {
+    showComplete();
   }
 }
 
@@ -955,6 +1219,7 @@ function startSync() {
       refreshChip();
     },
     onAuthLost: unlink,
+    onPhotoRejected: (e) => toast(T("photoRejected", { message: e.message }), "warn", 8000),
   });
   app.sync.start();
 }

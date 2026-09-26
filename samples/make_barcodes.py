@@ -1,6 +1,9 @@
 # Regenerates samples/04-busy-day-barcodes.pdf from 04-busy-day-300-orders.csv.
 # Needs: pip install reportlab   Run from anywhere: python samples/make_barcodes.py
+# Any other order CSV: python samples/make_barcodes.py orders.csv out.pdf
+# (the dashboard's "Sample barcodes" PDF is made from backend/autorack/data/sample-orders.csv).
 import csv
+import sys
 from pathlib import Path
 from collections import defaultdict
 from reportlab.lib.pagesizes import letter
@@ -11,8 +14,8 @@ from reportlab.lib.colors import HexColor
 
 NAVY = HexColor("#162238"); BLUE = HexColor("#3e7bfa"); GREY = HexColor("#6b7486"); LINE = HexColor("#c9ced6")
 HERE = Path(__file__).resolve().parent
-SRC = str(HERE / "04-busy-day-300-orders.csv")
-OUT = str(HERE / "04-busy-day-barcodes.pdf")
+SRC = sys.argv[1] if len(sys.argv) > 2 else str(HERE / "04-busy-day-300-orders.csv")
+OUT = sys.argv[2] if len(sys.argv) > 2 else str(HERE / "04-busy-day-barcodes.pdf")
 W, H = letter
 M = 36
 
@@ -36,7 +39,7 @@ DECOYS = [("99999999999" + check("99999999999"), "Decoy: not on any order"),
 assert not {d for d, _ in DECOYS} & {p["barcode"] for p in products}
 
 c = canvas.Canvas(OUT, pagesize=letter)
-c.setTitle("Autorack test barcodes: busy day (300 orders)")
+c.setTitle(f"Autorack test barcodes ({len(orders)} orders)")
 c.setAuthor("Autorack")
 
 def header(title, sub):
@@ -56,14 +59,15 @@ ord_first = 2 + prod_pages
 ord_last = ord_first - 1 + -(-len(orders) // 24)
 page = 1
 # ---- Cover
-header("Test barcodes", "for samples/04-busy-day-300-orders.csv")
+header("Test barcodes", f"for {Path(SRC).name}")
 y = H - 100
 c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 20); c.drawString(M, y, "How to use these barcodes"); y -= 30
 steps = [
-    "1. In the dashboard, import 04-busy-day-300-orders.csv (Orders > Import CSV).",
+    (f"1. In the dashboard, import {Path(SRC).name} (Orders > Import CSV)." if "sample-orders" not in SRC
+     else "1. In the dashboard, click 'Load sample orders' on the Get set up card."),
     "2. Print this file at 100% scale. You can also scan straight off a screen.",
     f"3. On a linked phone, sign in and tap 'Scan pick sheet'. Scan an ORDER label (pages {ord_first}-{ord_last})",
-    "   to open that order, e.g. WO-20001. The order-number barcode opens the order directly.",
+    f"   to open that order, e.g. {orders[0]}. The order-number barcode opens the order directly.",
     f"4. Tap Scan and scan PRODUCT labels (pages 2-{1 + prod_pages}). Each order's items are listed on the phone;",
     "   find the matching labels by name, SKU or bin. Scan one label several times for quantity > 1.",
     f"5. Scan a DECOY label (end of page {1 + prod_pages}) to see the red WRONG ITEM screen.",
@@ -77,8 +81,8 @@ y -= 10
 c.setFont("Helvetica-Bold", 11); c.setFillColor(NAVY); c.drawString(M, y, "What's inside"); y -= 18
 c.setFont("Helvetica", 10.5); c.setFillColor(HexColor("#222b3a"))
 for s in [f"Pages 2-{1 + prod_pages}: {len(products)} product labels (UPC-A), sorted by bin location, plus {len(DECOYS)} decoys.",
-          f"Pages {ord_first}-{ord_last}: {len(orders)} order-number labels (Code 128), WO-20001 to WO-20300.",
-          "All 300 orders use only these 30 products, so 30 product labels cover every pick."]:
+          f"Pages {ord_first}-{ord_last}: {len(orders)} order-number labels (Code 128), {orders[0]} to {orders[-1]}.",
+          f"All {len(orders)} orders use only these {len(products)} products, so these labels cover every pick."]:
     c.drawString(M, y, s); y -= 17
 y -= 10
 c.setFont("Helvetica-Bold", 11); c.setFillColor(NAVY); c.drawString(M, y, "Tips"); y -= 18

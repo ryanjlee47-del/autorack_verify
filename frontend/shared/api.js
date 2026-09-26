@@ -22,18 +22,21 @@ export class ApiError extends Error {
 
 /**
  * request("/api/orders", {method, body, token, deviceToken, form, raw, timeoutMs})
- * - body: JSON-serialized. form: a FormData (multipart upload).
+ * - body: JSON-serialized. form: a FormData (multipart upload). blob: raw bytes.
  * - raw: resolve with the Response itself (file downloads).
  * Rejects with ApiError; status 0 means the network is unreachable.
  */
 export async function request(path, opts = {}) {
-  const { method = "GET", body, token, deviceToken, form, raw = false, timeoutMs = 20000 } = opts;
+  const { method = "GET", body, token, deviceToken, form, blob, raw = false, timeoutMs = 20000 } = opts;
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (deviceToken) headers["X-Device-Token"] = deviceToken;
   let payload;
   if (form) {
     payload = form;
+  } else if (blob) {
+    headers["Content-Type"] = blob.type || "application/octet-stream";
+    payload = blob;
   } else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
@@ -81,4 +84,10 @@ export async function download(path, token, fallbackName) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+/** Fetch an authenticated image (a worker's photo) as an object URL. */
+export async function imageUrl(path, token) {
+  const resp = await request(path, { token, raw: true, timeoutMs: 60000 });
+  return URL.createObjectURL(await resp.blob());
 }

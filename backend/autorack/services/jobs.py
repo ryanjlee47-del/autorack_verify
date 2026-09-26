@@ -247,7 +247,10 @@ def summary_email(wh: Warehouse, n: dict[str, Any], to: str) -> email.Email:
     extra = f"Most mis-picked today: {n['top_mispick']}." if n["top_mispick"] else ""
     return email.notice_email(
         to,
-        subject=f"{wh.name}: {n['errors_caught']} mistakes caught today ({money(n['money_saved_cents'])} saved)",
+        subject=(
+            f"{wh.name}: {n['errors_caught']} mistake{'s' if n['errors_caught'] != 1 else ''} caught today "
+            f"({money(n['money_saved_cents'])} saved)"
+        ),
         heading=f"{wh.name} · {day}",
         lines=[headline],
         rows=rows,

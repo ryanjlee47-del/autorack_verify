@@ -47,8 +47,13 @@ def upgrade() -> None:
         sa.Column(
             "role",
             sa.Enum(
-                "owner", "manager", "supervisor", name="membership_role", native_enum=False,
-                create_constraint=True, length=32,
+                "owner",
+                "manager",
+                "supervisor",
+                name="membership_role",
+                native_enum=False,
+                create_constraint=True,
+                length=32,
             ),
             nullable=False,
         ),
@@ -77,9 +82,7 @@ def upgrade() -> None:
     op.alter_column("users", "warehouse_id", existing_type=sa.Uuid(), nullable=True)
 
     op.add_column("owner_sessions", sa.Column("warehouse_id", sa.Uuid(), nullable=True))
-    op.create_foreign_key(
-        "fk_owner_sessions_warehouse_id", "owner_sessions", "warehouses", ["warehouse_id"], ["id"]
-    )
+    op.create_foreign_key("fk_owner_sessions_warehouse_id", "owner_sessions", "warehouses", ["warehouse_id"], ["id"])
 
     # --- orders: customer and shipping ----------------------------------------
     op.add_column("orders", sa.Column("customer", sa.String(200), nullable=True))
@@ -91,15 +94,15 @@ def upgrade() -> None:
     op.create_index(op.f("ix_orders_customer"), "orders", ["customer"])
     op.create_index("ix_orders_warehouse_tracking", "orders", ["warehouse_id", "tracking_number"])
     _replace_enum_check(
-        "orders", "status", "order_status",
+        "orders",
+        "status",
+        "order_status",
         ["pending", "in_progress", "completed", "shipped", "flagged", "cancelled"],
     )
     _replace_enum_check("orders", "source", "order_source", ["manual", "csv", "sample"])
 
     # --- short picks ------------------------------------------------------------
-    op.add_column(
-        "order_line_items", sa.Column("short_quantity", sa.Integer(), nullable=False, server_default="0")
-    )
+    op.add_column("order_line_items", sa.Column("short_quantity", sa.Integer(), nullable=False, server_default="0"))
     op.create_check_constraint("ck_line_items_short_qty", "order_line_items", "short_quantity >= 0")
     op.add_column("order_flags", sa.Column("short_quantity", sa.Integer(), nullable=True))
     op.add_column(
@@ -107,15 +110,23 @@ def upgrade() -> None:
         sa.Column(
             "short_reason",
             sa.Enum(
-                "out_of_stock", "damaged", "not_found", "other", name="short_reason", native_enum=False,
-                create_constraint=True, length=32,
+                "out_of_stock",
+                "damaged",
+                "not_found",
+                "other",
+                name="short_reason",
+                native_enum=False,
+                create_constraint=True,
+                length=32,
             ),
             nullable=True,
         ),
     )
     op.add_column("order_flags", sa.Column("resolution", sa.String(16), nullable=True))
     _replace_enum_check(
-        "order_flags", "reason", "flag_reason",
+        "order_flags",
+        "reason",
+        "flag_reason",
         ["wrong_item_in_location", "out_of_stock", "damaged", "label_unreadable", "short_pick", "other"],
     )
 
@@ -173,7 +184,9 @@ def downgrade() -> None:
     op.drop_table("notifications_sent")
     op.drop_table("photos")
     _replace_enum_check(
-        "order_flags", "reason", "flag_reason",
+        "order_flags",
+        "reason",
+        "flag_reason",
         ["wrong_item_in_location", "out_of_stock", "damaged", "label_unreadable", "other"],
     )
     op.drop_column("order_flags", "resolution")
@@ -205,7 +218,13 @@ def downgrade() -> None:
     op.drop_constraint("ck_warehouses_cost_per_error", "warehouses", type_="check")
     op.drop_constraint("ck_warehouses_summary_hour", "warehouses", type_="check")
     for col in (
-        "onboarding_dismissed", "require_ship_scan", "leaderboard_enabled", "alert_error_rate",
-        "alert_on_flag", "daily_summary_hour", "daily_summary_enabled", "cost_per_error_cents",
+        "onboarding_dismissed",
+        "require_ship_scan",
+        "leaderboard_enabled",
+        "alert_error_rate",
+        "alert_on_flag",
+        "daily_summary_hour",
+        "daily_summary_enabled",
+        "cost_per_error_cents",
     ):
         op.drop_column("warehouses", col)

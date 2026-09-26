@@ -3,8 +3,9 @@
 //   2. How many mistakes got caught? (the product's value, made visible)
 //   3. Does any worker need attention?
 
-import { fmtAgo, fmtNumber, fmtPercent, h, mount } from "../../../shared/dom.js";
-import { api, card, layout, pageHeader, poll, statusBadge, table } from "../core.js";
+import { fmtAgo, fmtMoney, fmtNumber, fmtPercent, h, mount, toast } from "../../../shared/dom.js";
+import { api, canManage, card, ctx, fail, layout, pageHeader, poll, statusBadge, table } from "../core.js";
+import { flagItem } from "./flags.js";
 
 function tile(label, value, { hero = false, tone = null, hint = null } = {}) {
   return h("div", { class: ["tile", hero && "tile-hero", tone && `tile-${tone}`] },
@@ -24,54 +25,109 @@ export function problemLabel(result) {
   return { mismatch: "Wrong item", over_pick: "Extra unit", review: "Needs review" }[result] || result;
 }
 
-function onboarding(summary) {
-  const steps = [
-    ["Add your workers", "Each gets a 4-digit PIN.", "#/workers"],
-    ["Link a phone", "Scan the setup QR with any phone camera.", "#/devices"],
-    ["Import today's orders", "Upload the CSV pick list your system already exports.", "#/orders/import"],
-    ["Print pick sheets", "Workers scan the sheet's QR to open the order.", "#/orders"],
-  ];
-  if (summary.orders.completed_all_time > 0) return null;
-  return card("Get started",
-    h("ol", { class: "steps" }, ...steps.map(([t, d, href]) =>
-      h("li", null, h("a", { href }, t), h("span", { class: "muted" }, ` — ${d}`)))));
+/** First-run checklist, from real data. Hidden once done or dismissed. */
+function onboarding(ob, refresh) {
+  if (!ob || ob.dismissed || ob.complete) return null;
+  const manage = canManage();
+  const loadSample = async (e) => {
+    e.target.disabled = true;
+    try {
+      const r = await api("/api/onboarding/sample", { method: "POST" });
+      toast(`Loaded ${r.orders_created} sample orders. Print their barcodes and try scanning.`, "ok", 7000);
+      refresh();
+    } catch (err) {
+      e.target.disabled = false;
+      fail(err);
+    }
+  };
+  return h("section", { class: "card onboarding" },
+    h("div", { class: "row-between" },
+      h("h2", { class: "card-title" }, `Get set up · ${ob.done} of ${ob.total} done`),
+      manage ? h("button", {
+        class: "link-btn small",
+        onclick: () => api("/api/onboarding/dismiss", { method: "POST" }).then(refresh, fail),
+      }, "Hide") : null),
+    h("div", { class: "bar" }, h("span", { style: { width: `${Math.round((100 * ob.done) / ob.total)}%` } })),
+    h("ol", { class: "checklist-steps" }, ...ob.steps.map((st) =>
+      h("li", { class: st.done ? "done" : null },
+        h("span", { class: "step-check", "aria-hidden": "true" }, st.done ? "✓" : ""),
+        st.done ? h("span", null, st.label) : h("a", { href: st.href }, st.label)))),
+    manage ? h("div", { class: "onboarding-sample" },
+      h("div", null,
+        h("strong", null, "Try it before importing anything. "),
+        h("span", { class: "muted" }, "Load 12 sample orders and print their barcodes: scan them with a phone to see right items go green and wrong ones go red.")),
+      h("div", { class: "row" },
+        ob.sample_loaded
+          ? h("span", { class: "ok-text small" }, "Sample orders loaded")
+          : h("button", { class: "btn btn-primary btn-sm", onclick: loadSample }, "Load sample orders"),
+        h("a", { class: "btn btn-sm", href: ob.sample_barcodes_url, target: "_blank", rel: "noopener" }, "Sample barcodes (PDF)"))) : null);
 }
 
 export async function dashboardView() {
   const tiles = h("div", { class: "tiles" }, h("div", { class: "skeleton" }));
   const liveHost = h("div", null, h("div", { class: "skeleton" }));
   const problemsHost = h("div", null);
+  const flagsHost = h("div", null);
   const attentionHost = h("div", null);
   const onboardingHost = h("div", null);
   const updated = h("span", { class: "muted small live-dot" }, "Live");
+  const wh = ctx.me.warehouse;
 
   layout("#/", [
-    pageHeader("Today on the floor", null, updated),
+    pageHeader("Today on the floor", null, updated,
+      wh.leaderboard_enabled ? h("a", { class: "btn btn-sm", href: "#/board" }, "Floor board") : null,
+      h("a", { class: "btn btn-sm", href: "#/reports" }, "Reports")),
     onboardingHost,
     tiles,
     h("div", { class: "grid-main" },
-      card("Orders in motion", liveHost),
+      h("div", { class: "stack-lg" },
+        card("Needs a decision", flagsHost),
+        card("Orders in motion", liveHost)),
       h("div", { class: "stack-lg" },
         card("Mistakes caught", problemsHost),
         card("Workers to check on", attentionHost))),
   ]);
 
+  let lastFlags = null;
   const refresh = async () => {
-    const [summary, live] = await Promise.all([api("/api/dashboard/summary"), api("/api/dashboard/live")]);
+    const [summary, live, ob] = await Promise.all([
+      api("/api/dashboard/summary"),
+      api("/api/dashboard/live"),
+      wh.onboarding_dismissed ? Promise.resolve(null) : api("/api/onboarding"),
+    ]);
     const t = summary.today;
-    mount(onboardingHost, onboarding(summary));
+    const o = summary.orders;
+    mount(onboardingHost, onboarding(ob, () => refresh().catch(fail)));
     mount(tiles,
       tile("Mistakes caught today", fmtNumber(t.errors_caught), {
         hero: true,
         hint: `${fmtNumber(t.mismatches)} wrong item · ${fmtNumber(t.over_picks)} extra unit · ${fmtNumber(summary.all_time.errors_caught)} all time`,
       }),
-      tile("In progress", fmtNumber(summary.orders.in_progress)),
-      tile("Completed today", fmtNumber(summary.orders.completed_today)),
-      tile("Waiting to pick", fmtNumber(summary.orders.pending)),
-      tile("Flagged", fmtNumber(summary.orders.flagged), { tone: summary.orders.flagged ? "warn" : null }),
+      tile("Money saved today", fmtMoney(t.money_saved_cents), {
+        hero: true,
+        hint: `${fmtMoney(summary.cost_per_error_cents)} per mis-ship avoided · ${fmtMoney(summary.all_time.money_saved_cents)} all time`,
+      }),
+      tile("In progress", fmtNumber(o.in_progress)),
+      tile("Completed today", fmtNumber(o.completed_today)),
+      tile("Shipped today", fmtNumber(o.shipped_today), { hint: o.ready_to_ship ? `${fmtNumber(o.ready_to_ship)} ready to ship` : "Label scanned on the box" }),
+      tile("Waiting to pick", fmtNumber(o.pending)),
+      tile("Open problems", fmtNumber(o.open_problems), { tone: o.open_problems ? "warn" : null }),
       tile("Units picked today", fmtNumber(t.units_picked), { hint: `${t.active_workers} active worker${t.active_workers === 1 ? "" : "s"}` }),
       tile("First-scan accuracy", fmtPercent(t.accuracy), { hint: "Right item on the first try" }),
       tile("Needs review", fmtNumber(t.reviews), { tone: t.reviews ? "warn" : null }));
+
+    // Rebuilding the queue would reload its photos every 5 seconds.
+    const flagKey = live.flags.map((f) => f.id).join(",");
+    if (flagKey !== lastFlags) {
+      lastFlags = flagKey;
+      mount(flagsHost, live.flags.length
+        ? h("ul", { class: "feed" }, ...live.flags.map((f) => flagItem(f.order_id, f, {
+          item: f.description || f.sku || null,
+          order: f.order_number || "order",
+          onDone: () => refresh().catch(fail),
+        })))
+        : h("div", { class: "empty" }, "Nothing waiting. When a worker flags a problem or can't find an item, it lands here with any photos they took."));
+    }
 
     mount(liveHost, table([
       { label: "Order", render: (o) => h("a", { href: `#/orders/${o.id}`, class: "mono" }, o.external_order_number || o.id.slice(0, 8)) },

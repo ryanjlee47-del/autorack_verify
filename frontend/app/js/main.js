@@ -1,9 +1,10 @@
 // Owner dashboard entry point: hash router.
 
 import { h, mount } from "../../shared/dom.js";
-import { ctx, fail, getToken, loadMe, stopPolling, toLogin } from "./core.js";
+import { ctx, fail, getToken, loadMe, logout, stopPolling, toLogin } from "./core.js";
 import { dashboardView } from "./views/dashboard.js";
 import { billingView, insightsView, settingsView } from "./views/more.js";
+import { boardView, reportsView } from "./views/reports.js";
 import { importView, newOrderView, orderDetailView, ordersView } from "./views/orders.js";
 import { devicesView, workersView } from "./views/people.js";
 
@@ -16,12 +17,15 @@ const ROUTES = [
   [/^\/workers$/, (m, p) => workersView(p)],
   [/^\/devices$/, () => devicesView()],
   [/^\/insights$/, (m, p) => insightsView(p)],
+  [/^\/reports$/, (m, p) => reportsView(p)],
+  [/^\/board$/, (m, p) => boardView(p)],
   [/^\/billing$/, (m, p) => billingView(p)],
   [/^\/settings$/, () => settingsView()],
 ];
 
 async function route() {
   stopPolling();
+  document.body.classList.remove("tv");
   const raw = location.hash.replace(/^#/, "") || "/";
   const [path, query] = raw.split("?");
   const params = new URLSearchParams(query || "");
@@ -47,6 +51,16 @@ async function boot() {
     await loadMe();
   } catch (e) {
     mount(document.getElementById("app"), h("div", { class: "empty" }, e.message || "Couldn't reach Autorack. ", h("a", { href: "" }, "Retry")));
+    return;
+  }
+  if (!ctx.me.warehouse) {
+    // Signed in, but no warehouse to look at: the operator, or someone who
+    // was removed from every team.
+    if (ctx.me.is_operator) return location.replace("/admin/");
+    mount(document.getElementById("app"), h("div", { class: "auth-page" }, h("div", { class: "auth-card" },
+      h("h1", null, "No warehouse yet"),
+      h("p", { class: "muted" }, "You're signed in, but you're not on any warehouse's team. Ask an owner to invite you."),
+      h("button", { class: "btn", onclick: logout }, "Sign out"))));
     return;
   }
   document.title = `${ctx.me.warehouse.name} · Autorack`;

@@ -1,6 +1,7 @@
-// IndexedDB persistence for the worker app. Three stores:
+// IndexedDB persistence for the worker app. Four stores:
 //   orders  (keyPath "id")  -- order payloads with their match index, for offline picking
-//   outbox  (keyPath "id")  -- scans/undos/flags not yet confirmed by the server
+//   outbox  (keyPath "id")  -- scans/undos/flags/shorts/labels not yet confirmed by the server
+//   photos  (keyPath "id")  -- problem photos waiting to upload (after their flag syncs)
 //   meta    (keyPath "key") -- small values: sequence counter, recent scan history
 //
 // A scan is written here BEFORE any network attempt. If this write fails the
@@ -8,7 +9,7 @@
 // shown as recorded.
 
 const DB_NAME = "autorack-worker";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise = null;
 
@@ -21,6 +22,7 @@ function openDb() {
       if (!db.objectStoreNames.contains("orders")) db.createObjectStore("orders", { keyPath: "id" });
       if (!db.objectStoreNames.contains("outbox")) db.createObjectStore("outbox", { keyPath: "id" });
       if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "key" });
+      if (!db.objectStoreNames.contains("photos")) db.createObjectStore("photos", { keyPath: "id" });
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -94,6 +96,11 @@ export const store = {
       return true;
     }),
   outboxCount: () => tx("outbox", "readonly", (s) => req(s.count())),
+
+  photoAdd: (photo) => tx("photos", "readwrite", (s) => req(s.put(photo))),
+  photosAll: () => tx("photos", "readonly", (s) => req(s.getAll())),
+  photoRemove: (id) => tx("photos", "readwrite", (s) => req(s.delete(id))),
+  photoCount: () => tx("photos", "readonly", (s) => req(s.count())),
 
   metaGet: (key) => tx("meta", "readonly", (s) => req(s.get(key))).then((row) => (row ? row.value : undefined)),
   metaSet: (key, value) => tx("meta", "readwrite", (s) => req(s.put({ key, value }))),

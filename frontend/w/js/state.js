@@ -40,27 +40,62 @@ function matcherFor(order) {
   return m;
 }
 
+/** Units still to pick on a line: expected, minus picked, minus reported short. */
+export function remaining(line) {
+  return Math.max(0, line.expected_quantity - line.scanned_quantity - (line.short_quantity || 0));
+}
+
 /** Line quantities as the worker should see them: server baseline + queue. */
 export function displayLines(order, pending) {
   const qty = new Map(order.lines.map((l) => [l.id, l.scanned_quantity]));
+  const short = new Map(order.lines.map((l) => [l.id, l.short_quantity || 0]));
+  const expected = new Map(order.lines.map((l) => [l.id, l.expected_quantity]));
   const ordered = pending.filter((e) => e.order_id === order.id).sort((a, b) => a.client_seq - b.client_seq);
   for (const ev of ordered) {
-    const lineId = ev.local && ev.local.lineId;
+    const lineId = (ev.local && ev.local.lineId) || (ev.kind === "short" && ev.line_item_id);
     if (!lineId || !qty.has(lineId)) continue;
     if (ev.kind === "scan" && ev.local.result === "match") qty.set(lineId, qty.get(lineId) + 1);
     if (ev.kind === "void") qty.set(lineId, Math.max(0, qty.get(lineId) - 1));
+    if (ev.kind === "short") {
+      const left = Math.max(0, expected.get(lineId) - qty.get(lineId) - short.get(lineId));
+      short.set(lineId, short.get(lineId) + Math.min(ev.quantity || 0, left));
+    }
   }
-  return order.lines.map((l) => ({ ...l, scanned_quantity: qty.get(l.id) }));
+  return order.lines.map((l) => ({ ...l, scanned_quantity: qty.get(l.id), short_quantity: short.get(l.id) }));
 }
 
+/** Picked + reported short, against expected. Short units count as accounted for. */
 export function progress(lines) {
   let done = 0;
   let total = 0;
+  let short = 0;
   for (const l of lines) {
     total += l.expected_quantity;
-    done += Math.min(l.scanned_quantity, l.expected_quantity);
+    const s = l.short_quantity || 0;
+    short += s;
+    done += Math.min(l.scanned_quantity + s, l.expected_quantity);
   }
-  return { done, total, complete: total > 0 && done >= total };
+  return { done, total, short, complete: total > 0 && done >= total };
+}
+
+/** Has this order's label been scanned (queued or confirmed)? */
+export function shippedTracking(order, pending) {
+  const queued = pending.find((e) => e.order_id === order.id && e.kind === "ship");
+  if (queued) return queued.tracking_number;
+  return order.status === "shipped" ? order.tracking_number || "" : null;
+}
+
+/**
+ * A shipping-label scan, checked before it's queued: a product barcode from
+ * this order means the worker scanned the wrong thing.
+ */
+export function checkLabel(order, raw) {
+  const t = String(raw || "").replace(/[\s-]/g, "").toUpperCase();
+  if (t.length < 8) return { ok: false, reason: "short" };
+  const { index, options } = matcherFor(order);
+  const m = matchAgainstIndex(index, raw, options);
+  if (m.resolved || m.ambiguous) return { ok: false, reason: "product" };
+  return { ok: true, tracking: t };
 }
 
 /**
@@ -77,7 +112,7 @@ export function classify(order, lines, raw) {
     const line = lines.find((l) => l.id === m.lineId);
     if (line) {
       return {
-        result: line.scanned_quantity < line.expected_quantity ? "match" : "over_pick",
+        result: remaining(line) > 0 ? "match" : "over_pick",
         lineId: line.id,
         tier: m.tier,
       };
@@ -89,7 +124,7 @@ export function classify(order, lines, raw) {
 
 /** The line to pick next: the worker's choice if unfinished, else walk by location. */
 export function nextLine(lines, preferredId) {
-  const open = lines.filter((l) => l.scanned_quantity < l.expected_quantity);
+  const open = lines.filter((l) => remaining(l) > 0);
   const preferred = open.find((l) => l.id === preferredId);
   if (preferred) return preferred;
   return sortForWalking(open)[0] || null;
@@ -107,12 +142,16 @@ export function sortForWalking(lines) {
 /** Fold a sync response's order state into the cached order. */
 export function applyServerState(order, state) {
   if (!state) return { order, needsRefetch: false };
+  const shorts = state.short || {};
   const updated = {
     ...order,
     status: state.status,
     open_flags: state.open_flags,
+    tracking_number: state.tracking_number === undefined ? order.tracking_number : state.tracking_number,
     lines: order.lines.map((l) =>
-      Object.prototype.hasOwnProperty.call(state.lines, l.id) ? { ...l, scanned_quantity: state.lines[l.id] } : l,
+      Object.prototype.hasOwnProperty.call(state.lines, l.id)
+        ? { ...l, scanned_quantity: state.lines[l.id], short_quantity: shorts[l.id] || 0 }
+        : l,
     ),
   };
   const sameLines =
@@ -161,7 +200,7 @@ export function lastUndoable(history, orderId) {
 export const WIRE_FIELDS = [
   "id", "kind", "order_id", "session_id", "client_scanned_at", "client_seq", "scanned_barcode",
   "intended_line_item_id", "client_result", "offline", "target_scan_id", "line_item_id", "scan_event_id",
-  "reason", "note",
+  "reason", "note", "quantity", "short_reason", "tracking_number",
 ];
 
 export function toWire(ev) {
