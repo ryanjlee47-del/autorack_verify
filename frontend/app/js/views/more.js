@@ -131,7 +131,7 @@ export async function billingView(params) {
           h("div", { class: "plan-name" }, "Per warehouse, everything included"),
           h("ul", { class: "checklist" },
             ...["Unlimited workers, phones and scans", "Offline scanning with automatic sync", "CSV import, pick sheets, live dashboard",
-              "Full scan history and exports", "English and Spanish worker app"].map((t) => h("li", null, t)))),
+              "Full scan history and exports", "Worker app in English, Spanish, Chinese and Vietnamese"].map((t) => h("li", null, t)))),
         h("div", { class: `banner banner-${tone}` }, h("strong", null, stateText), a.message && a.state !== "active" ? ` — ${a.message}` : ""),
         b.current_period_end ? h("p", { class: "muted" }, b.cancel_at_period_end ? "Ends " : "Renews ", fmtDate(b.current_period_end, tz())) : null,
         action),

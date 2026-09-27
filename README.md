@@ -20,7 +20,7 @@ Flat **$175/month per warehouse**. 14-day trial, free pilots.
 
 | Surface | Where | What it does |
 |---|---|---|
-| Worker PWA | `frontend/w/` | Link phone, PIN sign-in, pick orders, scan (camera or Bluetooth wedge), works offline, English/Spanish |
+| Worker PWA | `frontend/w/` | Link phone, PIN sign-in, pick orders, scan (camera or Bluetooth wedge), works offline, English/Spanish/Chinese/Vietnamese |
 | Owner dashboard | `frontend/app/` | Live floor, mistakes caught, CSV import, pick sheets, workers, phones, insights, billing, settings |
 | Landing page | `frontend/index.html` | Marketing + pricing |
 | API | `backend/autorack/` | Auth, matching, orders, scan sync, dashboard, Stripe |

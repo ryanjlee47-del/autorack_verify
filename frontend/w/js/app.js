@@ -11,7 +11,7 @@
 import { ApiError, request } from "../../shared/api.js";
 import { brandLockup, dialog, h, mount, toast, uuid4 } from "../../shared/dom.js";
 import * as FX from "./feedback.js";
-import { T, getLang, setLang } from "./i18n.js";
+import { LANGUAGES, T, getLang, setLang } from "./i18n.js";
 import { takePhoto } from "./photo.js";
 import { Scanner } from "./scanner.js";
 import * as S from "./state.js";
@@ -140,14 +140,23 @@ function refreshChip() {
   if (old) old.replaceWith(statusChip());
 }
 
+/** Shows the current language in its own words; tap to pick another. */
 function langToggle() {
+  const current = (LANGUAGES.find(([code]) => code === getLang()) || LANGUAGES[0])[1];
   return h("button", {
-    class: "link-btn",
-    onclick: () => {
-      writeJson(LS_LANG, setLang(getLang() === "en" ? "es" : "en"));
+    class: "link-btn lang-btn",
+    "aria-label": T("language"),
+    onclick: () => dialog(T("language"), (close) => h("div", { class: "lang-list" },
+      ...LANGUAGES.map(([code, name]) => h("button", {
+        class: ["btn btn-lg", code === getLang() && "btn-primary"],
+        lang: code === "zh" ? "zh-Hans" : code,
+        onclick: () => close(code),
+      }, name)))).then((code) => {
+      if (!code) return;
+      writeJson(LS_LANG, setLang(code));
       rerender();
-    },
-  }, T("language"));
+    }),
+  }, "🌐 ", current);
 }
 
 function topbar(...right) {
@@ -1571,7 +1580,9 @@ function showUnlinked() {
 
 async function boot() {
   const saved = readJson(LS_LANG);
-  setLang(saved || ((navigator.language || "").toLowerCase().startsWith("es") ? "es" : "en"));
+  // First run: the phone's own language, if we have it.
+  const phoneLang = (navigator.language || "").toLowerCase().slice(0, 2);
+  setLang(saved || (LANGUAGES.some(([code]) => code === phoneLang) ? phoneLang : "en"));
   document.addEventListener("keydown", onKeydown);
   requestPersistence();
   if ("serviceWorker" in navigator) {
