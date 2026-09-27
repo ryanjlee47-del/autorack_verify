@@ -138,6 +138,7 @@ export async function devicesView() {
   const [link, devices] = await Promise.all([api("/api/warehouse/device-link"), api("/api/devices")]);
   const reload = () => devicesView().catch(fail);
   const active = devices.filter((d) => !d.revoked_at);
+  const stationUrl = link.url.replace("/w/?", "/w/station.html?");
   const revoked = devices.filter((d) => d.revoked_at);
 
   layout("#/devices", [
@@ -162,6 +163,11 @@ export async function devicesView() {
       card(null,
         h("div", { class: "qr-box qr-large" }, svg(link.qr_svg, "qr")),
         h("div", { class: "setup-code mono" }, link.join_code))),
+    card("Pack station (laptop or tablet)",
+      h("p", null, "For the packing bench: a laptop or tablet with a USB or Bluetooth scanner, and a webcam for box photos. Same PIN sign-in, works offline, and shows the whole order at once."),
+      h("p", null, "On that computer, open ", h("a", { class: "mono", href: stationUrl, target: "_blank", rel: "noopener" }, stationUrl.replace(/\?.*$/, "")),
+        " and enter the setup code ", h("strong", { class: "mono" }, link.join_code), ". Or open this link on it: ",
+        h("button", { class: "btn btn-sm", onclick: () => navigator.clipboard.writeText(stationUrl).then(() => toast("Link copied", "ok"), () => toast(stationUrl)) }, "Copy station link"))),
     card(`Linked phones (${active.length})`,
       table([
         { label: "Phone", render: (d) => h("strong", null, d.label) },

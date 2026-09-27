@@ -12,7 +12,7 @@ import { ApiError, request } from "../../shared/api.js";
 import { brandLockup, dialog, h, mount, toast, uuid4 } from "../../shared/dom.js";
 import * as FX from "./feedback.js";
 import { LANGUAGES, T, getLang, setLang } from "./i18n.js";
-import { takePhoto } from "./photo.js";
+import { snapshot, takePhoto } from "./photo.js";
 import { DEFAULTS as PREF_DEFAULTS, cleanScan, keyGapMs, loadPrefs, savePrefs, usesHardwareScanner } from "./prefs.js";
 import { Scanner } from "./scanner.js";
 import * as S from "./state.js";
@@ -33,6 +33,8 @@ const SHORT_REASONS = ["out_of_stock", "not_found", "damaged", "other"];
 const MAX_PHOTOS = 4;
 
 const root = document.getElementById("app");
+// The desktop pack station: same app, laid out for a laptop and a USB scanner.
+const STATION = document.body.dataset.mode === "station";
 
 const app = {
   device: readJson(LS_DEVICE), // {token, warehouseName, label}
@@ -52,7 +54,7 @@ const app = {
   wedgeBuffer: "",
   wedgeAt: 0,
   wedgeTimer: null,
-  prefs: loadPrefs(),
+  prefs: loadPrefs(STATION ? { scanner: "wedge" } : {}),
   multiBox: {}, // order id -> true when the worker said it ships in several boxes
   shift: null, // open time-clock shift, if any
   timeClock: false,
@@ -222,7 +224,7 @@ function showLink(prefill = "") {
     try {
       const r = await request("/api/worker/link", {
         method: "POST",
-        body: { join_code: code.value, label: label.value || "Phone" },
+        body: { join_code: code.value, label: label.value || (STATION ? "Pack station" : "Phone") },
       });
       app.device = { token: r.device_token, warehouseName: r.warehouse.name, label: r.device.label };
       writeJson(LS_DEVICE, app.device);
@@ -392,9 +394,14 @@ async function showOrders() {
           h("button", { class: "btn btn-sm", "aria-label": T("settingsTitle"), onclick: showSettings }, "⚙"),
           h("button", { class: "btn btn-sm", onclick: endShift }, T("endShift")))),
       clockLine,
-      h("div", { class: "grid-2" },
-        h("button", { class: "btn btn-primary btn-xl", onclick: () => scanOnce(openFromCode) }, T("ordersScanSheet")),
-        h("button", { class: "btn btn-xl", onclick: typeOrderNumber }, T("ordersTypeNumber"))),
+      STATION
+        ? h("section", { class: "station-scan" },
+          h("div", { class: "scanner-ready" }, h("span", { class: "scanner-dot" }), T("stationHome")),
+          h("p", { class: "muted" }, T("stationHelp")),
+          h("button", { class: "btn btn-lg", onclick: typeOrderNumber }, T("ordersTypeNumber")))
+        : h("div", { class: "grid-2" },
+          h("button", { class: "btn btn-primary btn-xl", onclick: () => scanOnce(openFromCode) }, T("ordersScanSheet")),
+          h("button", { class: "btn btn-xl", onclick: typeOrderNumber }, T("ordersTypeNumber"))),
       h("button", { class: "btn btn-lg btn-block", onclick: startReturn }, T("returnStart")),
       restockHost,
       note,
@@ -1496,7 +1503,7 @@ function packShotCount(order) {
 async function takePackPhoto() {
   const order = app.order;
   if (!order) return;
-  const blob = await takePhoto();
+  const blob = await (STATION ? webcamPhoto() : takePhoto());
   if (!blob) return;
   await savePackPhotos([blob], order.id, S.boxesLabelled(order, pendingFor(order.id)).count + 1);
   FX.play("ok");
@@ -1504,6 +1511,34 @@ async function takePackPhoto() {
   if (app.sync) app.sync.kick();
   if (app.screen === "complete") showComplete();
   else renderPickBody();
+}
+
+/** Pack station: a photo from the webcam over the bench, or a file if there's no camera. */
+async function webcamPhoto() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return takePhoto();
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+  } catch {
+    toast(T("webcamNone"), "warn", 5000);
+    return takePhoto();
+  }
+  const video = h("video", { class: "webcam", playsinline: true, muted: true, autoplay: true });
+  video.srcObject = stream;
+  try {
+    return await dialog(T("packPhoto"), (close) => [
+      video,
+      h("div", { class: "dialog-actions" },
+        h("button", { class: "btn", onclick: () => close(null) }, T("cancel")),
+        h("button", { class: "btn", onclick: () => takePhoto().then(close) }, T("webcamChoose")),
+        h("button", {
+          class: "btn btn-primary btn-lg",
+          onclick: () => snapshot(video).then(close, () => toast(T("webcamNone"), "warn")),
+        }, "📷 ", T("webcamTake"))),
+    ], { wide: true });
+  } finally {
+    stream.getTracks().forEach((t) => t.stop());
+  }
 }
 
 async function savePackPhotos(photos, orderId, box = null) {
@@ -2332,6 +2367,7 @@ async function boot() {
   const phoneLang = (navigator.language || "").toLowerCase().slice(0, 2);
   setLang(saved || (LANGUAGES.some(([code]) => code === phoneLang) ? phoneLang : "en"));
   FX.configure(app.prefs);
+  if (STATION) document.title = "Autorack Pack Station";
   document.addEventListener("keydown", onKeydown);
   requestPersistence();
   if ("serviceWorker" in navigator) {

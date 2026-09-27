@@ -15,12 +15,13 @@ export const SCANNERS = {
 
 export const DEFAULTS = { scanner: "camera", sound: true, loud: false, vibrate: true, strongVibrate: false };
 
-export function loadPrefs() {
+/** Saved settings; `base` is what a fresh device starts with (a pack station: a USB scanner). */
+export function loadPrefs(base = {}) {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || "null");
-    return { ...DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
+    return { ...DEFAULTS, ...base, ...(saved && typeof saved === "object" ? saved : {}) };
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, ...base };
   }
 }
 

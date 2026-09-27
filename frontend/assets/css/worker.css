@@ -962,3 +962,114 @@ body {
   width: auto;
   min-width: 96px;
 }
+
+/* ---------------------------------------------------------------------------
+   Desktop pack station (/w/station.html): a laptop or tablet at the packing
+   bench with a USB scanner. Wider, two columns, bigger type.
+   --------------------------------------------------------------------------- */
+body.station .screen {
+  max-width: 1440px;
+  padding: 24px 32px;
+}
+
+body.station .screen.narrow {
+  max-width: 820px;
+}
+
+body.station .station-scan {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 20px;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: center;
+}
+
+body.station .station-scan .scanner-ready {
+  min-height: 96px;
+  font-size: 28px;
+}
+
+body.station .station-scan .btn {
+  justify-self: center;
+}
+
+body.station .order-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+body.station .order-list > .section-title,
+body.station .order-list > .empty,
+body.station .order-list > .skeleton {
+  grid-column: 1 / -1;
+}
+
+/* Pick/pack: what to scan next on the left, the whole order on the right. */
+body.station #pick-body {
+  display: grid;
+  grid-template-columns: minmax(360px, 5fr) 7fr;
+  grid-auto-rows: min-content;
+  column-gap: 28px;
+  align-items: start;
+}
+
+body.station #pick-body > .target,
+body.station #pick-body > .actions,
+body.station #pick-body > .btn-finish {
+  grid-column: 1;
+}
+
+body.station #pick-body > .section-title {
+  grid-column: 2;
+  grid-row: 1;
+  margin-top: 14px;
+}
+
+body.station #pick-body > .lines {
+  grid-column: 2;
+  grid-row: 1 / span 20;
+  margin-top: 48px;
+}
+
+body.station .target-name {
+  font-size: 34px;
+}
+
+body.station .target-photo {
+  max-height: 260px;
+}
+
+body.station .line {
+  padding: 14px 16px;
+  font-size: 18px;
+}
+
+body.station .line-photo {
+  width: 56px;
+  height: 56px;
+}
+
+body.station .complete {
+  max-width: 820px;
+}
+
+body.station .camera {
+  max-width: 480px;
+}
+
+.webcam {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: var(--radius);
+  background: #000;
+}
+
+@media (max-width: 900px) {
+  body.station #pick-body {
+    display: block;
+  }
+}

@@ -292,6 +292,11 @@ export const STRINGS = {
     testWrong: "Test: wrong item",
     settingsSave: "Save",
     settingsSaved: "Saved on this phone",
+    stationHome: "Scan a pick sheet or an order number",
+    stationHelp: "Use the USB scanner: the order opens as soon as you scan it. Scan every item into the box, then the shipping label.",
+    webcamTake: "Take photo",
+    webcamNone: "No camera found. Choose a photo file instead.",
+    webcamChoose: "Choose a file",
   },
   es: {
     appName: "Autorack",
@@ -582,6 +587,11 @@ export const STRINGS = {
     testWrong: "Probar: artículo incorrecto",
     settingsSave: "Guardar",
     settingsSaved: "Guardado en este teléfono",
+    stationHome: "Escanee una hoja de picking o un número de pedido",
+    stationHelp: "Use el escáner USB: el pedido se abre en cuanto lo escanea. Escanee cada artículo al meterlo en la caja y luego la etiqueta de envío.",
+    webcamTake: "Tomar foto",
+    webcamNone: "No se encontró cámara. Elija un archivo de foto.",
+    webcamChoose: "Elegir un archivo",
   },
   zh: {
     appName: "Autorack",
@@ -872,6 +882,11 @@ export const STRINGS = {
     testWrong: "测试：错误商品",
     settingsSave: "保存",
     settingsSaved: "已保存在此手机上",
+    stationHome: "扫描拣货单或订单号",
+    stationHelp: "使用 USB 扫描枪：扫描后订单立即打开。每件商品放入箱子时扫描一次，最后扫描运单。",
+    webcamTake: "拍照",
+    webcamNone: "未找到摄像头。请改为选择照片文件。",
+    webcamChoose: "选择文件",
   },
   vi: {
     appName: "Autorack",
@@ -1162,6 +1177,11 @@ export const STRINGS = {
     testWrong: "Thử: sai món",
     settingsSave: "Lưu",
     settingsSaved: "Đã lưu trên điện thoại này",
+    stationHome: "Quét phiếu lấy hàng hoặc số đơn",
+    stationHelp: "Dùng máy quét USB: đơn mở ngay khi bạn quét. Quét từng món khi bỏ vào thùng, rồi quét nhãn gửi hàng.",
+    webcamTake: "Chụp ảnh",
+    webcamNone: "Không tìm thấy camera. Hãy chọn tệp ảnh.",
+    webcamChoose: "Chọn tệp",
   },
 };
 

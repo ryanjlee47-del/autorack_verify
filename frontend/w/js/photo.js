@@ -73,3 +73,18 @@ export async function compress(file) {
   if (!blob) throw new Error("encode failed");
   return blob;
 }
+
+/** A still from a live webcam <video> (pack station), as a compressed JPEG Blob. */
+export async function snapshot(video) {
+  const w = video.videoWidth;
+  const hgt = video.videoHeight;
+  if (!w || !hgt) throw new Error("no frame");
+  const scale = Math.min(1, MAX_SIDE / Math.max(w, hgt));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(hgt * scale);
+  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", QUALITY));
+  if (!blob) throw new Error("encode failed");
+  return blob;
+}
