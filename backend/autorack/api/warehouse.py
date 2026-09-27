@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import available_timezones
 
 import segno
@@ -150,14 +150,17 @@ def rotate_device_link(
 # ---------------------------------------------------------------------------
 
 
+StaffRole = Literal["owner", "manager", "supervisor"]
+
+
 class InviteIn(BaseModel):
     email: EmailStr
     name: str | None = Field(default=None, max_length=200)
-    role: UserRole = UserRole.manager
+    role: StaffRole = "manager"
 
 
 class MemberUpdate(BaseModel):
-    role: UserRole | None = None
+    role: StaffRole | None = None
     active: bool | None = None
     name: str | None = Field(default=None, max_length=200)
 
@@ -181,7 +184,7 @@ def list_team(ctx: OwnerContext = Depends(current_owner), db: Session = Depends(
     rows = db.execute(
         select(User, Membership)
         .join(Membership, Membership.user_id == User.id)
-        .where(Membership.warehouse_id == ctx.warehouse.id)
+        .where(Membership.warehouse_id == ctx.warehouse.id, Membership.role != UserRole.client)
         .order_by(Membership.created_at)
     )
     return [member_dict(u, m) for u, m in rows]
@@ -199,13 +202,15 @@ def invite(
         )
         if existing and existing.active:
             raise conflict("already_member", "That person is already on this warehouse's team.")
+        if existing and existing.role == UserRole.client:
+            raise conflict("client_login", "That address is a client portal login. Remove it from the client first.")
         if not user.active:
             raise conflict("account_disabled", "That account is disabled.")
     else:
         user = User(warehouse_id=ctx.warehouse.id, email=addr, name=(body.name or "").strip() or None)
         db.add(user)
         db.flush()
-    membership = auth_svc.add_membership(db, user, ctx.warehouse.id, body.role)
+    membership = auth_svc.add_membership(db, user, ctx.warehouse.id, UserRole(body.role))
     url = f"{get_settings().frontend_url.rstrip('/')}/app/login.html"
     audit.record(
         db,
@@ -215,7 +220,7 @@ def invite(
         target_type="user",
         target_id=user.id,
         email=addr,
-        role=body.role.value,
+        role=body.role,
     )
     usage.track(db, ctx.warehouse.id, "team.invite")
     db.commit()
@@ -235,7 +240,7 @@ def update_member(
     row = db.execute(
         select(User, Membership)
         .join(Membership, Membership.user_id == User.id)
-        .where(User.id == user_id, Membership.warehouse_id == ctx.warehouse.id)
+        .where(User.id == user_id, Membership.warehouse_id == ctx.warehouse.id, Membership.role != UserRole.client)
     ).first()
     if not row:
         raise not_found("Team member not found")
@@ -245,7 +250,7 @@ def update_member(
     if (demoting or deactivating) and auth_svc.active_owner_count(db, ctx.warehouse.id) <= 1:
         raise conflict("last_owner", "A warehouse needs at least one active owner.")
     if body.role is not None:
-        m.role = body.role
+        m.role = UserRole(body.role)
     if body.active is not None:
         m.active = body.active
         if not body.active:

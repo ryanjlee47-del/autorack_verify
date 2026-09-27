@@ -1,7 +1,7 @@
 // The floor around the pick: restock tasks, the time clock, pack inserts,
 // and 3PL clients.
 
-import { confirmDialog, dialog, fmtAgo, fmtDateTime, h, mount, toast } from "../../../shared/dom.js";
+import { confirmDialog, dialog, fmtAgo, fmtDateTime, fmtCents, h, mount, toast } from "../../../shared/dom.js";
 import { api, canManage, card, ctx, download, fail, layout, pageHeader, table, tz } from "../core.js";
 import { pickProduct } from "./products.js";
 
@@ -220,20 +220,124 @@ async function editInsert(ins, clients, reload) {
 // Clients (3PL brands)
 // ---------------------------------------------------------------------------
 
-export async function clientsView() {
-  const clients = await api("/api/clients");
-  const reload = () => clientsView().catch(fail);
+function thisMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+export async function clientsView(params = new URLSearchParams()) {
+  const month = params.get("month") || thisMonth();
   const manage = canManage();
+  const [clients, billing] = await Promise.all([
+    api("/api/clients"),
+    manage ? api(`/api/billing/clients?month=${month}`) : Promise.resolve(null),
+  ]);
+  const reload = () => clientsView(params).catch(fail);
+  const totals = new Map((billing ? billing.clients : []).map((r) => [r.client.id, r]));
+  const picker = h("input", { class: "input input-inline", type: "month", value: month, onchange: (e) => { location.hash = `#/clients?month=${e.target.value}`; } });
   layout("#/clients", [
-    pageHeader("Clients", "For 3PLs: the brands you ship for. Tag orders and products with a client to filter them, give the client their own inserts, and report per client.",
+    pageHeader("Clients", "For 3PLs: the brands you ship for. Tag orders and products with a client, give each one a portal login to follow its own orders, and bill them from the scan records.",
       manage ? h("button", { class: "btn btn-primary", onclick: () => editClient(null, reload) }, "New client") : null),
-    card(null, table([
-      { label: "Client", render: (c) => h("div", null, h("strong", null, c.name), c.code ? h("span", { class: "muted mono small" }, ` ${c.code}`) : null) },
-      { label: "Contact", render: (c) => c.contact_email || h("span", { class: "muted" }, "–") },
-      { label: "", render: (c) => (c.active ? null : h("span", { class: "badge" }, "Inactive")) },
-      { label: "", render: (c) => h("a", { class: "btn btn-sm", href: `#/orders?client=${c.id}` }, "Orders") },
-      manage ? { label: "", render: (c) => h("button", { class: "btn btn-sm btn-ghost", onclick: () => editClient(c, reload) }, "Edit") } : null,
-    ].filter(Boolean), clients, { empty: "No clients yet. If you're a 3PL, add the brands you ship for." })),
+    card(null,
+      manage ? h("div", { class: "row" }, h("span", { class: "muted" }, "Billing month"), picker) : null,
+      table([
+        { label: "Client", render: (c) => h("div", null, h("strong", null, c.name), c.code ? h("span", { class: "muted mono small" }, ` ${c.code}`) : null, c.active ? null : h("span", { class: "badge" }, " Inactive")) },
+        manage ? { label: "Orders shipped", align: "right", render: (c) => String((totals.get(c.id) || {}).orders || 0) } : null,
+        manage ? { label: "Units", align: "right", render: (c) => String((totals.get(c.id) || {}).units || 0) } : null,
+        manage ? {
+          label: "To bill", align: "right",
+          render: (c) => {
+            const t = totals.get(c.id);
+            return t && t.rates_set ? fmtCents(t.total_cents) : h("span", { class: "muted" }, "No rates");
+          },
+        } : null,
+        { label: "", render: (c) => h("a", { class: "btn btn-sm", href: `#/orders?client=${c.id}` }, "Orders") },
+      ].filter(Boolean), clients, {
+        empty: "No clients yet. If you're a 3PL, add the brands you ship for.",
+        onRow: manage ? (c) => { location.hash = `#/clients/${c.id}?month=${month}`; } : null,
+      })),
+  ]);
+}
+
+const RATE_FIELDS = [
+  ["monthly_fee", "Monthly account fee"],
+  ["per_order", "Per order shipped"],
+  ["per_unit", "Per unit picked"],
+  ["per_extra_box", "Per extra box"],
+  ["per_insert", "Per insert"],
+  ["per_return", "Per return checked in"],
+  ["per_receive_unit", "Per unit received"],
+];
+
+export async function clientView(id, params = new URLSearchParams()) {
+  const month = params.get("month") || thisMonth();
+  const clients = await api("/api/clients");
+  const c = clients.find((x) => x.id === id);
+  if (!c) throw new Error("Client not found");
+  const [logins, st] = await Promise.all([api(`/api/clients/${id}/users`), api(`/api/clients/${id}/statement?month=${month}`)]);
+  const reload = () => clientView(id, params).catch(fail);
+  const rateInputs = RATE_FIELDS.map(([key, label]) => {
+    const input = h("input", { class: "input input-qty", type: "number", min: "0", step: "0.01", value: c.rates[key] ? (c.rates[key] / 100).toFixed(2) : "" });
+    return [key, label, input];
+  });
+  const email = h("input", { class: "input", type: "email", placeholder: "name@brand.com" });
+  const picker = h("input", { class: "input input-inline", type: "month", value: month, onchange: (e) => { location.hash = `#/clients/${id}?month=${e.target.value}`; } });
+  layout("#/clients", [
+    h("a", { href: "#/clients", class: "back-link" }, "← Clients"),
+    pageHeader(c.name, c.contact_email || "",
+      h("button", { class: "btn", onclick: () => editClient(c, reload) }, "Edit"),
+      h("a", { class: "btn", href: `#/orders?client=${id}` }, "Orders")),
+    h("div", { class: "grid-main" },
+      card(`Statement · ${st.month}`,
+        h("div", { class: "row" }, h("span", { class: "muted" }, "Month"), picker,
+          h("button", { class: "btn btn-sm", onclick: () => download(`/api/clients/${id}/statement.csv?month=${month}`, `autorack-${c.code || c.name}-${month}.csv`) }, "Download CSV")),
+        table([
+          { label: "Item", render: (l) => l.label },
+          { label: "Quantity", align: "right", render: (l) => String(l.quantity) },
+          { label: "Rate", align: "right", render: (l) => (l.rate_cents ? fmtCents(l.rate_cents) : h("span", { class: "muted" }, "–")) },
+          { label: "Amount", align: "right", render: (l) => fmtCents(l.amount_cents) },
+        ], st.lines),
+        h("p", { class: "statement-total" }, "Total: ", h("strong", null, fmtCents(st.total_cents))),
+        h("p", { class: "muted small" }, "Counted from the scan records: orders out the door this month, units verified, extra boxes, inserts packed, returns and receipts finished.")),
+      h("div", { class: "stack-lg" },
+        card("Rates",
+          h("div", { class: "settings-list" }, ...rateInputs.map(([, label, input]) => h("label", { class: "row" }, h("span", { class: "rate-label" }, label), "$", input))),
+          h("button", {
+            class: "btn",
+            onclick: () => {
+              const rates = {};
+              for (const [key, , input] of rateInputs) if (input.value) rates[key] = Math.round(Number(input.value) * 100);
+              api(`/api/clients/${id}`, { method: "PATCH", body: { rates } }).then(() => { toast("Rates saved", "ok"); reload(); }, fail);
+            },
+          }, "Save rates")),
+        card("Portal logins",
+          h("p", { class: "muted small" }, "People at the brand who can sign in (with Google) to follow this client's orders, tracking, proofs, returns, reports and statements. Nothing else."),
+          table([
+            {
+              label: "Login",
+              render: (u) => h("div", null, u.email,
+                h("div", { class: "muted small" }, `${u.name ? `${u.name} · ` : ""}signed in ${u.last_login_at ? fmtAgo(u.last_login_at) : "never"}`)),
+            },
+            {
+              label: "",
+              render: (u) => (u.active ? h("button", {
+                class: "btn btn-sm btn-ghost",
+                onclick: async () => {
+                  if (!(await confirmDialog("Remove this login?", `${u.email} won't be able to sign in to the portal any more.`, { confirmLabel: "Remove", danger: true }))) return;
+                  api(`/api/clients/${id}/users/${u.id}`, { method: "DELETE" }).then(reload, fail);
+                },
+              }, "Remove") : h("span", { class: "muted" }, "Removed")),
+            },
+          ], logins, { empty: "No portal logins yet." }),
+          h("form", {
+            class: "row",
+            onsubmit: (e) => {
+              e.preventDefault();
+              if (!email.value.trim()) return;
+              api(`/api/clients/${id}/users`, { method: "POST", body: { email: email.value.trim() } })
+                .then(() => { toast("Invite sent. They sign in with Google.", "ok"); reload(); }, fail);
+            },
+          }, email, h("button", { class: "btn btn-primary", type: "submit" }, "Give access"))))),
   ]);
 }
 

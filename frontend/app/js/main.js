@@ -5,7 +5,7 @@ import { agreementGate, loadAgreement } from "./agreement.js";
 import { api, ctx, fail, getToken, loadMe, logout, stopPolling, switchWarehouse, toLogin } from "./core.js";
 import { connectionsView } from "./views/connections.js";
 import { dashboardView } from "./views/dashboard.js";
-import { clientsView, insertsView, restockView, timeView } from "./views/floor.js";
+import { clientView, clientsView, insertsView, restockView, timeView } from "./views/floor.js";
 import { productView, productsView } from "./views/products.js";
 import { billingView, insightsView, settingsView } from "./views/more.js";
 import { boardView, reportsView } from "./views/reports.js";
@@ -34,7 +34,8 @@ const ROUTES = [
   [/^\/restock$/, (m, p) => restockView(p)],
   [/^\/time$/, (m, p) => timeView(p)],
   [/^\/inserts$/, () => insertsView()],
-  [/^\/clients$/, () => clientsView()],
+  [/^\/clients$/, (m, p) => clientsView(p)],
+  [/^\/clients\/([0-9a-f-]{36})$/, (m, p) => clientView(m[1], p)],
 ];
 
 async function route() {
@@ -65,6 +66,11 @@ async function boot() {
     await loadMe();
   } catch (e) {
     mount(document.getElementById("app"), h("div", { class: "empty" }, e.message || "Couldn't reach Autorack. ", h("a", { href: "" }, "Retry")));
+    return;
+  }
+  if (ctx.me.membership && ctx.me.membership.role === "client") {
+    // A 3PL client's login: their own portal, not the warehouse's dashboard.
+    location.replace("/portal/");
     return;
   }
   if (!ctx.me.warehouse) {

@@ -18,7 +18,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..deps import OwnerContext, UserContext, client_ip, current_owner, current_user
 from ..errors import ApiError, bad_request, forbidden
-from ..models import Membership, OAuthState, User, utcnow
+from ..models import Client, Membership, OAuthState, User, utcnow
 from ..security import hash_token
 from ..services import agreement as agreement_svc
 from ..services import auth as auth_svc
@@ -263,6 +263,9 @@ def me(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db))
             "can_sign": m.role.value == "owner",
             "version": agreement_svc.CURRENT_VERSION,
         }
+        if m.role.value == "client" and m.client_id:
+            c = db.get(Client, m.client_id)
+            out["client"] = {"id": str(c.id), "name": c.name} if c else None
         out["membership"] = {
             "role": m.role.value,
             "email_daily_summary": m.email_daily_summary,
@@ -274,6 +277,7 @@ def me(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db))
             "timezone": wh.timezone,
             "subscription_status": wh.subscription_status.value,
             "leaderboard_enabled": wh.leaderboard_enabled,
+            "time_clock_enabled": wh.time_clock_enabled,
             "onboarding_dismissed": wh.onboarding_dismissed,
             "cost_per_error_cents": wh.cost_per_error_cents,
             "closed_at": wh.closed_at.isoformat() if wh.closed_at else None,

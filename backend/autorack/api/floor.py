@@ -3,6 +3,7 @@ tasks, and the time clock."""
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import uuid
@@ -15,11 +16,25 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..db import get_db
 from ..deps import OwnerContext, current_owner, require_manager
 from ..errors import bad_request, conflict, not_found
-from ..models import Client, PackInsert, Product, RestockTask, Shift, Worker, utcnow
-from ..services import audit, floor, usage
+from ..models import (
+    Client,
+    Membership,
+    OwnerSession,
+    PackInsert,
+    Product,
+    RestockTask,
+    Shift,
+    User,
+    UserRole,
+    Worker,
+    utcnow,
+)
+from ..services import audit, client_billing, email, floor, monthly, usage
+from ..services import auth as auth_svc
 from ..services import dashboard as dash
 
 router = APIRouter(tags=["floor"])
@@ -41,6 +56,12 @@ class ClientUpdate(BaseModel):
     code: str | None = Field(default=None, max_length=40)
     contact_email: EmailStr | None = None
     active: bool | None = None
+    rates: dict[str, int] | None = None
+
+
+class ClientUserIn(BaseModel):
+    email: EmailStr
+    name: str | None = Field(default=None, max_length=200)
 
 
 def client_dict(c: Client) -> dict[str, Any]:
@@ -50,6 +71,7 @@ def client_dict(c: Client) -> dict[str, Any]:
         "code": c.code,
         "contact_email": c.contact_email,
         "active": c.active,
+        "rates": c.rates or {},
         "created_at": c.created_at.isoformat(),
     }
 
@@ -113,9 +135,196 @@ def update_client(
         c.contact_email = str(body.contact_email).lower()
     if body.active is not None:
         c.active = body.active
+    if body.rates is not None:
+        try:
+            c.rates = client_billing.clean_rates(body.rates)
+        except ValueError as e:
+            raise bad_request("rates_invalid", str(e)) from None
     audit.record(db, ctx.actor, "client.updated", warehouse_id=ctx.warehouse.id, target_type="client", target_id=c.id)
     db.commit()
     return client_dict(c)
+
+
+def _month(ctx: OwnerContext, month: str | None) -> tuple[int, int]:
+    today = utcnow().astimezone(dash.tz_of(ctx.warehouse)).date()
+    if not month:
+        return today.year, today.month
+    try:
+        return monthly.parse_month(month, today)
+    except ValueError:
+        raise bad_request("month_invalid", "Months look like 2026-09.") from None
+
+
+@router.get("/clients/{client_id}/statement")
+def client_statement(
+    client_id: uuid.UUID,
+    month: str | None = Query(None, description="YYYY-MM; this month if left out"),
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    y, m = _month(ctx, month)
+    return client_billing.statement(db, ctx.warehouse, _client(db, ctx, client_id), y, m)
+
+
+@router.get("/clients/{client_id}/statement.csv", response_class=PlainTextResponse)
+def client_statement_csv(
+    client_id: uuid.UUID,
+    month: str | None = Query(None),
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
+) -> PlainTextResponse:
+    y, m = _month(ctx, month)
+    st = client_billing.statement(db, ctx.warehouse, _client(db, ctx, client_id), y, m)
+    buf = io.StringIO()
+    out = csv.writer(buf)
+    out.writerow(["client", "month", "item", "quantity", "rate", "amount"])
+    for line in st["lines"]:
+        out.writerow(
+            [
+                st["client"]["name"],
+                st["month"],
+                line["label"],
+                line["quantity"],
+                f"{line['rate_cents'] / 100:.2f}",
+                f"{line['amount_cents'] / 100:.2f}",
+            ]
+        )
+    out.writerow([st["client"]["name"], st["month"], "Total", "", "", f"{st['total_cents'] / 100:.2f}"])
+    slug = "".join(ch for ch in (st["client"]["code"] or st["client"]["name"]) if ch.isalnum())[:30] or "client"
+    return PlainTextResponse(
+        buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="autorack-{slug}-{st["month"]}.csv"'},
+    )
+
+
+@router.get("/billing/clients")
+def all_statements(
+    month: str | None = Query(None),
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Every client's total for the month, for invoicing day."""
+    y, m = _month(ctx, month)
+    rows = []
+    for c in db.scalars(
+        select(Client).where(Client.warehouse_id == ctx.warehouse.id).order_by(func.lower(Client.name))
+    ):
+        st = client_billing.statement(db, ctx.warehouse, c, y, m)
+        counts = {line["key"]: line["quantity"] for line in st["lines"]}
+        rows.append(
+            {
+                "client": st["client"],
+                "orders": counts.get("per_order", 0),
+                "units": counts.get("per_unit", 0),
+                "returns": counts.get("per_return", 0),
+                "total_cents": st["total_cents"],
+                "rates_set": st["rates_set"],
+            }
+        )
+    return {"month": f"{y:04d}-{m:02d}", "clients": rows, "rate_labels": {r.key: r.label for r in client_billing.RATES}}
+
+
+# ---------------------------------------------------------------------------
+# Client portal logins
+# ---------------------------------------------------------------------------
+
+
+def _client_login(u: User, m: Membership) -> dict[str, Any]:
+    return {
+        "id": str(u.id),
+        "email": u.email,
+        "name": u.name,
+        "active": m.active and u.active,
+        "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+    }
+
+
+@router.get("/clients/{client_id}/users")
+def list_client_users(
+    client_id: uuid.UUID, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
+) -> list[dict[str, Any]]:
+    c = _client(db, ctx, client_id)
+    rows = db.execute(
+        select(User, Membership)
+        .join(Membership, Membership.user_id == User.id)
+        .where(Membership.warehouse_id == ctx.warehouse.id, Membership.client_id == c.id)
+        .order_by(Membership.created_at)
+    )
+    return [_client_login(u, m) for u, m in rows]
+
+
+@router.post("/clients/{client_id}/users", status_code=201)
+def add_client_user(
+    client_id: uuid.UUID,
+    body: ClientUserIn,
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Give someone at the client a portal login: they sign in with Google
+    and see only this client's orders, returns, reports and statements."""
+    c = _client(db, ctx, client_id)
+    addr = auth_svc.normalize_email(str(body.email))
+    user = db.scalar(select(User).where(User.email == addr))
+    if user is not None:
+        existing = db.scalar(
+            select(Membership).where(Membership.user_id == user.id, Membership.warehouse_id == ctx.warehouse.id)
+        )
+        if existing and existing.role != UserRole.client and existing.active:
+            raise conflict("team_member", "That person is on your team. Use a different address for the portal.")
+        if not user.active:
+            raise conflict("account_disabled", "That account is disabled.")
+    else:
+        user = User(warehouse_id=ctx.warehouse.id, email=addr, name=(body.name or "").strip() or None)
+        db.add(user)
+        db.flush()
+    m = auth_svc.add_membership(db, user, ctx.warehouse.id, UserRole.client)
+    m.client_id, m.email_daily_summary, m.email_alerts = c.id, False, False
+    audit.record(
+        db,
+        ctx.actor,
+        "client.login_added",
+        warehouse_id=ctx.warehouse.id,
+        target_type="client",
+        target_id=c.id,
+        email=addr,
+    )
+    db.commit()
+    url = f"{get_settings().frontend_url.rstrip('/')}/app/login.html"
+    with contextlib.suppress(email.EmailError):
+        email.send(email.portal_invite_email(addr, url, ctx.warehouse.name, c.name))
+    return _client_login(user, m)
+
+
+@router.delete("/clients/{client_id}/users/{user_id}", status_code=204)
+def remove_client_user(
+    client_id: uuid.UUID,
+    user_id: uuid.UUID,
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
+) -> Response:
+    c = _client(db, ctx, client_id)
+    m = db.scalar(
+        select(Membership).where(
+            Membership.user_id == user_id, Membership.warehouse_id == ctx.warehouse.id, Membership.client_id == c.id
+        )
+    )
+    if not m:
+        raise not_found("Login not found.")
+    m.active = False
+    for s in db.scalars(
+        select(OwnerSession).where(
+            OwnerSession.user_id == user_id,
+            OwnerSession.revoked_at.is_(None),
+            OwnerSession.warehouse_id == ctx.warehouse.id,
+        )
+    ):
+        s.warehouse_id = None
+    audit.record(
+        db, ctx.actor, "client.login_removed", warehouse_id=ctx.warehouse.id, target_type="user", target_id=user_id
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------

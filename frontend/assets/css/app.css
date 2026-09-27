@@ -306,7 +306,9 @@ details.card > summary {
 }
 
 .t-right,
-.num {
+.num,
+.table th.t-right,
+.table td.t-right {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -1507,4 +1509,108 @@ a.tile-link {
 
 a.tile-link:hover {
   border-color: var(--blue);
+}
+
+/* ---------------------------------------------------------------------------
+   Client portal (/portal/)
+   --------------------------------------------------------------------------- */
+.portal {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.portal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.portal-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.portal-who {
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.portal-nav {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.portal-tab {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  color: var(--text-2);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.portal-tab.active {
+  background: var(--blue-soft);
+  color: var(--blue-strong);
+}
+
+.portal-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.portal-main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.portal-main .card {
+  margin-bottom: 16px;
+}
+
+.statement-total {
+  margin-top: 12px;
+  text-align: right;
+  font-size: 18px;
+}
+
+.proof-photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.proof-photos figure {
+  margin: 0;
+}
+
+.proof-photo {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 720px) {
+  .portal-nav {
+    margin-left: 0;
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .portal-main {
+    padding: 16px;
+  }
+}
+
+.rate-label {
+  min-width: 170px;
 }

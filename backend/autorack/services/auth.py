@@ -101,7 +101,7 @@ def add_membership(db: Session, user: User, warehouse_id: uuid.UUID, role: UserR
             role=role,
             active=True,
             email_daily_summary=is_owner,
-            email_alerts=role != UserRole.supervisor,
+            email_alerts=role not in (UserRole.supervisor, UserRole.client),
         )
         db.add(m)
     else:

@@ -189,6 +189,7 @@ def create_return(db: Session, wh: Warehouse, original: Order, actor: Actor, use
         created_by_user_id=user_id,
         kind=OrderKind.ret,
         return_of_order_id=original.id,
+        client_id=original.client_id,
         notes=f"Return of order {original.external_order_number or original.id}",
         actor=actor,
     )

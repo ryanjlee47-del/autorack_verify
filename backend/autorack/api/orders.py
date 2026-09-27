@@ -35,7 +35,7 @@ from ..models import (
     Worker,
     utcnow,
 )
-from ..services import audit, csv_import, floor, tasks, usage
+from ..services import audit, claim, csv_import, floor, tasks, usage
 from ..services import dashboard as dash
 from ..services import orders as order_svc
 from ..services.ratelimit import memory_limiter
@@ -884,6 +884,28 @@ def list_photos(
         }
         for pid, at, wid, oid, reason, number in rows
     ]
+
+
+@router.get("/orders/{order_id}/claim.pdf", response_class=Response)
+def claim_pack(
+    order_id: uuid.UUID, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+) -> Response:
+    """Everything that shows what went into this parcel, as one PDF, for a
+    carrier claim or a marketplace dispute."""
+    order = _get(db, ctx, order_id)
+    if order.kind != OrderKind.pick:
+        raise bad_request("not_for_task", "Claim packs are for picking orders.")
+    pdf = claim.build(db, ctx.warehouse, order, internal=True)
+    usage.track(db, ctx.warehouse.id, "orders.claim_pack")
+    audit.record(
+        db, ctx.actor, "order.claim_pack", warehouse_id=ctx.warehouse.id, target_type="order", target_id=order.id
+    )
+    db.commit()
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{claim.filename(order)}"'},
+    )
 
 
 @router.get("/orders/{order_id}/proof")

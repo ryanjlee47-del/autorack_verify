@@ -35,6 +35,7 @@ BODIES: dict[tuple[str, str], dict] = {
     ("PATCH", "/api/clients/{client_id}"): {"name": "x"},
     ("PATCH", "/api/inserts/{insert_id}"): {"name": "x"},
     ("PATCH", "/api/shifts/{shift_id}"): {},
+    ("POST", "/api/clients/{client_id}/users"): {"email": "portal@example.com"},
 }
 NO_BODY = {
     ("GET", "/api/orders/{order_id}"),
@@ -71,6 +72,11 @@ NO_BODY = {
     ("POST", "/api/restock/{task_id}/done"),
     ("POST", "/api/restock/{task_id}/cancel"),
     ("POST", "/api/worker/restock/{task_id}/done"),
+    ("GET", "/api/orders/{order_id}/claim.pdf"),
+    ("GET", "/api/clients/{client_id}/statement"),
+    ("GET", "/api/clients/{client_id}/statement.csv"),
+    ("GET", "/api/clients/{client_id}/users"),
+    ("DELETE", "/api/clients/{client_id}/users/{user_id}"),
 }
 
 
@@ -169,6 +175,8 @@ def test_every_id_route_hides_other_tenants(app, client, two_tenants):
             continue  # admin routes cross tenants by design; see test_admin_routes_need_operator
         if path.startswith(("/api/inbound/", "/api/public/")):
             continue  # authenticated by the secret in the URL itself; see test_integrations, test_share_monthly
+        if path.startswith("/api/portal/"):
+            continue  # client logins only, scoped to one client; see test_client_portal
         for method in operations:
             key = (method.upper(), path)
             assert key in BODIES or key in NO_BODY, f"New id route {key}: add it to this test"
@@ -201,6 +209,7 @@ def test_lists_and_reports_never_include_other_tenants(client, two_tenants):
         "/api/restock?status=all",
         "/api/shifts",
         "/api/exports/timesheet.csv",
+        "/api/billing/clients",
         "/api/dashboard/summary",
         "/api/dashboard/live",
         "/api/dashboard/workers",

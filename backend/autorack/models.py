@@ -80,6 +80,7 @@ class UserRole(enum.StrEnum):
     owner = "owner"  # everything, including billing, settings and the team
     manager = "manager"  # runs the operation; no billing, settings or team
     supervisor = "supervisor"  # floor lead: watches, resolves flags; no billing, no editing orders
+    client = "client"  # a 3PL's brand: only the client portal, only its own orders
 
 
 class OrderStatus(enum.StrEnum):
@@ -267,6 +268,8 @@ class Membership(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     email_daily_summary: Mapped[bool] = mapped_column(Boolean, default=True)
     email_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Client-portal logins: which 3PL client this person sees (role "client").
+    client_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clients.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped[User] = relationship()
@@ -515,6 +518,8 @@ class Client(Base):
     code: Mapped[str | None] = mapped_column(String(40))
     contact_email: Mapped[str | None] = mapped_column(String(320))
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # What the 3PL charges this client, in cents: see services/client_billing.py.
+    rates: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (Index("uq_clients_name", "warehouse_id", text("lower(name)"), unique=True),)

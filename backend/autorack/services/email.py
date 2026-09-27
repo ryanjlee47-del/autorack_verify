@@ -152,6 +152,30 @@ def invite_email(to: str, url: str, warehouse_name: str, inviter: str) -> Email:
     )
 
 
+def portal_invite_email(to: str, url: str, warehouse_name: str, client_name: str) -> Email:
+    footer = (
+        f"Sign in with the Google account for {to}. No Google account for this address? "
+        'Create one with your existing email at accounts.google.com/signup (choose "use my current email '
+        'address instead").'
+    )
+    return Email(
+        to=to,
+        subject=f"Your {client_name} orders at {warehouse_name}",
+        text=(
+            f"{warehouse_name} gave you a login to follow {client_name}'s orders: status, tracking, proof of "
+            f"what went in each box, returns and monthly reports.\n\nSign in with Google: {url}\n\n{footer}\n"
+        ),
+        html=_layout(
+            f"{client_name} at {warehouse_name}",
+            f"<b>{html.escape(warehouse_name)}</b> gave you a login to follow <b>{html.escape(client_name)}</b>'s "
+            "orders: status, tracking, proof of what went in each box, returns and monthly reports.",
+            "Sign in with Google",
+            url,
+            footer,
+        ),
+    )
+
+
 def _rows_html(rows: list[tuple[str, str]]) -> str:
     cells = "".join(
         f'<tr><td style="padding:7px 0;border-bottom:1px solid #e6e8ec;color:#4a5468">{html.escape(k)}</td>'

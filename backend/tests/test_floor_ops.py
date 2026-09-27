@@ -38,9 +38,11 @@ def test_rush_and_ship_by_order_the_phone_list(client):
     rows = client.get("/api/worker/orders", headers=phone.h).json()["orders"]
     assert [r["external_order_number"] for r in rows] == ["SO-RUSH", "SO-LATE", "SO-PLAIN"]
     assert rows[1]["late"] is True
-    by_due = lambda d: [
-        o["external_order_number"] for o in client.get(f"/api/orders?due={d}", headers=owner.h).json()["orders"]
-    ]  # noqa: E731
+
+    def by_due(d):
+        rows = client.get(f"/api/orders?due={d}", headers=owner.h).json()["orders"]
+        return [o["external_order_number"] for o in rows]
+
     assert by_due("rush") == ["SO-RUSH"]
     assert by_due("late") == ["SO-LATE"]
     assert set(by_due("today")) == {"SO-RUSH", "SO-LATE"}

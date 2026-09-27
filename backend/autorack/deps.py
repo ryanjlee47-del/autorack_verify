@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import get_db
 from .errors import ApiError, forbidden, unauthorized
-from .models import Device, Membership, OwnerSession, User, UserRole, Warehouse, Worker, WorkerSession
+from .models import Client, Device, Membership, OwnerSession, User, UserRole, Warehouse, Worker, WorkerSession
 from .services import access as access_svc
 from .services import agreement as agreement_svc
 from .services import auth as auth_svc
@@ -112,14 +112,49 @@ class OwnerContext:
         return self.role in (UserRole.owner, UserRole.manager)
 
 
-def current_member(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)) -> OwnerContext:
-    """Signed in and on this warehouse's team, whether or not the license
-    agreement is signed yet. Only the agreement routes use this directly."""
+def _member(uctx: UserContext, db: Session) -> OwnerContext:
     resolved = auth_svc.session_warehouse(db, uctx.user, uctx.session)
     if not resolved:
         raise forbidden("You don't have access to any warehouse.", "no_warehouse")
     wh, membership = resolved
     return OwnerContext(user=uctx.user, session=uctx.session, warehouse=wh, membership=membership, ip=uctx.ip)
+
+
+def current_member(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)) -> OwnerContext:
+    """Signed in and on this warehouse's team, whether or not the license
+    agreement is signed yet. Only the agreement routes use this directly.
+
+    A 3PL client's login is not on the team: it only reaches the portal."""
+    ctx = _member(uctx, db)
+    if ctx.role == UserRole.client:
+        raise forbidden("This login is for the client portal.", "client_portal_only")
+    return ctx
+
+
+@dataclass
+class ClientContext:
+    """A 3PL client's login: one client's orders at one warehouse, read-only."""
+
+    user: User
+    warehouse: Warehouse
+    client: Client
+    ip: str | None
+
+    @property
+    def actor(self) -> Actor:
+        return Actor("client", str(self.user.id), self.user.email, self.ip)
+
+
+def current_client(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)) -> ClientContext:
+    ctx = _member(uctx, db)
+    if ctx.role != UserRole.client or ctx.membership.client_id is None:
+        raise forbidden("The client portal is for your clients' logins.", "not_a_client")
+    client = db.get(Client, ctx.membership.client_id)
+    if client is None or client.warehouse_id != ctx.warehouse.id or not client.active:
+        raise forbidden("This client account is no longer active. Contact your warehouse.", "client_inactive")
+    if ctx.warehouse.closed_at:
+        raise forbidden("This warehouse's account is closed.", "warehouse_closed")
+    return ClientContext(user=uctx.user, warehouse=ctx.warehouse, client=client, ip=uctx.ip)
 
 
 def current_owner(ctx: OwnerContext = Depends(current_member), db: Session = Depends(get_db)) -> OwnerContext:

@@ -315,6 +315,13 @@ export async function orderDetailView(id) {
         !tally && (shipped || order.status === "completed") && canManage()
           ? h("button", { class: "btn", onclick: () => shareProof(order, reload) }, order.share_url ? "Shared link" : "Share proof")
           : null,
+        !tally && (shipped || order.status === "completed")
+          ? h("button", {
+            class: "btn",
+            title: "One PDF with the scan log, boxes, tracking and box photos, for a carrier claim or a marketplace dispute",
+            onclick: () => download(`/api/orders/${id}/claim.pdf`, `autorack-evidence-${order.external_order_number || id.slice(0, 8)}.pdf`),
+          }, "Evidence pack (PDF)")
+          : null,
         !tally && (shipped || order.status === "completed") && canManage()
           ? h("button", {
             class: "btn",

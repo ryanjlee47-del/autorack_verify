@@ -659,6 +659,7 @@ def purge(db: Session, wh: Warehouse, actor: Actor) -> dict[str, int]:
     gone("product_images", delete(ProductImage).where(ProductImage.warehouse_id == wid))
     gone("pack_inserts", delete(PackInsert).where(PackInsert.warehouse_id == wid))
     gone("products", delete(Product).where(Product.warehouse_id == wid))
+    db.execute(update(Membership).where(Membership.warehouse_id == wid).values(client_id=None))
     gone("clients", delete(Client).where(Client.warehouse_id == wid))
     gone("imports", delete(ImportBatch).where(ImportBatch.warehouse_id == wid))
     gone("connections", delete(Integration).where(Integration.warehouse_id == wid))

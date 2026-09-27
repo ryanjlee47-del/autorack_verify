@@ -131,7 +131,9 @@ def upgrade() -> None:
     )
     op.create_index("ix_shifts_warehouse_id", "shifts", ["warehouse_id"])
     op.create_index("ix_shifts_worker_id", "shifts", ["worker_id"])
-    op.create_index("uq_shifts_open", "shifts", ["worker_id"], unique=True, postgresql_where=sa.text("clock_out IS NULL"))
+    op.create_index(
+        "uq_shifts_open", "shifts", ["worker_id"], unique=True, postgresql_where=sa.text("clock_out IS NULL")
+    )
 
 
 def downgrade() -> None:

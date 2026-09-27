@@ -77,6 +77,11 @@ export function fmtMoney(cents, currency = "usd") {
     .format(cents / 100);
 }
 
+/** Money to the cent, for invoices and rates ($2.50, not $3). */
+export function fmtCents(cents, currency = "usd") {
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: currency.toUpperCase() }).format((cents || 0) / 100);
+}
+
 export function fmtDateTime(iso, timeZone) {
   if (!iso) return "–";
   const opts = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
