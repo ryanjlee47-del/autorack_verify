@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.orm import Session
 
 from .. import matching
@@ -277,7 +277,9 @@ def parse(content: bytes) -> ParseResult:
     )
 
 
-def existing_numbers(db: Session, warehouse_id: uuid.UUID, numbers: list[str]) -> set[str]:
+def existing_numbers(
+    db: Session, warehouse_id: uuid.UUID, numbers: list[str], *, include_cancelled: bool = False
+) -> set[str]:
     found: set[str] = set()
     for i in range(0, len(numbers), 1000):
         chunk = numbers[i : i + 1000]
@@ -287,7 +289,9 @@ def existing_numbers(db: Session, warehouse_id: uuid.UUID, numbers: list[str]) -
                 select(Order.external_order_number).where(
                     Order.warehouse_id == warehouse_id,
                     Order.external_order_number.in_(chunk),
-                    Order.status != OrderStatus.cancelled,
+                    # Automatic imports see the same file again and again: an
+                    # order cancelled here must not come back on the next pull.
+                    true() if include_cancelled else Order.status != OrderStatus.cancelled,
                 )
             )
             if n
@@ -347,6 +351,7 @@ def commit(
     user_id: uuid.UUID | None,
     skip_invalid_rows: bool = False,
     source: OrderSource = OrderSource.csv,
+    automatic: bool = False,
 ) -> ImportBatch:
     pr = parse(content)
     if pr.errors and not skip_invalid_rows:
@@ -355,7 +360,7 @@ def commit(
             f"The file has {len(pr.errors)} problem row(s). Fix them, or import with 'skip invalid rows'.",
             errors=pr.errors[:200],
         )
-    existing = existing_numbers(db, wh.id, [o.number for o in pr.orders])
+    existing = existing_numbers(db, wh.id, [o.number for o in pr.orders], include_cancelled=automatic)
     batch = ImportBatch(
         warehouse_id=wh.id,
         filename=(filename or "")[:255] or None,

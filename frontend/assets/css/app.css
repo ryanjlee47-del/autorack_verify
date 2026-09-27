@@ -1227,3 +1227,88 @@ body.tv {
   border-color: rgb(196 43 28 / 35%);
   box-shadow: inset 3px 0 0 var(--bad);
 }
+
+/* Connections */
+.connection-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.connection-name {
+  margin: 2px 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 12px 0;
+  font-size: 14px;
+}
+
+.facts dt {
+  color: var(--text-2);
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.break,
+.break code {
+  overflow-wrap: anywhere;
+}
+
+.danger-text {
+  color: var(--bad);
+}
+
+.kind-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.kind-btn {
+  padding: 18px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kind-btn:hover,
+.kind-btn:focus-visible {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.help-steps {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-2);
+}
+
+.help-steps li + li {
+  margin-top: 4px;
+}
+
+.copy-row .row {
+  flex-wrap: nowrap;
+}
+
+.copy-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.push-state {
+  margin-top: 6px;
+}

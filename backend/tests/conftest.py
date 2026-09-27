@@ -74,6 +74,7 @@ TABLES = [
     "scan_events",
     "order_line_items",
     "orders",
+    "integrations",
     "import_batches",
     "worker_sessions",
     "workers",

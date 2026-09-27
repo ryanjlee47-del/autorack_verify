@@ -95,6 +95,19 @@ class OrderSource(enum.StrEnum):
     manual = "manual"
     csv = "csv"
     sample = "sample"  # onboarding demo orders
+    shopify = "shopify"
+    shipstation = "shipstation"
+    woocommerce = "woocommerce"
+    sheet = "sheet"  # a Google Sheet / CSV link polled on a schedule
+    email = "email"  # a CSV attached to an email to the warehouse's import address
+    drop = "drop"  # a CSV posted to the import URL (watched-folder script, Zapier...)
+
+
+class IntegrationKind(enum.StrEnum):
+    shopify = "shopify"
+    shipstation = "shipstation"
+    woocommerce = "woocommerce"
+    sheet = "sheet"
 
 
 class ScanResult(enum.StrEnum):
@@ -147,6 +160,8 @@ class Warehouse(Base):
 
     # Short code a phone uses to link itself to this warehouse.
     join_code: Mapped[str] = mapped_column(String(16), unique=True)
+    # Secret in this warehouse's import email address and CSV drop URL.
+    import_token: Mapped[str | None] = mapped_column(String(40), unique=True)
 
     # Matching engine settings (see matching.py). Tier 6 is opt-in.
     loose_match_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -339,6 +354,39 @@ class ImportBatch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Integration(Base):
+    """A connected order source: a store (Shopify, ShipStation, WooCommerce)
+    or a spreadsheet link, pulled on a schedule by the job runner.
+
+    `config` holds what's safe to show (shop domain, store URL, sheet link);
+    `secret` holds the API credentials, encrypted (services/secretbox.py) and
+    never sent back to the browser.
+    """
+
+    __tablename__ = "integrations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    kind: Mapped[IntegrationKind] = mapped_column(_enum(IntegrationKind, "integration_kind"))
+    name: Mapped[str] = mapped_column(String(200))
+    config: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    secret: Mapped[str | None] = mapped_column(Text)
+    # Where the last pull got to (store-specific), so each pull is incremental.
+    cursor: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    push_tracking: Mapped[bool] = mapped_column(Boolean, default=True)
+    sync_minutes: Mapped[int] = mapped_column(Integer, default=10)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(1000))
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_created: Mapped[int] = mapped_column(Integer, default=0)
+    total_created: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Order(Base):
     __tablename__ = "orders"
 
@@ -366,6 +414,14 @@ class Order(Base):
     carrier: Mapped[str | None] = mapped_column(String(32))
     shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     shipped_by_worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
+    # Orders pulled from a store: where they came from, so tracking can go back.
+    integration_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("integrations.id"))
+    store_order_id: Mapped[str | None] = mapped_column(String(100))
+    # pending -> done | failed (retried) | skipped
+    tracking_push_status: Mapped[str | None] = mapped_column(String(16))
+    tracking_push_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    tracking_push_error: Mapped[str | None] = mapped_column(String(500))
+    tracking_pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     warehouse: Mapped[Warehouse] = relationship(back_populates="orders")
     line_items: Mapped[list[OrderLineItem]] = relationship(back_populates="order", order_by="OrderLineItem.line_no")
@@ -382,6 +438,11 @@ class Order(Base):
         ),
         Index("ix_orders_warehouse_status_created", "warehouse_id", "status", "created_at"),
         Index("ix_orders_warehouse_tracking", "warehouse_id", "tracking_number"),
+        Index(
+            "ix_orders_tracking_push",
+            "tracking_push_status",
+            postgresql_where=text("tracking_push_status IN ('pending', 'failed')"),
+        ),
     )
 
 

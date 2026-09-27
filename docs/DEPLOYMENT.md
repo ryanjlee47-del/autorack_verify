@@ -138,3 +138,33 @@ month for one service.)
 **Sentry (optional).** For richer crash reports (stack traces with context,
 release tracking), create a free project at sentry.io (platform: FastAPI),
 and set `SENTRY_DSN` on Render. Personal data (emails, IPs) isn't sent.
+
+## 9. Store connections and auto-import
+
+**Store connections (Shopify, ShipStation, WooCommerce, Google Sheets)** need
+nothing on the server: each owner connects their own store on the dashboard →
+**Connections**, with keys from their store (the page walks them through it).
+Keys are encrypted with a key derived from `SECRET_KEY`. If you ever rotate
+`SECRET_KEY`, every connection shows "Reconnect" and owners paste their keys
+again. The job runner (section 6) pulls orders every 10 minutes and sends
+tracking back after the label is scanned, so it must be running.
+
+**Import by email (optional).** Owners get an address like
+`orders+<secret>@…`. A CSV attached to an email sent there is imported.
+Set it up once with Postmark (postmarkapp.com, free for 100 emails a month):
+
+1. Create a server → **Default Inbound Stream**. Copy its inbound address,
+   e.g. `abc123@inbound.postmarkapp.com`.
+2. Webhook URL: `https://YOUR-API/api/inbound/email?key=<a long random secret>`.
+   Leave "Include raw email content" off.
+3. On Render set `INBOUND_EMAIL_ADDRESS` to the inbound address with `+{token}`
+   before the @ (`abc123+{token}@inbound.postmarkapp.com`) and
+   `INBOUND_EMAIL_SECRET` to the same secret as in the webhook URL.
+
+Mailgun Routes and SendGrid Inbound Parse also work (same URL). They post
+multipart forms, which Autorack reads too.
+
+**CSV drop URL and watched folder.** No setup needed. If the API isn't on the
+same host as `FRONTEND_URL` (Cloudflare Pages + Render), set `API_PUBLIC_URL`
+to the API's address (`https://YOUR-APP.onrender.com`) so the drop URL points
+to the right place.

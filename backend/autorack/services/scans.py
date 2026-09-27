@@ -47,6 +47,7 @@ from ..models import (
     WorkerSession,
     utcnow,
 )
+from . import integrations
 from . import orders as order_svc
 
 log = logging.getLogger("autorack.scans")
@@ -477,6 +478,7 @@ def _apply_ship(
     order.shipped_at = min(ev.client_scanned_at, utcnow())
     order.shipped_by_worker_id = sess.worker_id
     order.status = OrderStatus.shipped
+    integrations.queue_tracking(order)
     order_svc.bump(order)
     db.flush()
     return EventOutcome(str(ev.id), "ship", "applied", result="shipped")

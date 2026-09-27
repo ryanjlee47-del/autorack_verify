@@ -438,6 +438,14 @@ def order_summary(order: Order, lines: list[OrderLineItem]) -> dict[str, Any]:
         "shipped_at": order.shipped_at.isoformat() if order.shipped_at else None,
         "tracking_number": order.tracking_number,
         "carrier": order.carrier,
+        "tracking_push": {
+            "status": order.tracking_push_status,
+            "attempts": order.tracking_push_attempts,
+            "error": order.tracking_push_error,
+            "at": order.tracking_pushed_at.isoformat() if order.tracking_pushed_at else None,
+        }
+        if order.integration_id and order.tracking_push_status
+        else None,
         "line_count": len(lines),
         "units_expected": sum(li.expected_quantity for li in lines),
         "units_scanned": sum(min(li.scanned_quantity, li.expected_quantity) for li in lines),

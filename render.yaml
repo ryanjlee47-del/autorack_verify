@@ -44,5 +44,13 @@ services:
         sync: false
       - key: SENTRY_DSN
         sync: false
+      # Where the CSV drop URL points (the API's own address).
+      - key: API_PUBLIC_URL
+        sync: false
+      # Optional import-by-email; see docs/DEPLOYMENT.md section 9.
+      - key: INBOUND_EMAIL_ADDRESS
+        sync: false
+      - key: INBOUND_EMAIL_SECRET
+        sync: false
       - key: WEB_CONCURRENCY
         value: "1"

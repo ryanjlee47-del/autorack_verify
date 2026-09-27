@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     # deploys; turn off when the frontend lives on Cloudflare Pages.
     serve_frontend: bool = True
     frontend_dir: Path = REPO_ROOT / "frontend"
+    # Public address of this API, for URLs other systems call (the CSV drop
+    # URL). Empty means the same host as FRONTEND_URL.
+    api_public_url: str = ""
+
+    # Auto-import by email. INBOUND_EMAIL_ADDRESS is a template with {token},
+    # e.g. "abc123+{token}@inbound.postmarkapp.com"; the inbound provider
+    # posts each email to /api/inbound/email?key=INBOUND_EMAIL_SECRET.
+    inbound_email_address: str = ""
+    inbound_email_secret: str = ""
 
     # Owner auth
     magic_link_ttl_minutes: int = 15
@@ -128,6 +137,14 @@ class Settings(BaseSettings):
     @property
     def operator_email_set(self) -> set[str]:
         return {e.strip().lower() for e in self.operator_emails.split(",") if e.strip()}
+
+    @property
+    def api_url(self) -> str:
+        return (self.api_public_url or self.frontend_url).rstrip("/")
+
+    @property
+    def inbound_email_enabled(self) -> bool:
+        return "{token}" in self.inbound_email_address and len(self.inbound_email_secret) >= 16
 
     @property
     def stripe_enabled(self) -> bool:

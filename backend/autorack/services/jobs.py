@@ -49,7 +49,7 @@ from ..models import (
     Worker,
     utcnow,
 )
-from . import email, monitoring, ratelimit
+from . import email, integrations, monitoring, ratelimit
 from .audit import Actor
 from .dashboard import day_bounds, tz_of
 
@@ -642,6 +642,8 @@ def run_all(db: Session, now: datetime | None = None) -> dict[str, Any]:
                 ("account_emails", run_account_emails),
                 ("account_deletions", run_account_deletions),
                 ("error_alerts", monitoring.run_error_alerts),
+                ("store_sync", integrations.run_store_sync),
+                ("tracking_push", integrations.run_tracking_push),
             ):
                 try:
                     out[name] = job(db, now)

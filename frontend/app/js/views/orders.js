@@ -164,7 +164,8 @@ export async function orderDetailView(id) {
           order.completed_at ? ` · completed ${fmtDateTime(order.completed_at, tz())}` : ""),
         shipped ? h("p", { class: "ship-line" },
           "Shipped ", fmtDateTime(order.shipped_at, tz()), order.shipped_by ? ` by ${order.shipped_by}` : "",
-          " · ", order.carrier ? `${order.carrier} ` : "", h("span", { class: "mono strong" }, order.tracking_number)) : null),
+          " · ", order.carrier ? `${order.carrier} ` : "", h("span", { class: "mono strong" }, order.tracking_number)) : null,
+        pushLine(order, reload)),
       h("div", { class: "row" },
         shipped || order.status === "completed"
           ? h("button", { class: shipped ? "btn btn-primary" : "btn", onclick: () => openProof(id) }, "Shipment proof")
@@ -495,7 +496,10 @@ export async function importView() {
     h("a", { href: "#/orders", class: "back-link" }, "← Orders"),
     pageHeader("Import orders", "Export a pick list from your WMS or spreadsheet as CSV. Nothing is saved until you confirm.",
       h("button", { class: "btn", onclick: () => download("/api/orders/template.csv", "autorack-orders-template.csv") }, "Download template")),
-    card(null, fileInput, drop),
+    card(null, fileInput, drop,
+      h("p", { class: "muted small" }, "Uploading every day? ",
+        h("a", { href: "#/connections" }, "Connect Shopify, ShipStation, WooCommerce or a Google Sheet"),
+        ", or email the CSV in, and orders arrive by themselves.")),
     previewHost,
     card("Recent imports", historyHost),
   ]);
@@ -508,4 +512,24 @@ export async function importView() {
     { label: "Lines", align: "right", key: "lines_created" },
     { label: "Skipped (already existed)", align: "right", key: "orders_skipped" },
   ], imports, { empty: "No imports yet." }));
+}
+
+
+const SOURCE_LABELS = { shopify: "Shopify", shipstation: "ShipStation", woocommerce: "WooCommerce" };
+
+// Did the tracking number reach the store the order came from?
+function pushLine(order, reload) {
+  const p = order.tracking_push;
+  if (!p) return null;
+  const store = SOURCE_LABELS[order.source] || "the store";
+  if (p.status === "done") return h("p", { class: "push-state muted small" }, `✓ Tracking sent to ${store}.`);
+  if (p.status === "pending") return h("p", { class: "push-state muted small" }, `Sending tracking to ${store}…`);
+  if (p.status === "skipped") return h("p", { class: "push-state muted small" }, `Tracking not sent to ${store}: ${p.error || "turned off"}.`);
+  return h("p", { class: "push-state warn-text small" },
+    `Couldn't send tracking to ${store}${p.error ? `: ${p.error.replace(/\.$/, "")}` : ""}. `,
+    canManage() ? h("button", {
+      class: "link-btn small",
+      onclick: () => api(`/api/orders/${order.id}/push-tracking`, { method: "POST" })
+        .then((r) => { toast(r.ok ? "Sent." : r.error, r.ok ? "success" : "error"); reload(); }, fail),
+    }, "Try again") : null);
 }

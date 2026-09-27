@@ -3,6 +3,7 @@
 import { h, mount } from "../../shared/dom.js";
 import { agreementGate, loadAgreement } from "./agreement.js";
 import { api, ctx, fail, getToken, loadMe, logout, stopPolling, switchWarehouse, toLogin } from "./core.js";
+import { connectionsView } from "./views/connections.js";
 import { dashboardView } from "./views/dashboard.js";
 import { billingView, insightsView, settingsView } from "./views/more.js";
 import { boardView, reportsView } from "./views/reports.js";
@@ -24,6 +25,7 @@ const ROUTES = [
   [/^\/reports$/, (m, p) => reportsView(p)],
   [/^\/board$/, (m, p) => boardView(p)],
   [/^\/billing$/, (m, p) => billingView(p)],
+  [/^\/connections$/, () => connectionsView()],
   [/^\/settings$/, () => settingsView()],
 ];
 

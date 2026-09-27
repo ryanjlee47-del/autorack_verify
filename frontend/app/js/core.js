@@ -104,6 +104,7 @@ function nav() {
     ["#/workers", "Workers"],
     ["#/devices", "Phones"],
     ["#/insights", "Insights"],
+    ["#/connections", "Connections"],
     isOwner() ? ["#/billing", "Billing"] : null,
     ["#/settings", "Settings"],
   ].filter(Boolean);

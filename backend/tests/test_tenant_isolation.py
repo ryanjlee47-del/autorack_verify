@@ -14,6 +14,9 @@ import uuid
 import pytest
 from conftest import JPEG, add_worker, make_order, scan_event, signup, sync, worker_on_phone
 
+from autorack.db import get_sessionmaker
+from autorack.models import Integration, IntegrationKind
+
 # Bodies that pass validation, so the request reaches the tenancy check.
 BODIES: dict[tuple[str, str], dict] = {
     ("PATCH", "/api/orders/{order_id}"): {"notes": "x"},
@@ -24,6 +27,7 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/workers/{worker_id}/reset-pin"): {},
     ("PATCH", "/api/devices/{device_id}"): {"label": "x"},
     ("PATCH", "/api/team/{user_id}"): {"name": "x"},
+    ("PATCH", "/api/integrations/{integration_id}"): {"enabled": False},
 }
 NO_BODY = {
     ("GET", "/api/orders/{order_id}"),
@@ -35,7 +39,31 @@ NO_BODY = {
     ("POST", "/api/devices/{device_id}/revoke"),
     ("DELETE", "/api/aliases/{alias_id}"),
     ("GET", "/api/worker/orders/{order_id}"),
+    ("DELETE", "/api/integrations/{integration_id}"),
+    ("POST", "/api/integrations/{integration_id}/sync"),
+    ("POST", "/api/orders/{order_id}/push-tracking"),
 }
+
+
+def _connection_for(client, owner) -> str:
+    wh_id = client.get("/api/auth/me", headers=owner.h).json()["warehouse"]["id"]
+    with get_sessionmaker()() as db:
+        integ = Integration(
+            warehouse_id=uuid.UUID(wh_id),
+            kind=IntegrationKind.sheet,
+            name="B-SECRET-SHEET",
+            config={"url": "https://example.com/b.csv"},
+            cursor={},
+            enabled=True,
+            push_tracking=False,
+            sync_minutes=15,
+            failures=0,
+            last_created=0,
+            total_created=0,
+        )
+        db.add(integ)
+        db.commit()
+        return str(integ.id)
 
 
 @pytest.fixture
@@ -67,6 +95,7 @@ def two_tenants(client):
         "alias_id": client.get("/api/aliases", headers=b.h).json()[0]["id"],
         "photo_id": photo_id,
         "flag_event_id": flag["id"],
+        "integration_id": _connection_for(client, b),
     }
     return a, a_phone, b, ids
 
@@ -78,6 +107,8 @@ def test_every_id_route_hides_other_tenants(app, client, two_tenants):
     for path, operations in app.openapi()["paths"].items():
         if "{" not in path or path.startswith("/api/admin/"):
             continue  # admin routes cross tenants by design; see test_admin_routes_need_operator
+        if path.startswith("/api/inbound/"):
+            continue  # authenticated by the secret in the URL itself; see test_integrations
         for method in operations:
             key = (method.upper(), path)
             assert key in BODIES or key in NO_BODY, f"New id route {key}: add it to this test"
@@ -101,6 +132,7 @@ def test_lists_and_reports_never_include_other_tenants(client, two_tenants):
         "/api/aliases",
         "/api/audit",
         "/api/imports",
+        "/api/integrations",
         "/api/dashboard/summary",
         "/api/dashboard/live",
         "/api/dashboard/workers",

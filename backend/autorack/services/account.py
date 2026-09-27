@@ -42,6 +42,7 @@ from ..models import (
     Device,
     FeatureUsage,
     ImportBatch,
+    Integration,
     MagicLinkToken,
     Membership,
     NotificationSent,
@@ -569,6 +570,7 @@ def purge(db: Session, wh: Warehouse, actor: Actor) -> dict[str, int]:
     gone("order_lines", delete(OrderLineItem).where(OrderLineItem.warehouse_id == wid))
     gone("orders", delete(Order).where(Order.warehouse_id == wid))
     gone("imports", delete(ImportBatch).where(ImportBatch.warehouse_id == wid))
+    gone("connections", delete(Integration).where(Integration.warehouse_id == wid))
     gone("barcode_aliases", delete(BarcodeAlias).where(BarcodeAlias.warehouse_id == wid))
     gone("worker_sessions", delete(WorkerSession).where(WorkerSession.warehouse_id == wid))
     gone("workers", delete(Worker).where(Worker.warehouse_id == wid))
@@ -614,6 +616,7 @@ def purge(db: Session, wh: Warehouse, actor: Actor) -> dict[str, int]:
     wh.purged_at = utcnow()
     wh.name = f"Deleted warehouse {str(wid)[:8]}"
     wh.join_code = f"X{uuid.uuid4().hex[:15]}"
+    wh.import_token = None
     wh.owner_email = ""
     wh.stripe_customer_id = None
     wh.stripe_subscription_id = None
