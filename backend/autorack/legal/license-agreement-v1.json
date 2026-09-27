@@ -1,0 +1,20 @@
+{
+  "version": "v1",
+  "title": "Autorack Application License Agreement",
+  "file": "license-agreement-v1.pdf",
+  "sha256": "0a45e3aa97b408b42ff993f8ecb76263d0d60851ecfa808cf70ab655e66d0593",
+  "page_size": [612, 792],
+  "pages": 8,
+  "note": "Boxes are PDF points from the top-left corner: [page (1-based), x0, y0, x1, y1]. 'cover' blanks are whited out and replaced; 'line' fields are written on the signature line.",
+  "fields": {
+    "effective_date": {"box": [1, 404.9, 92.4, 510.5, 103.7], "mode": "cover", "size": 10.1},
+    "company_name": {"box": [1, 105.8, 103.9, 194.8, 115.2], "mode": "cover", "size": 10.1},
+    "company_address": {"box": [1, 289.8, 103.9, 371.4, 115.2], "mode": "cover", "size": 10.1},
+    "client_signature": {"box": [8, 317.0, 99.0, 472.8, 115.2], "mode": "line", "size": 17, "script": true},
+    "client_name": {"box": [8, 339.3, 126.7, 495.0, 138.0], "mode": "line", "size": 10.5},
+    "client_title": {"box": [8, 333.7, 149.8, 489.4, 161.0], "mode": "line", "size": 10.5},
+    "autorack_signature": {"box": [8, 66.7, 99.0, 222.5, 115.2], "mode": "line", "size": 17, "script": true},
+    "autorack_name": {"box": [8, 83.4, 126.7, 239.2, 138.0], "mode": "line", "size": 10.5},
+    "autorack_title": {"box": [8, 83.4, 149.8, 239.2, 161.0], "mode": "line", "size": 10.5}
+  }
+}

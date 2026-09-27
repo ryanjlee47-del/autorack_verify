@@ -158,11 +158,12 @@ function timezones() {
 
 export async function settingsView() {
   const owner = isOwner();
-  const [wh, team, aliases, audit] = await Promise.all([
+  const [wh, team, aliases, audit, agreement] = await Promise.all([
     api("/api/warehouse"),
     api("/api/team"),
     api("/api/aliases"),
     owner ? api("/api/audit?limit=100") : Promise.resolve([]),
+    api("/api/agreement"),
   ]);
   const reload = () => settingsView().catch(fail);
 
@@ -319,6 +320,8 @@ export async function settingsView() {
         },
       ], team)),
 
+    card("License agreement", agreementCard(agreement)),
+
     card("Warehouses",
       h("p", { class: "muted small" }, "One sign-in can run several sites. Each warehouse has its own orders, workers, phones and team, and its own $175/month subscription."),
       table([
@@ -391,4 +394,16 @@ async function addWarehouse() {
   } catch (e) {
     fail(e);
   }
+}
+
+function agreementCard(a) {
+  const sig = a.signature;
+  if (!sig) return h("p", { class: "muted" }, "Not signed yet.");
+  return h("div", { class: "stack" },
+    h("p", null, "Signed by ", h("strong", null, sig.signer_name), `, ${sig.signer_title}, for `, h("strong", null, sig.company_name),
+      ` on ${fmtDateTime(sig.signed_at, tz())} (version ${sig.version}).`),
+    h("p", { class: "muted small" }, "The signed copy includes a signature certificate: who signed, when, from where, and a fingerprint of the exact document."),
+    h("div", { class: "row" },
+      h("button", { class: "btn", onclick: () => download("/api/agreement/signed.pdf", "Autorack-License-Agreement-signed.pdf") }, "Download signed copy"),
+      h("a", { class: "btn btn-ghost", href: "/privacy.html", target: "_blank", rel: "noopener" }, "Privacy policy")));
 }

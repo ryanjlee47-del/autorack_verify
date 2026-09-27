@@ -37,6 +37,11 @@ export async function api(path, opts = {}) {
       toLogin();
       return new Promise(() => {}); // navigation is under way
     }
+    if (e instanceof ApiError && e.code === "agreement_required" && !path.startsWith("/api/agreement")) {
+      // A new version of the agreement was published: the boot gate shows it.
+      location.reload();
+      return new Promise(() => {});
+    }
     throw e;
   }
 }

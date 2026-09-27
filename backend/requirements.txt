@@ -12,3 +12,6 @@ python-multipart==0.0.32
 stripe==15.6.1
 httpx==0.28.1
 segno==1.6.6
+# Stamping the signed license agreement (both BSD-licensed)
+pypdf==6.19.0
+reportlab==5.0.1

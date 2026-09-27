@@ -17,6 +17,7 @@ from .db import get_db
 from .errors import ApiError, forbidden, unauthorized
 from .models import Device, Membership, OwnerSession, User, UserRole, Warehouse, Worker, WorkerSession
 from .services import access as access_svc
+from .services import agreement as agreement_svc
 from .services import auth as auth_svc
 from .services.audit import Actor
 
@@ -111,12 +112,22 @@ class OwnerContext:
         return self.role in (UserRole.owner, UserRole.manager)
 
 
-def current_owner(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)) -> OwnerContext:
+def current_member(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)) -> OwnerContext:
+    """Signed in and on this warehouse's team, whether or not the license
+    agreement is signed yet. Only the agreement routes use this directly."""
     resolved = auth_svc.session_warehouse(db, uctx.user, uctx.session)
     if not resolved:
         raise forbidden("You don't have access to any warehouse.", "no_warehouse")
     wh, membership = resolved
     return OwnerContext(user=uctx.user, session=uctx.session, warehouse=wh, membership=membership, ip=uctx.ip)
+
+
+def current_owner(ctx: OwnerContext = Depends(current_member), db: Session = Depends(get_db)) -> OwnerContext:
+    """The dashboard's gate: nothing works until an owner has signed the
+    current license agreement for this warehouse."""
+    if not agreement_svc.is_signed(db, ctx.warehouse.id):
+        raise forbidden("An owner of this warehouse needs to sign the license agreement first.", "agreement_required")
+    return ctx
 
 
 def require_owner_role(ctx: OwnerContext = Depends(current_owner)) -> OwnerContext:

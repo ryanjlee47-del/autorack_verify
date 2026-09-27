@@ -16,15 +16,20 @@ from ..db import get_db
 from ..deps import OwnerContext, UserContext, client_ip, current_owner, current_user
 from ..errors import ApiError, bad_request, forbidden
 from ..models import Membership
+from ..services import agreement as agreement_svc
 from ..services import auth as auth_svc
 from ..services import email, ratelimit
 from ..services.access import evaluate
 from ..services.audit import Actor
+from .legal import SignIn
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-class SignupIn(BaseModel):
+class SignupIn(SignIn):
+    """A new warehouse and its first owner, who signs the license agreement
+    as part of creating the account: no account exists unsigned."""
+
     warehouse_name: str = Field(min_length=1, max_length=200)
     email: EmailStr
     timezone: str = "UTC"
@@ -47,6 +52,7 @@ def signup(body: SignupIn, request: Request, db: Session = Depends(get_db)) -> d
     tz = body.timezone if body.timezone in available_timezones() else "UTC"
     if not body.warehouse_name.strip():
         raise bad_request("name_required", "Enter your warehouse's name.")
+    agreement_svc.clean(body.details())  # refuse before creating anything
     wh, user = auth_svc.create_warehouse(
         db,
         name=body.warehouse_name,
@@ -54,6 +60,7 @@ def signup(body: SignupIn, request: Request, db: Session = Depends(get_db)) -> d
         timezone=tz,
         actor=Actor("user", None, str(body.email), ip),
     )
+    agreement_svc.sign(db, wh, user, body.details(), ip=ip, user_agent=request.headers.get("user-agent"))
     url = auth_svc.issue_magic_link(db, user, ip)
     db.commit()
     try:
@@ -97,11 +104,17 @@ def me(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db))
         "warehouse": None,
         "membership": None,
         "access": None,
+        "agreement": None,
     }
     if current:
         wh, m = current
         acc = evaluate(wh)
         out["user"]["role"] = m.role.value  # type: ignore[index]
+        out["agreement"] = {
+            "required": not agreement_svc.is_signed(db, wh.id),
+            "can_sign": m.role.value == "owner",
+            "version": agreement_svc.CURRENT_VERSION,
+        }
         out["membership"] = {
             "role": m.role.value,
             "email_daily_summary": m.email_daily_summary,

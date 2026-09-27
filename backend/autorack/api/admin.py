@@ -39,6 +39,7 @@ from ..models import (
     Worker,
     utcnow,
 )
+from ..services import agreement as agreement_svc
 from ..services import audit, jobs, onboarding, usage
 from ..services import dashboard as dash
 from ..services.access import evaluate
@@ -270,6 +271,11 @@ def warehouse_detail(
             "loose_match_enabled": wh.loose_match_enabled,
         },
         "onboarding": onboarding.checklist(db, wh),
+        "agreement": {
+            "signed_current": agreement_svc.is_signed(db, wh.id),
+            "version": agreement_svc.CURRENT_VERSION,
+            "signature": agreement_svc.signature_dict(agreement_svc.signature_for_any(db, wh.id)),
+        },
         "summary": dash.summary(db, wh),
         "trend": dash.trend(db, wh, 14)["series"],
         "usage": [u for u in usage.totals(db, 30, wh.id) if u["count"]],
@@ -320,6 +326,23 @@ def set_status(
     )
     db.commit()
     return warehouse_detail(warehouse_id, uctx, db)
+
+
+@router.get("/warehouses/{warehouse_id}/agreement.pdf", response_class=Response)
+def warehouse_agreement(
+    warehouse_id: uuid.UUID, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+) -> Response:
+    sig = agreement_svc.signature_for_any(db, warehouse_id)
+    if not sig:
+        raise not_found("This warehouse hasn't signed the agreement.")
+    return Response(
+        content=sig.signed_pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{agreement_svc.signed_filename(sig)}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.get("/usage")
@@ -400,6 +423,7 @@ def activity(
     imports, billing changes. Not scans (see the per-warehouse numbers)."""
     notable = [
         "warehouse.created",
+        "agreement.signed",
         "user.login",
         "orders.imported",
         "team.invited",

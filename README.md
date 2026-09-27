@@ -65,6 +65,12 @@ Roles: **owner** (everything incl. billing), **manager** (orders, workers,
 phones), **supervisor** (watches and resolves problems; read-only otherwise).
 One sign-in can run **several warehouses** and switch between them.
 
+Sign-up requires reading and **e-signing the license agreement** (the PDF,
+with the signer's name and company filled into it live; the signed copy with a
+signature certificate is stored and downloadable). Warehouses that haven't
+signed the current version are asked to before the dashboard opens. A draft
+privacy policy is at `/privacy.html`.
+
 New warehouses get a **setup checklist** and can load 12 sample orders with a
 printable barcode sheet, to try scanning before importing anything.
 

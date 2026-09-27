@@ -59,3 +59,26 @@ python -m autorack.cli <command> --help
 - Deleting a customer's data is a manual SQL task by design. Scan and audit
   tables are append-only; `TRUNCATE` is the only way to clear them, and
   should be done deliberately.
+
+## License agreement
+
+Every warehouse must e-sign the Application License Agreement: new owners sign
+it as step 2 of sign-up (no account is created without it), and warehouses
+that existed before, or were created with the CLI, are asked to sign by an
+owner on their next sign-in. Until then the dashboard is locked; phones keep
+scanning.
+
+- The signed copy (the PDF with the signer's details stamped in, plus a
+  signature certificate page: document SHA-256, signer, company, time, IP,
+  browser) is stored in `agreement_signatures`, which can't be edited or
+  deleted. Owners download it from Settings; you can from the operator console.
+- To have Autorack's side of the signature block filled in, set
+  `AGREEMENT_COUNTERSIGNER_NAME` and `AGREEMENT_COUNTERSIGNER_TITLE`.
+- **Publishing a new version:** add `backend/autorack/legal/license-agreement-v2.pdf`
+  and a `-v2.json` next to it (copy v1's; update `sha256`, and the blank
+  positions if the layout changed), run
+  `python backend/scripts/render_agreement_pages.py v2` (needs `pip install pypdfium2`),
+  copy the PDF to `frontend/legal/`, and set `CURRENT_VERSION = "v2"` in
+  `services/agreement.py`. Every owner is asked to sign again on next sign-in.
+  Never edit a published PDF in place: the app refuses to start signing if a
+  file no longer matches its recorded SHA-256.

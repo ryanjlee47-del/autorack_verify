@@ -502,7 +502,7 @@ body {
 
 .foot-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
   gap: 40px;
   padding-top: 56px;
   padding-bottom: 40px;
@@ -602,4 +602,43 @@ body {
   .nav-signin {
     display: none;
   }
+}
+
+/* Legal pages */
+
+.legal-body {
+  max-width: 760px;
+}
+
+.legal-body h1 {
+  margin: 4px 0 6px;
+  font-size: 36px;
+}
+
+.legal-body h2 {
+  margin: 36px 0 10px;
+  font-size: 21px;
+}
+
+.legal-body h3 {
+  margin: 20px 0 6px;
+  font-size: 16px;
+}
+
+.legal-body p,
+.legal-body li {
+  color: var(--text-2);
+  line-height: 1.65;
+}
+
+.legal-body ul {
+  padding-left: 20px;
+}
+
+.legal-draft {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-weight: 600;
 }

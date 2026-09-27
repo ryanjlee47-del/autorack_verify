@@ -9,6 +9,7 @@ from conftest import (
     make_order,
     scan,
     scan_event,
+    sign_agreement,
     signup,
     sync,
     worker_on_phone,
@@ -71,6 +72,9 @@ def test_one_person_several_warehouses(client):
     south_id = r.json()["id"]
     me = client.get("/api/auth/me", headers=owner.h).json()
     assert me["warehouse"]["name"] == "South Dock"  # switched to the new one
+    assert me["agreement"]["required"] is True  # each warehouse signs for itself
+    assert client.get("/api/orders", headers=owner.h).json()["detail"]["code"] == "agreement_required"
+    sign_agreement(client, owner)
     assert sorted(w["name"] for w in me["warehouses"]) == ["North Dock", "South Dock"]
     make_order(client, owner, number="SOUTH-1")
 

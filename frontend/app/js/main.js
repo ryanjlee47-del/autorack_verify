@@ -1,7 +1,8 @@
 // Owner dashboard entry point: hash router.
 
 import { h, mount } from "../../shared/dom.js";
-import { ctx, fail, getToken, loadMe, logout, stopPolling, toLogin } from "./core.js";
+import { agreementGate, loadAgreement } from "./agreement.js";
+import { api, ctx, fail, getToken, loadMe, logout, stopPolling, switchWarehouse, toLogin } from "./core.js";
 import { dashboardView } from "./views/dashboard.js";
 import { billingView, insightsView, settingsView } from "./views/more.js";
 import { boardView, reportsView } from "./views/reports.js";
@@ -64,6 +65,19 @@ async function boot() {
     return;
   }
   document.title = `${ctx.me.warehouse.name} · Autorack`;
+  if (ctx.me.agreement && ctx.me.agreement.required) {
+    const host = document.getElementById("app");
+    mount(host, h("div", { class: "boot" }, h("div", { class: "skeleton" })));
+    agreementGate(host, {
+      me: ctx.me,
+      info: await loadAgreement(),
+      api,
+      onSigned: () => location.reload(),
+      onSignOut: logout,
+      onSwitch: (id) => switchWarehouse(id).catch(fail),
+    });
+    return;
+  }
   window.addEventListener("hashchange", route);
   // Keep the access banner honest (e.g. after a checkout completes elsewhere).
   setInterval(() => loadMe().catch(() => {}), 5 * 60 * 1000);

@@ -567,29 +567,34 @@ def run_all(db: Session, now: datetime | None = None) -> dict[str, Any]:
     """Run every job once. Safe to call concurrently (advisory lock) and
     repeatedly (notifications are claimed once)."""
     now = now or utcnow()
-    got = db.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": ADVISORY_LOCK_ID}).scalar()
-    if not got:
-        db.rollback()
-        return {"skipped": "another runner is busy"}
-    out: dict[str, Any] = {}
-    try:
-        for name, job in (
-            ("daily_summaries", run_daily_summaries),
-            ("flag_alerts", run_flag_alerts),
-            ("error_spikes", run_error_spikes),
-            ("account_emails", run_account_emails),
-        ):
-            try:
-                out[name] = job(db, now)
-            except Exception:
-                db.rollback()
-                log.exception("job %s failed", name)
-                out[name] = "error"
-        if now.minute == 0:
-            out["pruned"] = prune(db, now)
-    finally:
-        db.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": ADVISORY_LOCK_ID})
-        db.commit()
+    # The lock lives on its own connection for the whole run. The jobs commit
+    # as they go, and a session hands its connection back to the pool on
+    # commit, so a lock taken through `db` would be released (or not) on
+    # whichever connection the session happens to hold later.
+    with db.get_bind().connect() as lock_conn:
+        got = lock_conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": ADVISORY_LOCK_ID}).scalar()
+        if not got:
+            lock_conn.rollback()
+            return {"skipped": "another runner is busy"}
+        out: dict[str, Any] = {}
+        try:
+            for name, job in (
+                ("daily_summaries", run_daily_summaries),
+                ("flag_alerts", run_flag_alerts),
+                ("error_spikes", run_error_spikes),
+                ("account_emails", run_account_emails),
+            ):
+                try:
+                    out[name] = job(db, now)
+                except Exception:
+                    db.rollback()
+                    log.exception("job %s failed", name)
+                    out[name] = "error"
+            if now.minute == 0:
+                out["pruned"] = prune(db, now)
+        finally:
+            lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": ADVISORY_LOCK_ID})
+            lock_conn.commit()
     return out
 
 

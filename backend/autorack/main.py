@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from starlette.types import Scope
 
 from . import __version__
-from .api import admin, auth, orders, people, reporting, warehouse, worker
+from .api import admin, auth, legal, orders, people, reporting, warehouse, worker
 from .config import get_settings
 from .db import get_db, get_sessionmaker
 from .services import jobs
@@ -176,7 +176,7 @@ def create_app() -> FastAPI:
             "version": __version__,
         }
 
-    for module in (auth, warehouse, people, orders, reporting, worker, admin):
+    for module in (auth, legal, warehouse, people, orders, reporting, worker, admin):
         api.include_router(module.router)
     api.include_router(admin.cron_router)
     app.include_router(api)

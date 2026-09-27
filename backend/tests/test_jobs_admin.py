@@ -28,7 +28,9 @@ def summaries(addr: str) -> list[email.Email]:
 
 def run(db, now=None):
     db.expire_all()
-    return jobs.run_all(db, now)
+    out = jobs.run_all(db, now)
+    assert "skipped" not in out, out  # the runner lock must never leak
+    return out
 
 
 def local_evening(hour: int = 18) -> datetime:
@@ -246,3 +248,22 @@ def test_operator_who_also_owns_a_warehouse(client, monkeypatch):
 def test_unknown_emails_still_get_no_account(client, db):
     client.post("/api/auth/magic-link", json={"email": "random@example.com"})
     assert db.scalar(select(User).where(User.email == "random@example.com")) is None
+
+
+def test_runner_lock_is_released_even_when_jobs_commit(client, db):
+    owner = signup(client)
+    set_wh(db, owner, trial_ends_at=utcnow() + timedelta(days=2))
+    for _ in range(5):
+        assert "skipped" not in run(db)
+
+
+def test_concurrent_runner_is_skipped(db):
+    from sqlalchemy import text as sql
+
+    with db.get_bind().connect() as other:
+        other.execute(sql("SELECT pg_advisory_lock(:k)"), {"k": jobs.ADVISORY_LOCK_ID})
+        try:
+            assert jobs.run_all(db) == {"skipped": "another runner is busy"}
+        finally:
+            other.execute(sql("SELECT pg_advisory_unlock(:k)"), {"k": jobs.ADVISORY_LOCK_ID})
+            other.commit()

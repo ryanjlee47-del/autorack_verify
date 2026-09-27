@@ -58,6 +58,7 @@ def cmd_create_warehouse(db: Session, a: argparse.Namespace) -> None:
     db.commit()
     print(f"Created {wh.name} ({wh.id}), status={wh.subscription_status.value}")
     print(f"Device setup code: {wh.join_code}")
+    print("The owner signs the license agreement on first sign-in, before the dashboard opens.")
     print(f"One-time sign-in link for {user.email} (expires in {get_settings().magic_link_ttl_minutes} min):\n{url}")
 
 
@@ -171,6 +172,23 @@ def cmd_seed_demo(db: Session, a: argparse.Namespace) -> None:
             external_order_number=number,
             lines=[order_svc.LineInput(b, q, sku, d, loc) for b, q, d, sku, loc in lines],
         )
+    from .services import agreement as agreement_svc
+
+    agreement_svc.sign(
+        db,
+        wh,
+        user,
+        agreement_svc.SignerDetails(
+            signer_name="Demo Owner",
+            signer_title="Owner",
+            company_name="Dockside Demo Co.",
+            company_address="1 Demo Way, Oakland, CA 94607",
+            agreement_version=agreement_svc.CURRENT_VERSION,
+            accepted=True,
+        ),
+        ip=None,
+        user_agent="autorack seed-demo",
+    )
     url = auth_svc.issue_magic_link(db, user, None)
     db.commit()
     s = get_settings()

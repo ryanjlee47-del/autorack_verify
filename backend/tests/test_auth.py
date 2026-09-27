@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from conftest import add_worker, last_link_token, link_phone, login, signup
+from conftest import AGREEMENT, add_worker, last_link_token, link_phone, login, signup
 from sqlalchemy import update
 
 from autorack.models import MagicLinkToken, utcnow
@@ -60,7 +60,7 @@ def test_magic_link_rate_limited_per_email(client):
 
 def test_duplicate_signup_rejected(client):
     owner = signup(client)
-    r = client.post("/api/auth/signup", json={"warehouse_name": "Again", "email": owner.email.upper()})
+    r = client.post("/api/auth/signup", json={"warehouse_name": "Again", "email": owner.email.upper(), **AGREEMENT})
     assert r.status_code == 409
 
 
@@ -79,7 +79,7 @@ def test_signup_can_be_closed(client, monkeypatch):
     from autorack.config import get_settings
 
     monkeypatch.setattr(get_settings(), "signup_enabled", False)
-    r = client.post("/api/auth/signup", json={"warehouse_name": "X", "email": "x@example.com"})
+    r = client.post("/api/auth/signup", json={"warehouse_name": "X", "email": "x@example.com", **AGREEMENT})
     assert r.status_code == 403
 
 

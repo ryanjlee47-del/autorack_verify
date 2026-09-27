@@ -4,6 +4,7 @@
 
 import { request } from "../../shared/api.js";
 import { brandLockup, h, mount } from "../../shared/dom.js";
+import { agreementSigner, loadAgreement } from "./agreement.js";
 import { getToken, setToken } from "./core.js";
 
 const root = document.getElementById("auth");
@@ -69,36 +70,64 @@ function loginForm() {
   email.focus();
 }
 
-function signupForm() {
+function signupForm(saved = {}) {
+  root.classList.remove("auth-card-wide");
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const name = h("input", { class: "input", id: "wh", required: true, maxlength: "200", placeholder: "e.g. Dockside Distribution" });
-  const email = h("input", { class: "input", type: "email", id: "email", required: true, autocomplete: "email", placeholder: "you@company.com" });
-  const err = h("p", { class: "form-error", role: "alert" });
-  const btn = h("button", { class: "btn btn-primary btn-lg", type: "submit" }, "Start free trial");
+  const name = h("input", { class: "input", id: "wh", required: true, maxlength: "200", placeholder: "e.g. Dockside Distribution", value: saved.warehouse_name || "" });
+  const email = h("input", { class: "input", type: "email", id: "email", required: true, autocomplete: "email", placeholder: "you@company.com", value: saved.email || "" });
+  const btn = h("button", { class: "btn btn-primary btn-lg", type: "submit" }, "Continue");
   frame(
+    h("p", { class: "auth-step" }, "Step 1 of 2"),
     h("h1", null, "Start your free trial"),
     h("p", { class: "muted" }, "14 days free, no card needed. Then $175/month per warehouse, flat."),
     h("form", {
       class: "stack",
-      onsubmit: async (e) => {
+      onsubmit: (e) => {
         e.preventDefault();
-        btn.disabled = true;
-        err.textContent = "";
-        try {
-          await request("/api/auth/signup", { method: "POST", body: { warehouse_name: name.value, email: email.value, timezone: tz } });
-          sent(email.value);
-        } catch (ex) {
-          err.textContent = ex.message;
-          btn.disabled = false;
-        }
+        signAgreementStep({ warehouse_name: name.value.trim(), email: email.value.trim(), timezone: tz });
       },
     },
     h("label", { for: "wh" }, "Warehouse name"), name,
     h("label", { for: "email" }, "Your work email"), email,
     h("p", { class: "muted small" }, `Timezone: ${tz} (change it later in Settings).`),
-    err, btn),
+    btn),
+    h("p", { class: "muted small" }, "Next you'll read and sign our license agreement. ",
+      h("a", { href: "/privacy.html", target: "_blank", rel: "noopener" }, "Privacy policy")),
     h("p", { class: "muted small" }, "Already have an account? ", h("a", { href: "/app/login.html" }, "Sign in")));
   name.focus();
+}
+
+async function signAgreementStep(account) {
+  root.classList.add("auth-card-wide");
+  frame(h("h1", null, "Loading the agreement…"), h("div", { class: "skeleton" }));
+  let info;
+  try {
+    info = await loadAgreement();
+  } catch (e) {
+    frame(h("h1", null, "Couldn't load the agreement"), h("p", { class: "banner banner-bad" }, e.message),
+      h("button", { class: "btn", onclick: () => signupForm(account) }, "Back"));
+    return;
+  }
+  frame(
+    h("p", { class: "auth-step" }, "Step 2 of 2"),
+    h("h1", null, "Read and sign the license agreement"),
+    h("p", { class: "muted" }, `Your account for ${account.warehouse_name} is created as soon as you sign. `,
+      "Take your time; you can open the PDF in a new tab to read it full-size."),
+    agreementSigner({
+      info,
+      timeZone: account.timezone,
+      submitLabel: "Sign and create account",
+      onBack: () => signupForm(account),
+      onSubmit: async (details) => {
+        await request("/api/auth/signup", { method: "POST", body: { ...account, ...details } });
+        root.classList.remove("auth-card-wide");
+        frame(
+          h("h1", null, "Signed. Check your email"),
+          h("p", null, "Your account is ready. We sent a sign-in link to ", h("strong", null, account.email), "."),
+          h("p", { class: "muted small" }, "A copy of the signed agreement is in Settings once you're in."));
+      },
+    }));
+  window.scrollTo(0, 0);
 }
 
 const token = new URLSearchParams(location.hash.slice(1)).get("token");

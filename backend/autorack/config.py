@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     jobs_enabled: bool = True
     cron_secret: str = ""
 
+    # License agreement. Owners must e-sign the current version before using
+    # the dashboard. Autorack's side of the signature block, if set, is
+    # stamped onto every signed copy.
+    agreement_countersigner_name: str = ""
+    agreement_countersigner_title: str = ""
+
     log_level: str = "INFO"
 
     @field_validator("database_url")

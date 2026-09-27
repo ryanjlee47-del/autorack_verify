@@ -60,6 +60,7 @@ def _schema() -> Iterator[None]:
 
 
 TABLES = [
+    "agreement_signatures",
     "feature_usage",
     "notifications_sent",
     "photos",
@@ -151,9 +152,30 @@ def last_link_token(to: str) -> str:
     raise AssertionError(f"no email to {to}")
 
 
+AGREEMENT = {
+    "signer_name": "Pat Owner",
+    "signer_title": "Owner",
+    "company_name": "Acme Logistics LLC",
+    "company_address": "1 Dock St, Oakland, CA 94607",
+    "agreement_version": "v1",
+    "accept_agreement": True,
+    "viewed_seconds": 95,
+}
+
+
+def sign_agreement(client: TestClient, owner: Owner) -> dict[str, Any]:
+    """Sign for the warehouse the owner is looking at (existing or new ones)."""
+    r = client.post("/api/agreement/sign", json=AGREEMENT, headers=owner.h)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def signup(client: TestClient, name: str = "Acme Warehouse", addr: str | None = None) -> Owner:
     addr = addr or f"owner-{uuid.uuid4().hex[:8]}@example.com"
-    r = client.post("/api/auth/signup", json={"warehouse_name": name, "email": addr, "timezone": "America/Chicago"})
+    r = client.post(
+        "/api/auth/signup",
+        json={"warehouse_name": name, "email": addr, "timezone": "America/Chicago", **AGREEMENT},
+    )
     assert r.status_code == 201, r.text
     r = client.post("/api/auth/verify", json={"token": last_link_token(addr)})
     assert r.status_code == 200, r.text

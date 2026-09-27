@@ -5,7 +5,9 @@ import {
   brandLockup, confirmDialog, fmtAgo, fmtDate, fmtDateTime, fmtMoney, fmtNumber, fmtPercent, h, mount, toast,
 } from "../../shared/dom.js";
 import { columnChart } from "../../app/js/chart.js";
-import { api, card, ctx, fail, getToken, loadMe, logout, photoThumb, poll, stopPolling, table, toLogin } from "../../app/js/core.js";
+import {
+  api, card, ctx, download, fail, getToken, loadMe, logout, photoThumb, poll, stopPolling, table, toLogin,
+} from "../../app/js/core.js";
 import { REASONS } from "../../app/js/views/flags.js";
 
 const TABS = [
@@ -177,6 +179,12 @@ async function warehouseDetail(id) {
           { label: "Role", key: "role" },
           { label: "Last sign-in", render: (u) => h("span", { class: "muted" }, fmtAgo(u.last_login_at)) },
         ], w.members))),
+    card("License agreement", w.agreement.signature
+      ? h("div", { class: "row-between" },
+        h("span", null, `Signed by ${w.agreement.signature.signer_name} (${w.agreement.signature.signer_title}) for ${w.agreement.signature.company_name}, ${fmtDateTime(w.agreement.signature.signed_at)}, version ${w.agreement.signature.version}`,
+          w.agreement.signed_current ? "" : h("span", { class: "badge badge-warn badge-inline" }, "needs the current version")),
+        h("button", { class: "btn btn-sm", onclick: () => download(`/api/admin/warehouses/${id}/agreement.pdf`, "agreement.pdf") }, "Download signed copy"))
+      : h("p", { class: "muted" }, "Not signed yet. The owner is asked to sign on their next sign-in.")),
     card("Photos from the floor", photoGrid(w.photos, false)),
     card("Recent activity",
       table([
@@ -229,7 +237,7 @@ async function activity(params) {
   const label = {
     "warehouse.created": "Signed up", "user.login": "Signed in", "orders.imported": "Imported orders",
     "team.invited": "Invited someone", "billing.status_changed": "Billing changed", "warehouse.status_set": "Plan set by operator",
-    "device.linked": "Linked a phone", "worker.created": "Added a worker",
+    "device.linked": "Linked a phone", "worker.created": "Added a worker", "agreement.signed": "Signed the agreement",
   };
   shell("#/activity",
     h("div", { class: "page-head" }, h("div", null, h("h1", null, "Activity"), h("p", { class: "muted" }, "Sign-ups, sign-ins, imports and billing changes across all warehouses.")), search),

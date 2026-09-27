@@ -544,6 +544,38 @@ class StripeEvent(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AgreementSignature(Base):
+    """A warehouse owner's electronic signature on the license agreement.
+
+    Append-only (trigger): a signature is evidence, so it is never edited.
+    Holds everything needed to prove it later: which exact document (version
+    and SHA-256), who signed and for which company, when, from where, and the
+    signed PDF itself, stamped and with a signature certificate page.
+    """
+
+    __tablename__ = "agreement_signatures"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    agreement_version: Mapped[str] = mapped_column(String(32))
+    document_sha256: Mapped[str] = mapped_column(String(64))
+    signer_name: Mapped[str] = mapped_column(String(200))
+    signer_title: Mapped[str] = mapped_column(String(200))
+    signer_email: Mapped[str] = mapped_column(String(320))
+    company_name: Mapped[str] = mapped_column(String(300))
+    company_address: Mapped[str] = mapped_column(String(500))
+    consent_text: Mapped[str] = mapped_column(Text)
+    viewed_seconds: Mapped[int | None] = mapped_column(Integer)
+    ip: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(300))
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    signed_pdf: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    signed_pdf_sha256: Mapped[str] = mapped_column(String(64))
+
+    __table_args__ = (Index("ix_agreement_signatures_wh_version", "warehouse_id", "agreement_version"),)
+
+
 class NotificationSent(Base):
     """Every automatic email, once. The unique key makes each send idempotent,
     so a job that runs twice (two processes, a retry) never emails twice."""

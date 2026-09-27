@@ -38,5 +38,9 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      - key: AGREEMENT_COUNTERSIGNER_NAME
+        sync: false
+      - key: AGREEMENT_COUNTERSIGNER_TITLE
+        sync: false
       - key: WEB_CONCURRENCY
         value: "1"
