@@ -325,7 +325,7 @@ class NewWarehouseIn(BaseModel):
 def add_warehouse(
     body: NewWarehouseIn, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
 ) -> dict[str, object]:
-    """Another site under the same sign-in. Billed separately ($175/month
+    """Another site under the same sign-in. Billed separately ($29/month
     each), so only an owner of the current warehouse can add one."""
     if not ctx.is_owner:
         raise forbidden("Only an owner can add a warehouse.")

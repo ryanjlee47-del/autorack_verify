@@ -140,7 +140,7 @@ def test_checkout_creates_customer_once_and_carries_trial(client, db, fake_strip
     client.post("/api/billing/checkout", headers=owner.h)
     assert fake_stripe.customers == 1
     params = fake_stripe.checkouts[0]
-    assert params["line_items"] == [{"price": "price_test_175", "quantity": 1}]
+    assert params["line_items"] == [{"price": "price_test_29", "quantity": 1}]
     assert params["client_reference_id"] == owner.warehouse_id
     assert "trial_end" in params["subscription_data"]  # 14 unused trial days carried over
     assert params["success_url"].startswith("https://app.autorack.test/app/")
@@ -156,8 +156,8 @@ def test_portal_requires_customer(client, fake_stripe):
 def test_billing_info_shows_flat_price(client):
     owner = signup(client)
     info = client.get("/api/billing", headers=owner.h).json()
-    assert info["price_cents"] == 17500 and info["interval"] == "month"
-    assert client.get("/api/public/config").json()["price_cents"] == 17500
+    assert info["price_cents"] == 2900 and info["interval"] == "month"
+    assert client.get("/api/public/config").json()["price_cents"] == 2900
 
 
 # ---------------------------------------------------------------------------

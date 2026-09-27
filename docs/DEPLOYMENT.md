@@ -57,7 +57,7 @@ dashboard at `/app/`.
 
 ## 4. Stripe (when pilots end)
 
-1. Create a Product "Autorack" with a **recurring monthly price of $175**.
+1. Create a Product "Autorack" with a **recurring monthly price of $29**.
    Copy the price id into `STRIPE_PRICE_ID`.
 2. Set `STRIPE_SECRET_KEY`.
 3. Add a webhook endpoint `https://api.yourdomain.com/api/webhooks/stripe` with

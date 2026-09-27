@@ -6,7 +6,7 @@ red for wrong) and the owner watches mistakes get caught on a live dashboard.
 It sits alongside whatever WMS a warehouse already runs. No integration: orders
 come in as a CSV pick list.
 
-Flat **$175/month per warehouse**. 14-day trial, free pilots.
+Flat **$29/month per warehouse**. 14-day trial, free pilots.
 
 ```
  Worker's phone (PWA)        Owner's browser (dashboard)

@@ -338,7 +338,7 @@ export async function settingsView() {
     owner ? card(T("Your data"), dataCard()) : null,
 
     card(T("Warehouses"),
-      h("p", { class: "muted small" }, T("One sign-in can run several sites. Each warehouse has its own orders, workers, phones and team, and its own $175/month subscription.")),
+      h("p", { class: "muted small" }, T("One sign-in can run several sites. Each warehouse has its own orders, workers, phones and team, and its own $29/month subscription.")),
       table([
         { label: T("Warehouse"), render: (w) => h("strong", null, w.name) },
         { label: T("Your role"), key: "role" },

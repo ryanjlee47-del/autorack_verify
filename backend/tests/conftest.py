@@ -28,7 +28,7 @@ os.environ.update(
         "CORS_ORIGINS": "https://app.autorack.test",
         "SECRET_KEY": "test-secret-key-test-secret-key-test-secret-key",
         "STRIPE_SECRET_KEY": "sk_test_dummy",
-        "STRIPE_PRICE_ID": "price_test_175",
+        "STRIPE_PRICE_ID": "price_test_29",
         "STRIPE_WEBHOOK_SECRET": "whsec_test_secret",
         "SIGNUP_ENABLED": "true",
         "GOOGLE_CLIENT_ID": "test-client.apps.googleusercontent.com",

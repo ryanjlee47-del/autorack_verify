@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
 
     # Billing: flat monthly price per warehouse
-    plan_price_cents: int = 17500
+    plan_price_cents: int = 2900
     plan_name: str = "Autorack — per warehouse"
     trial_days: int = 14
     past_due_grace_days: int = 7
