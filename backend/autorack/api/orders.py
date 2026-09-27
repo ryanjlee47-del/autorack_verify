@@ -49,9 +49,23 @@ class LineIn(BaseModel):
     sku: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     location: str | None = Field(default=None, max_length=100)
+    track_lot: bool = False
+    track_serial: bool = False
+    track_expiry: bool = False
+    required_lot: str | None = Field(default=None, max_length=100)
 
     def to_input(self) -> order_svc.LineInput:
-        return order_svc.LineInput(self.barcode, self.quantity, self.sku, self.description, self.location)
+        return order_svc.LineInput(
+            self.barcode,
+            self.quantity,
+            self.sku,
+            self.description,
+            self.location,
+            track_lot=self.track_lot,
+            track_serial=self.track_serial,
+            track_expiry=self.track_expiry,
+            required_lot=self.required_lot,
+        )
 
 
 class OrderCreate(BaseModel):
@@ -75,10 +89,14 @@ class OrderUpdate(BaseModel):
 
 class LineUpdate(BaseModel):
     barcode: str | None = Field(default=None, min_length=1, max_length=200)
-    quantity: int | None = Field(default=None, ge=1, le=100_000)
+    quantity: int | None = Field(default=None, ge=0, le=100_000)
     sku: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     location: str | None = Field(default=None, max_length=100)
+    track_lot: bool | None = None
+    track_serial: bool | None = None
+    track_expiry: bool | None = None
+    required_lot: str | None = Field(default=None, max_length=100)
 
 
 class FlagResolve(BaseModel):
@@ -134,6 +152,13 @@ def list_orders(
                             OrderLineItem.sku.ilike(like),
                             OrderLineItem.sku_description.ilike(like),
                         ),
+                    )
+                ),
+                # Recalls: which orders shipped this lot or serial?
+                Order.id.in_(
+                    select(ScanEvent.order_id).where(
+                        ScanEvent.warehouse_id == ctx.warehouse.id,
+                        or_(func.upper(ScanEvent.lot) == q.strip().upper(), ScanEvent.serial == q.strip()),
                     )
                 ),
             )
@@ -583,6 +608,10 @@ def order_scans(
             "voids_scan_id": str(s.voids_scan_id) if s.voids_scan_id else None,
             "at": s.client_scanned_at.isoformat(),
             "received_at": s.received_at.isoformat(),
+            "lot": s.lot,
+            "serial": s.serial,
+            "expiry": s.expiry.isoformat() if s.expiry else None,
+            "problem": s.problem,
         }
         for s in scans
     ]
@@ -776,6 +805,9 @@ def shipment_proof(
             "scanned_barcode": s.scanned_barcode,
             "worker": workers.get(s.worker_id),
             "at": s.client_scanned_at.isoformat(),
+            "lot": s.lot,
+            "serial": s.serial,
+            "expiry": s.expiry.isoformat() if s.expiry else None,
         }
         for s in db.scalars(
             select(ScanEvent)

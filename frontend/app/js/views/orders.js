@@ -324,6 +324,42 @@ function varianceCard(order) {
       ], v.extras)) : null);
 }
 
+const PROBLEM_LABELS = {
+  wrong_lot: "Wrong lot",
+  expired: "Expired",
+  serial_repeat: "Serial already picked",
+  details_missing: "Lot/serial/expiry not recorded",
+};
+
+function traceText(s) {
+  return [s.lot && `Lot ${s.lot}`, s.serial && `S/N ${s.serial}`, s.expiry && `Exp ${s.expiry}`].filter(Boolean).join(" · ");
+}
+
+function traceBadges(l) {
+  const tags = [
+    l.required_lot ? `Lot ${l.required_lot} only` : l.track_lot ? "Lot" : null,
+    l.track_serial ? "Serial" : null,
+    l.track_expiry ? "Expiry" : null,
+  ].filter(Boolean);
+  return tags.length ? h("div", { class: "row trace-tags" }, ...tags.map((t) => h("span", { class: "badge badge-trace" }, t))) : null;
+}
+
+const TRACK_OPTIONS = [
+  ["", "—"],
+  ["lot", "Lot"],
+  ["lot+expiry", "Lot + expiry"],
+  ["expiry", "Expiry"],
+  ["serial", "Serial"],
+];
+
+function trackFlags(value) {
+  return {
+    track_lot: value.includes("lot"),
+    track_serial: value.includes("serial"),
+    track_expiry: value.includes("expiry"),
+  };
+}
+
 function lineName(l) {
   return l.description || l.sku || l.expected_barcode;
 }
@@ -331,7 +367,7 @@ function lineName(l) {
 function linesTable(order, editable, reload) {
   const cols = [
     { label: "Location", render: (l) => l.location || h("span", { class: "muted" }, "–") },
-    { label: "Item", render: (l) => h("div", null, h("div", null, l.description || l.sku || "–"), l.sku && l.description ? h("div", { class: "muted small mono" }, l.sku) : null) },
+    { label: "Item", render: (l) => h("div", null, h("div", null, l.description || l.sku || "–"), l.sku && l.description ? h("div", { class: "muted small mono" }, l.sku) : null, traceBadges(l)) },
     { label: "Barcode", render: (l) => h("span", { class: "mono" }, l.expected_barcode) },
     {
       label: order.kind && order.kind !== "pick" ? "Counted" : "Verified", align: "right",
@@ -366,6 +402,10 @@ async function editLine(orderId, line, reload) {
       sku: h("input", { class: "input", value: line.sku || "" }),
       description: h("input", { class: "input", value: line.description || "" }),
       location: h("input", { class: "input", value: line.location || "" }),
+      track_lot: h("input", { type: "checkbox", checked: line.track_lot }),
+      track_serial: h("input", { type: "checkbox", checked: line.track_serial }),
+      track_expiry: h("input", { type: "checkbox", checked: line.track_expiry }),
+      required_lot: h("input", { class: "input mono", value: line.required_lot || "", placeholder: "Any lot" }),
     };
     return h("form", {
       class: "form-grid",
@@ -373,12 +413,19 @@ async function editLine(orderId, line, reload) {
         e.preventDefault();
         close({
           barcode: f.barcode.value.trim(), quantity: Number(f.quantity.value), sku: f.sku.value, description: f.description.value, location: f.location.value,
+          track_lot: f.track_lot.checked, track_serial: f.track_serial.checked, track_expiry: f.track_expiry.checked, required_lot: f.required_lot.value.trim(),
         });
       },
     },
     h("label", null, "Barcode", f.barcode), h("label", null, "Quantity", f.quantity),
     h("label", null, "SKU", f.sku), h("label", null, "Location", f.location),
     h("label", { class: "span-2" }, "Description", f.description),
+    h("fieldset", { class: "span-2 trace-fields" },
+      h("legend", null, "Record for each unit"),
+      h("label", { class: "check" }, f.track_lot, " Lot / batch"),
+      h("label", { class: "check" }, f.track_serial, " Serial number"),
+      h("label", { class: "check" }, f.track_expiry, " Expiry date")),
+    h("label", { class: "span-2" }, "Only this lot may ship", f.required_lot),
     h("p", { class: "muted small span-2" }, "A line's barcode can't change after it has been scanned."),
     h("div", { class: "dialog-actions span-2" },
       h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
@@ -427,18 +474,25 @@ function scanHistory(order, scans, linesById, reload, editable) {
         h("span", { class: `badge badge-${s.voided ? "void" : s.result}` }, resultLabel[s.result] || s.result),
         s.was_offline ? h("span", { class: "muted small", title: "Scanned offline, synced later" }, "offline") : null),
     },
-    { label: "Scanned", render: (s) => h("span", { class: "mono" }, s.scanned_barcode) },
+    {
+      label: "Scanned",
+      render: (s) => h("div", null, h("span", { class: "mono" }, s.scanned_barcode),
+        s.lot || s.serial || s.expiry ? h("div", { class: "muted small mono" }, traceText(s)) : null,
+        s.problem ? h("div", { class: "bad-text small" }, PROBLEM_LABELS[s.problem] || s.problem) : null),
+    },
     {
       label: "Counted as",
       render: (s) => {
         const l = linesById.get(s.line_item_id);
         if (!l) return h("span", { class: "muted" }, "–");
+        if (s.problem) return h("span", null, lineName(l), h("span", { class: "muted small" }, " (not counted)"));
         return h("span", null, lineName(l), s.match_tier > 1 ? h("span", { class: "muted small" }, ` (${TIER_NAMES[s.match_tier]})`) : null);
       },
     },
     {
       label: "",
-      render: (s) => (s.result === "mismatch" || s.result === "review") && editable
+      // A wrong lot / expired / repeated serial is the right product: nothing to teach.
+      render: (s) => (s.result === "mismatch" || s.result === "review") && editable && !s.problem
         ? h("button", { class: "btn btn-sm", onclick: () => teachAlias(s, order, reload) }, "This is actually…")
         : null,
     },
@@ -489,6 +543,7 @@ export async function newOrderView(params = new URLSearchParams()) {
       h("td", null, h("input", { class: "input", name: "description", placeholder: "Description" })),
       h("td", null, h("input", { class: "input", name: "sku", placeholder: "SKU" })),
       h("td", null, h("input", { class: "input input-qty", name: "location", placeholder: "Bin" })),
+      h("td", null, h("select", { class: "input", name: "track", "aria-label": "Record" }, ...TRACK_OPTIONS.map(([v, t]) => h("option", { value: v }, t)))),
       h("td", null, h("button", { class: "icon-btn", type: "button", "aria-label": "Remove line", onclick: () => tr.remove() }, "✕")));
     rowsHost.appendChild(tr);
     tr.querySelector("input").focus();
@@ -499,7 +554,7 @@ export async function newOrderView(params = new URLSearchParams()) {
     const lines = [...rowsHost.querySelectorAll("tr")].map((tr) => {
       const v = (n) => tr.querySelector(`[name=${n}]`).value.trim();
       const qty = v("quantity") === "" ? 1 : Number(v("quantity"));
-      return { barcode: v("barcode"), quantity: Number.isFinite(qty) ? qty : 1, description: v("description") || null, sku: v("sku") || null, location: v("location") || null };
+      return { ...trackFlags(tr.querySelector("[name=track]").value), barcode: v("barcode"), quantity: Number.isFinite(qty) ? qty : 1, description: v("description") || null, sku: v("sku") || null, location: v("location") || null };
     }).filter((l) => l.barcode);
     if (!lines.length) return toast("Add at least one line with a barcode.", "warn");
     try {
@@ -535,7 +590,7 @@ export async function newOrderView(params = new URLSearchParams()) {
       card("Lines",
         h("div", { class: "table-wrap" },
           h("table", { class: "table table-form" },
-            h("thead", null, h("tr", null, ...["Barcode", "Qty", "Description", "SKU", "Location", ""].map((t) => h("th", null, t)))),
+            h("thead", null, h("tr", null, ...["Barcode", "Qty", "Description", "SKU", "Location", "Record", ""].map((t) => h("th", null, t)))),
             rowsHost)),
         h("p", { class: "muted small" }, "Tip: click into the barcode field and scan with a USB scanner."),
         h("div", { class: "row" },
@@ -560,7 +615,7 @@ export async function importView(params = new URLSearchParams()) {
   const fileInput = h("input", { type: "file", accept: ".csv,.tsv,.txt,text/csv", class: "visually-hidden", id: "csv-file" });
   const drop = h("label", { class: "dropzone", for: "csv-file" },
     h("strong", null, "Choose a CSV file"), h("span", { class: "muted" }, " or drop it here"),
-    h("div", { class: "muted small" }, "Columns: order_number, barcode, quantity, description (plus optional sku, location, customer). Common header names like “Order #”, “UPC”, “Qty”, “Bin” and “Ship To” are recognised."));
+    h("div", { class: "muted small" }, "Columns: order_number, barcode, quantity, description (plus optional sku, location, customer; “track” with lot, serial or expiry to record them per unit; “lot” to allow only that lot). Common header names like “Order #”, “UPC”, “Qty”, “Bin” and “Ship To” are recognised."));
 
   const pick = (f) => {
     file = f;

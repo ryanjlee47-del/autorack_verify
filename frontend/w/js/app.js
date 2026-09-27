@@ -582,6 +582,7 @@ function renderPickBody() {
       h("div", { class: "target-meta" },
         target.sku ? h("span", { class: "mono" }, target.sku) : null,
         h("span", { class: "mono muted" }, target.expected_barcode)),
+      traceTags(target),
       h("div", { class: "target-qty" },
         T("pickQty", { done: target.scanned_quantity, total: target.expected_quantity }),
         target.short_quantity ? h("span", { class: "short-tag" }, T("shortLine", { n: target.short_quantity })) : null))
@@ -622,6 +623,54 @@ function renderPickBody() {
         l.location ? h("span", null, l.location) : null,
         h("span", { class: "mono" }, l.expected_barcode)));
     })));
+}
+
+// ---------------------------------------------------------------------------
+// Lot / serial / expiry prompt
+// ---------------------------------------------------------------------------
+
+/** Ask for the details this line needs. A scanner can type into the focused
+ * field; the camera button reads a lot/serial/expiry barcode. */
+async function askDetails(line, need) {
+  const paused = app.camera && app.camera.scanner;
+  if (paused) app.camera.scanner.pause();
+  try {
+    return await dialog(T("detailsTitle"), (close) => {
+      const inputs = {};
+      const fields = need.map((f) => {
+        const input = f === "expiry"
+          ? h("input", { class: "input input-xl", type: "date", required: true })
+          : h("input", { class: "input input-xl mono", autocomplete: "off", autocapitalize: "characters", required: true, maxlength: "100" });
+        inputs[f] = input;
+        const cam = f === "expiry" ? null : h("button", {
+          class: "btn", type: "button", "aria-label": T("pickCamera"),
+          onclick: () => scanOnce((text) => {
+            const g = S.unitDetails(text);
+            input.value = (f === "lot" ? g.lot : g.serial) || text.trim();
+          }),
+        }, "📷");
+        return h("div", { class: "stack" }, h("label", null, T(`details_${f}`)), h("div", { class: "detail-row" }, input, cam));
+      });
+      return h("form", {
+        class: "stack",
+        onsubmit: (e) => {
+          e.preventDefault();
+          const out = {};
+          for (const [f, el] of Object.entries(inputs)) out[f] = el.value.trim() || null;
+          if (Object.values(out).some((v) => !v)) return;
+          close(out);
+        },
+      },
+      h("p", { class: "muted" }, lineLabel(line)),
+      line.required_lot ? h("p", { class: "banner banner-info" }, T("detailsNeedLot", { lot: line.required_lot })) : null,
+      ...fields,
+      h("div", { class: "dialog-actions" },
+        h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("cancel")),
+        h("button", { class: "btn btn-primary", type: "submit" }, T("manualSubmit"))));
+    });
+  } finally {
+    if (paused && app.camera && app.camera.scanner) app.camera.scanner.resume();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -753,6 +802,16 @@ async function beginReturn(code) {
   }
 }
 
+/** "Lot A100 only · Serial · Exp": what this line records for each unit. */
+function traceTags(line) {
+  const tags = [
+    line.required_lot ? T("tagLotOnly", { lot: line.required_lot }) : line.track_lot ? T("tagLot") : null,
+    line.track_serial ? T("tagSerial") : null,
+    line.track_expiry ? T("tagExpiry") : null,
+  ].filter(Boolean);
+  return tags.length ? h("div", { class: "trace-tags" }, ...tags.map((t) => h("span", { class: "short-tag" }, t))) : null;
+}
+
 async function refreshOrderInBackground(id) {
   try {
     const fresh = await api(`/api/worker/orders/${id}`);
@@ -788,7 +847,23 @@ async function handleScan(rawText) {
   const order = app.order;
   const lines = currentLines();
   const target = S.nextLine(lines, app.targetLineId);
-  const c = S.classify(order, lines, raw);
+  let c = S.classify(order, lines, raw);
+  // Lot / serial / expiry: from the barcode if it carries them, else ask.
+  let details = S.unitDetails(raw);
+  const hit = lines.find((l) => l.id === c.lineId);
+  if (hit && (c.result === "match" || c.result === "counted")) {
+    const need = S.neededDetails(hit, details);
+    if (need.length) {
+      const got = await askDetails(hit, need);
+      if (!got) {
+        toast(T("detailsSkipped"), "warn");
+        return;
+      }
+      details = { ...details, ...got };
+    }
+    const problem = S.isTally(order) ? null : S.traceProblem(hit, details, app.history, S.localToday());
+    if (problem) c = { result: "mismatch", lineId: null, tier: c.tier, problem, line: hit, details };
+  }
   let seq;
   try {
     seq = await store.nextSeq();
@@ -806,6 +881,9 @@ async function handleScan(rawText) {
     intended_line_item_id: target ? target.id : null,
     client_result: c.result,
     offline: !app.status.online,
+    lot: details.lot || null,
+    serial: details.serial || null,
+    expiry: details.expiry || null,
     local: { result: c.result, lineId: c.lineId },
   };
   try {
@@ -815,9 +893,9 @@ async function handleScan(rawText) {
     return;
   }
   app.pending.push(ev);
-  remember({ id: ev.id, orderId: order.id, kind: "scan", result: c.result, lineId: c.lineId, at: ev.client_scanned_at });
+  remember({ id: ev.id, orderId: order.id, kind: "scan", result: c.result, lineId: c.lineId, serial: details.serial || null, at: ev.client_scanned_at });
   const after = currentLines();
-  const line = after.find((l) => l.id === c.lineId);
+  const line = after.find((l) => l.id === c.lineId) || c.line;
   if (c.result === "match" && line && line.scanned_quantity >= line.expected_quantity) app.targetLineId = null;
   showResult({ ...c, line, scanId: ev.id, complete: !S.isTally(order) && S.progress(after).complete });
   app.status.pending += 1;
@@ -843,7 +921,13 @@ function showResult(r) {
       ? ["bad", "✕", T("resultNotReturned"), T("resultNotReturnedDetail")]
       : ["warn", "+", T("resultExtra"), T(order.kind === "count" ? "resultExtraDetailCount" : "resultExtraDetail")],
     match: ["ok", "✓", T("resultMatch"), r.line ? `${lineLabel(r.line)} · ${T("resultMatchDetail", { done: r.line.scanned_quantity, total: r.line.expected_quantity })}` : ""],
-    mismatch: ["bad", "✕", T("resultMismatch"), T("resultMismatchDetail")],
+    mismatch: r.problem === "wrong_lot"
+      ? ["bad", "✕", T("resultWrongLot"), T("resultWrongLotDetail", { lot: r.line.required_lot })]
+      : r.problem === "expired"
+        ? ["bad", "✕", T("resultExpired"), T("resultExpiredDetail", { date: r.details.expiry })]
+        : r.problem === "serial_repeat"
+          ? ["bad", "✕", T("resultSerialRepeat"), T("resultSerialRepeatDetail", { serial: r.details.serial })]
+          : ["bad", "✕", T("resultMismatch"), T("resultMismatchDetail")],
     over_pick: ["warn", "!", T("resultOverPick"), r.line ? `${lineLabel(r.line)} · ${T("resultOverPickDetail")}` : T("resultOverPickDetail")],
     review: ["warn", "?", T("resultReview"), T("resultReviewDetail")],
     order_code: ["warn", "!", T("resultOrderCode"), T("resultOrderCodeDetail")],

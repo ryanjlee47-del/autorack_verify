@@ -21,11 +21,12 @@ Guarantees:
 
 from __future__ import annotations
 
+import calendar
 import logging
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 from sqlalchemy import select
@@ -52,6 +53,7 @@ from ..models import (
 from . import audit, integrations
 from . import orders as order_svc
 from .audit import Actor
+from .dashboard import tz_of
 
 log = logging.getLogger("autorack.scans")
 
@@ -78,6 +80,9 @@ class SyncEvent:
     quantity: int | None = None
     short_reason: ShortReason | None = None
     tracking_number: str | None = None
+    lot: str | None = None
+    serial: str | None = None
+    expiry: date | None = None
 
 
 @dataclass
@@ -89,6 +94,7 @@ class EventOutcome:
     line_item_id: str | None = None
     match_tier: int | None = None
     error: dict[str, str] | None = None
+    problem: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if v is not None}
@@ -298,6 +304,8 @@ def _apply_scan(
     mr = index.match(raw)
     line: OrderLineItem | None = lines_by_id.get(str(mr.line_id)) if mr.line_id is not None else None
     tally = order.kind in TALLY_KINDS
+    details = unit_details(raw, ev)
+    problem: str | None = None
     if tally and mr.is_resolved and line is not None and not mr.needs_confirmation:
         # Receiving, returns, counts: record what's there, past the expected
         # quantity too -- the difference is the point.
@@ -307,8 +315,14 @@ def _apply_scan(
         result = ScanResult.extra
     elif mr.is_resolved and line is not None and not mr.needs_confirmation:
         if order_svc.line_remaining(line) > 0:
-            result = ScanResult.match
-            line.scanned_quantity += 1
+            problem = trace_problem(db, wh, line, details)
+            if problem == "details_missing":
+                result = ScanResult.review
+            elif problem:
+                result = ScanResult.mismatch  # the right product, but it mustn't ship
+            else:
+                result = ScanResult.match
+                line.scanned_quantity += 1
         else:
             result = ScanResult.over_pick
     elif mr.is_resolved or mr.ambiguous:
@@ -338,6 +352,10 @@ def _apply_scan(
             was_offline=ev.offline,
             client_seq=ev.client_seq,
             client_scanned_at=ev.client_scanned_at,
+            lot=details.lot,
+            serial=details.serial,
+            expiry=details.expiry,
+            problem=problem,
         )
     )
     db.flush()
@@ -348,7 +366,77 @@ def _apply_scan(
         result=result.value,
         line_item_id=str(line.id) if line is not None and result != ScanResult.extra else None,
         match_tier=int(mr.tier) if mr.tier is not None else None,
+        problem=problem,
     )
+
+
+# ---------------------------------------------------------------------------
+# Lot / serial / expiry
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class UnitDetails:
+    lot: str | None = None
+    serial: str | None = None
+    expiry: date | None = None
+
+
+def gs1_date(yymmdd: str | None) -> date | None:
+    """GS1 dates are YYMMDD; day 00 means the last day of that month."""
+    if not yymmdd or len(yymmdd) != 6 or not yymmdd.isdigit():
+        return None
+    y, m, d = 2000 + int(yymmdd[:2]), int(yymmdd[2:4]), int(yymmdd[4:])
+    if not 1 <= m <= 12:
+        return None
+    if d == 0:
+        d = calendar.monthrange(y, m)[1]
+    try:
+        return date(y, m, d)
+    except ValueError:
+        return None
+
+
+def unit_details(raw: str, ev: SyncEvent) -> UnitDetails:
+    """What the barcode itself says (GS1 AIs 10, 21, 17/15) wins over what
+    was typed: it can't be mistyped."""
+    gs1 = matching.parse_gs1(raw)
+    lot = (gs1.lot if gs1 else None) or ev.lot
+    serial = (gs1.serial if gs1 else None) or ev.serial
+    expiry = (gs1_date(gs1.extra.get("17") or gs1.extra.get("15")) if gs1 else None) or ev.expiry
+    clean = order_svc.clean
+    return UnitDetails(clean(lot, 100), clean(serial, 100), expiry)
+
+
+def trace_problem(db: Session, wh: Warehouse, line: OrderLineItem, d: UnitDetails) -> str | None:
+    """Why this unit of the right product must not ship, if it mustn't."""
+    if (line.track_lot and not d.lot) or (line.track_serial and not d.serial) or (line.track_expiry and not d.expiry):
+        return "details_missing"
+    if line.required_lot and (d.lot or "").strip().upper() != line.required_lot.strip().upper():
+        return "wrong_lot"
+    if d.expiry and d.expiry < utcnow().astimezone(tz_of(wh)).date():
+        return "expired"
+    if line.track_serial and d.serial:
+        voided = select(ScanEvent.voids_scan_id).where(
+            ScanEvent.warehouse_id == wh.id, ScanEvent.voids_scan_id.is_not(None)
+        )
+        repeat = db.scalar(
+            select(ScanEvent.id)
+            .join(OrderLineItem, OrderLineItem.id == ScanEvent.line_item_id)
+            .join(Order, Order.id == ScanEvent.order_id)
+            .where(
+                ScanEvent.warehouse_id == wh.id,
+                ScanEvent.serial == d.serial,
+                ScanEvent.result == ScanResult.match,
+                ScanEvent.id.not_in(voided),
+                OrderLineItem.normalized_barcode == line.normalized_barcode,
+                Order.status != OrderStatus.cancelled,
+            )
+            .limit(1)
+        )
+        if repeat:
+            return "serial_repeat"
+    return None
 
 
 def _apply_void(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import uuid
 from dataclasses import dataclass
@@ -38,6 +39,31 @@ class LineInput:
     sku: str | None = None
     description: str | None = None
     location: str | None = None
+    track_lot: bool = False
+    track_serial: bool = False
+    track_expiry: bool = False
+    required_lot: str | None = None
+
+
+TRACK_WORDS = {
+    "lot": "track_lot",
+    "batch": "track_lot",
+    "serial": "track_serial",
+    "sn": "track_serial",
+    "expiry": "track_expiry",
+    "exp": "track_expiry",
+    "expiration": "track_expiry",
+    "bbd": "track_expiry",
+}
+
+
+def parse_track(text: str | None) -> dict[str, bool]:
+    """'lot+expiry', 'Serial', 'lot, exp' -> the track_* flags."""
+    out = {"track_lot": False, "track_serial": False, "track_expiry": False}
+    for word in re.split(r"[^a-z]+", (text or "").lower()):
+        if word in TRACK_WORDS:
+            out[TRACK_WORDS[word]] = True
+    return out
 
 
 def min_quantity(kind: OrderKind) -> int:
@@ -89,11 +115,13 @@ def merge_line_inputs(lines: list[LineInput]) -> list[LineInput]:
         key = matching.normalized_key(li.barcode)
         if key in merged:
             merged[key].quantity += li.quantity
-            for attr in ("sku", "description", "location"):
+            for attr in ("sku", "description", "location", "required_lot"):
                 if not getattr(merged[key], attr) and getattr(li, attr):
                     setattr(merged[key], attr, getattr(li, attr))
+            for attr in ("track_lot", "track_serial", "track_expiry"):
+                setattr(merged[key], attr, getattr(merged[key], attr) or getattr(li, attr))
         else:
-            merged[key] = LineInput(li.barcode, li.quantity, li.sku, li.description, li.location)
+            merged[key] = dataclasses.replace(li)
     return list(merged.values())
 
 
@@ -174,6 +202,11 @@ def _new_line(warehouse_id: uuid.UUID, order_id: uuid.UUID, line_no: int, li: Li
         sku=clean(li.sku, 100),
         sku_description=clean(li.description, 500),
         location=clean(li.location, 100),
+        # A required lot is only checkable if the lot is recorded.
+        track_lot=li.track_lot or bool(clean(li.required_lot, 100)),
+        track_serial=li.track_serial,
+        track_expiry=li.track_expiry,
+        required_lot=clean(li.required_lot, 100),
     )
 
 
@@ -247,6 +280,13 @@ def update_line(db: Session, order: Order, line: OrderLineItem, changes: dict[st
     ):
         if field in changes:
             setattr(line, attr, clean(changes[field], limit))
+    for flag in ("track_lot", "track_serial", "track_expiry"):
+        if changes.get(flag) is not None:
+            setattr(line, flag, bool(changes[flag]))
+    if "required_lot" in changes:
+        line.required_lot = clean(changes["required_lot"], 100)
+        if line.required_lot:
+            line.track_lot = True
     bump(order)
     audit.record(
         db,
@@ -445,6 +485,10 @@ def line_dict(line: OrderLineItem) -> dict[str, Any]:
         "sku": line.sku,
         "description": line.sku_description,
         "location": line.location,
+        "track_lot": line.track_lot,
+        "track_serial": line.track_serial,
+        "track_expiry": line.track_expiry,
+        "required_lot": line.required_lot,
     }
 
 

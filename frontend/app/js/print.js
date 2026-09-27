@@ -88,11 +88,12 @@ async function proof(id, token, me) {
         h("td", { class: "qty" }, l.short_quantity ? String(l.short_quantity) : ""))))),
     h("h2", { class: "doc-h2" }, "Every unit, as scanned"),
     h("table", { class: "sheet-table doc-small" },
-      h("thead", null, h("tr", null, ...["Time", "Picked by", "Barcode scanned", "Counted as"].map((t) => h("th", null, t)))),
+      h("thead", null, h("tr", null, ...["Time", "Picked by", "Barcode scanned", "Counted as", ...(p.picks.some(traced) ? ["Lot / serial / expiry"] : [])].map((t) => h("th", null, t)))),
       h("tbody", null, ...p.picks.map((s) => {
         const l = lines.get(s.line_item_id);
         return h("tr", null, h("td", null, fmtDateTime(s.at, zone)), h("td", null, s.worker || ""),
-          h("td", { class: "mono" }, s.scanned_barcode), h("td", null, l ? l.description || l.sku || l.expected_barcode : ""));
+          h("td", { class: "mono" }, s.scanned_barcode), h("td", null, l ? l.description || l.sku || l.expected_barcode : ""),
+          p.picks.some(traced) ? h("td", { class: "mono" }, traceText(s)) : null);
       }))),
     p.flags.length ? [
       h("h2", { class: "doc-h2" }, "Problems reported"),
@@ -170,3 +171,11 @@ async function main() {
 main().catch((e) => {
   status.textContent = e.message;
 });
+
+function traced(s) {
+  return Boolean(s.lot || s.serial || s.expiry);
+}
+
+function traceText(s) {
+  return [s.lot && `Lot ${s.lot}`, s.serial && `S/N ${s.serial}`, s.expiry && `Exp ${s.expiry}`].filter(Boolean).join(" · ");
+}

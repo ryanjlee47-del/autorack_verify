@@ -97,6 +97,8 @@ COLUMN_SYNONYMS: dict[str, list[str]] = {
         "company",
     ],
 }
+COLUMN_SYNONYMS["track"] = ["capture", "trace", "traceability", "record"]
+COLUMN_SYNONYMS["required_lot"] = ["lot", "lot number", "lot no", "batch", "batch number", "pick lot"]
 REQUIRED = ("order_number", "barcode")
 
 TEMPLATE_CSV = (
@@ -244,6 +246,8 @@ def parse(content: bytes, *, min_qty: int = 1) -> ParseResult:
                 sku=cell(row, "sku") or None,
                 description=cell(row, "description") or None,
                 location=cell(row, "location") or None,
+                required_lot=cell(row, "required_lot")[:100] or None,
+                **order_svc.parse_track(cell(row, "track")),
             )
         )
 

@@ -204,3 +204,28 @@ test("tally jobs count past expected and record unknown items as extras", async 
   assert.equal(extrasFor([...history, { id: "v", kind: "void", target: "s4" }], "o1"), 0);
   assert.deepEqual(tallySummary(lines, 1), { counted: 3, over: 1, short: 1, extras: 1, matches: false });
 });
+
+test("lot, serial and expiry come from GS1 barcodes and are checked", async () => {
+  const { gs1Date, unitDetails, neededDetails, traceProblem } = await import("../w/js/state.js");
+  assert.equal(gs1Date("301231"), "2030-12-31");
+  assert.equal(gs1Date("280200"), "2028-02-29");
+  assert.equal(gs1Date("300229"), null);
+  assert.deepEqual(unitDetails("0109501101530003172512311" + "0LOT-7"), { lot: "LOT-7", serial: null, expiry: "2025-12-31" });
+  assert.deepEqual(unitDetails("(01)09501101530003(21)SN9"), { lot: null, serial: "SN9", expiry: null });
+  assert.deepEqual(unitDetails("09501101530003"), { lot: null, serial: null, expiry: null });
+
+  const line = { id: "a", track_lot: true, track_serial: false, track_expiry: true, required_lot: null };
+  assert.deepEqual(neededDetails(line, { lot: null, serial: null, expiry: null }), ["lot", "expiry"]);
+  assert.deepEqual(neededDetails(line, { lot: "L", serial: null, expiry: "2030-01-01" }), []);
+  assert.deepEqual(neededDetails({ id: "b", required_lot: "A1" }, { lot: null }), ["lot"]);
+
+  const today = "2026-09-27";
+  assert.equal(traceProblem({ required_lot: "A100" }, { lot: "b200" }, [], today), "wrong_lot");
+  assert.equal(traceProblem({ required_lot: "A100" }, { lot: "a100" }, [], today), null);
+  assert.equal(traceProblem({}, { expiry: "2026-09-26" }, [], today), "expired");
+  assert.equal(traceProblem({}, { expiry: "2026-09-27" }, [], today), null);
+  const serialLine = { id: "s", track_serial: true };
+  const hist = [{ id: "x", kind: "scan", result: "match", lineId: "s", serial: "SN1" }];
+  assert.equal(traceProblem(serialLine, { serial: "SN1" }, hist, today), "serial_repeat");
+  assert.equal(traceProblem(serialLine, { serial: "SN1" }, [...hist, { kind: "void", target: "x" }], today), null);
+});

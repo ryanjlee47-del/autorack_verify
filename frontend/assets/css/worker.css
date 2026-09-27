@@ -710,3 +710,21 @@ body {
 .pick-title .badge-kind {
   align-self: flex-start;
 }
+
+.target .trace-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.detail-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.detail-row .input {
+  flex: 1;
+  min-width: 0;
+}

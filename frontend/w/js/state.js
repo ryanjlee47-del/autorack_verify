@@ -7,7 +7,7 @@
 // the outbox, so the numbers on screen never double-count and never go
 // backwards unless the server actually disagreed.
 
-import { buildIndex, matchAgainstIndex } from "../../shared/barcode.js";
+import { buildIndex, matchAgainstIndex, parseGs1 } from "../../shared/barcode.js";
 
 export const ORDER_QR_PREFIX = "AUTORACK:ORDER:";
 
@@ -240,7 +240,7 @@ export function lastUndoable(history, orderId) {
 export const WIRE_FIELDS = [
   "id", "kind", "order_id", "session_id", "client_scanned_at", "client_seq", "scanned_barcode",
   "intended_line_item_id", "client_result", "offline", "target_scan_id", "line_item_id", "scan_event_id",
-  "reason", "note", "quantity", "short_reason", "tracking_number",
+  "reason", "note", "quantity", "short_reason", "tracking_number", "lot", "serial", "expiry",
 ];
 
 export function toWire(ev) {
@@ -257,4 +257,66 @@ export function toWire(ev) {
  */
 export function isSettled(outcome) {
   return outcome.status === "applied" || outcome.status === "duplicate" || outcome.status === "error";
+}
+
+// ---------------------------------------------------------------------------
+// Lot / serial / expiry (mirrors services/scans.py)
+// ---------------------------------------------------------------------------
+
+/** GS1 YYMMDD -> "YYYY-MM-DD"; day 00 means the month's last day. */
+export function gs1Date(yymmdd) {
+  if (!/^\d{6}$/.test(yymmdd || "")) return null;
+  const y = 2000 + Number(yymmdd.slice(0, 2));
+  const m = Number(yymmdd.slice(2, 4));
+  let d = Number(yymmdd.slice(4, 6));
+  if (m < 1 || m > 12) return null;
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (d === 0) d = last;
+  if (d > last) return null;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** What the barcode itself carries (GS1 AIs 10, 21, 17/15). */
+export function unitDetails(raw) {
+  const g = parseGs1(String(raw || ""));
+  if (!g) return { lot: null, serial: null, expiry: null };
+  return {
+    lot: g.lot || null,
+    serial: g.serial || null,
+    expiry: gs1Date(g.extra["17"] || g.extra["15"] || null),
+  };
+}
+
+/** Which details this line needs that the barcode didn't carry. */
+export function neededDetails(line, details) {
+  const need = [];
+  if (!line) return need;
+  if ((line.track_lot || line.required_lot) && !details.lot) need.push("lot");
+  if (line.track_serial && !details.serial) need.push("serial");
+  if (line.track_expiry && !details.expiry) need.push("expiry");
+  return need;
+}
+
+/**
+ * Why this unit of the right product must not ship (picks only): wrong_lot,
+ * expired, or serial_repeat (already picked on this phone; the server also
+ * checks every other order).
+ */
+export function traceProblem(line, details, history, today) {
+  if (line.required_lot && String(details.lot || "").trim().toUpperCase() !== line.required_lot.trim().toUpperCase()) {
+    return "wrong_lot";
+  }
+  if (details.expiry && details.expiry < today) return "expired";
+  if (line.track_serial && details.serial) {
+    const voided = new Set(history.filter((h) => h.kind === "void").map((h) => h.target));
+    const repeat = history.some((h) => h.kind === "scan" && h.result === "match" && h.lineId === line.id
+      && h.serial === details.serial && !voided.has(h.id));
+    if (repeat) return "serial_repeat";
+  }
+  return null;
+}
+
+/** Today in the phone's local time, as YYYY-MM-DD. */
+export function localToday(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }

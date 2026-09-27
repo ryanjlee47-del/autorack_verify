@@ -179,6 +179,10 @@ def export_scans(
                 "yes" if se.was_offline else "no",
                 str(se.id),
                 str(se.voids_scan_id or ""),
+                se.lot or "",
+                se.serial or "",
+                se.expiry.isoformat() if se.expiry else "",
+                se.problem or "",
             ]
 
     header = [
@@ -196,6 +200,10 @@ def export_scans(
         "offline",
         "scan_id",
         "undoes_scan_id",
+        "lot",
+        "serial",
+        "expiry",
+        "problem",
     ]
     usage.track(db, ctx.warehouse.id, "exports.csv")
     db.commit()

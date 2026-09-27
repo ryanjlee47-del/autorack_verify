@@ -1334,3 +1334,30 @@ body.tv {
   background: var(--navy);
   color: #fff;
 }
+
+/* Lot / serial / expiry */
+.trace-tags {
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.badge-trace {
+  background: var(--blue-soft);
+  color: var(--blue-strong);
+}
+
+.trace-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.trace-fields legend {
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--text-2);
+}

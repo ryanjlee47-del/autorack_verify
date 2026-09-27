@@ -490,6 +490,12 @@ class OrderLineItem(Base):
     sku: Mapped[str | None] = mapped_column(String(100))
     sku_description: Mapped[str | None] = mapped_column(String(500))
     location: Mapped[str | None] = mapped_column(String(100))
+    # Traceability: what the worker must record for each unit of this line.
+    track_lot: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    track_serial: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    track_expiry: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Only this lot may ship (a recall, a customer's spec, first-expiry-first-out).
+    required_lot: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     order: Mapped[Order] = relationship(back_populates="line_items")
@@ -533,6 +539,13 @@ class ScanEvent(Base):
     # alongside the server's authoritative result so disagreements are visible.
     client_result: Mapped[str | None] = mapped_column(String(32))
     voids_scan_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("scan_events.id"), unique=True)
+    # Lot / serial / expiry of the unit scanned (from its GS1 barcode or typed).
+    lot: Mapped[str | None] = mapped_column(String(100))
+    serial: Mapped[str | None] = mapped_column(String(100))
+    expiry: Mapped[date | None] = mapped_column(Date)
+    # Why a scan of the right product was refused: wrong_lot | expired |
+    # serial_repeat | details_missing.
+    problem: Mapped[str | None] = mapped_column(String(32))
     was_offline: Mapped[bool] = mapped_column(Boolean, default=False)
     client_seq: Mapped[int | None] = mapped_column(BigInteger)
     client_scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -541,6 +554,9 @@ class ScanEvent(Base):
     __table_args__ = (
         Index("ix_scan_events_warehouse_received", "warehouse_id", "received_at"),
         Index("ix_scan_events_warehouse_worker", "warehouse_id", "worker_id", "received_at"),
+        # Recall lookups ("which orders shipped lot X / serial Y?").
+        Index("ix_scan_events_warehouse_lot", "warehouse_id", "lot", postgresql_where=text("lot IS NOT NULL")),
+        Index("ix_scan_events_warehouse_serial", "warehouse_id", "serial", postgresql_where=text("serial IS NOT NULL")),
     )
 
 

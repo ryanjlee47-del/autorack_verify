@@ -12,7 +12,7 @@ previous worker on a shared phone, are still attributed to whoever made them.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -278,6 +278,9 @@ class SyncEventIn(BaseModel):
     quantity: int | None = Field(default=None, ge=1, le=100_000)
     short_reason: ShortReason | None = None
     tracking_number: str | None = Field(default=None, max_length=200)
+    lot: str | None = Field(default=None, max_length=100)
+    serial: str | None = Field(default=None, max_length=100)
+    expiry: date | None = None
 
     @model_validator(mode="after")
     def check_kind(self) -> SyncEventIn:

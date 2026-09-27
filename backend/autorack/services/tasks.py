@@ -167,7 +167,17 @@ def create_return(db: Session, wh: Warehouse, original: Order, actor: Actor, use
         wh,
         external_order_number=number,
         lines=[
-            order_svc.LineInput(li.expected_barcode, li.scanned_quantity, li.sku, li.sku_description, li.location)
+            order_svc.LineInput(
+                li.expected_barcode,
+                li.scanned_quantity,
+                li.sku,
+                li.sku_description,
+                li.location,
+                # What came back gets the same traceability as what went out.
+                track_lot=li.track_lot,
+                track_serial=li.track_serial,
+                track_expiry=li.track_expiry,
+            )
             for li in shipped
         ],
         customer=original.customer,
