@@ -201,4 +201,7 @@ def current_worker(
 
 def require_worker_access(ctx: WorkerContext = Depends(current_worker)) -> WorkerContext:
     _enforce_access(ctx.warehouse)
+    if ctx.worker.notice_version != auth_svc.WORKER_NOTICE_VERSION:
+        # Before a worker's first order: what the app records about them.
+        raise ApiError(403, "notice_required", "Read the privacy notice first.")
     return ctx

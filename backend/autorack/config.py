@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     jobs_enabled: bool = True
     cron_secret: str = ""
 
+    # Closed accounts: data is deleted this many days after closing
+    # (license agreement Section 9.1), with a reminder a week before.
+    account_retention_days: int = 45
+
     # License agreement. Owners must e-sign the current version before using
     # the dashboard. Autorack's side of the signature block, if set, is
     # stamped onto every signed copy.

@@ -1222,3 +1222,8 @@ body.tv {
     padding: 8px;
   }
 }
+
+.card-danger {
+  border-color: rgb(196 43 28 / 35%);
+  box-shadow: inset 3px 0 0 var(--bad);
+}

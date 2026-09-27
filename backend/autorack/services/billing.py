@@ -60,6 +60,10 @@ class StripeGateway:
         self._client()
         return stripe.Subscription.retrieve(sub_id).to_dict()
 
+    def cancel_subscription(self, sub_id: str) -> dict[str, Any]:
+        self._client()
+        return stripe.Subscription.cancel(sub_id).to_dict()
+
     def construct_event(self, payload: bytes, sig_header: str | None) -> dict[str, Any]:
         event = stripe.Webhook.construct_event(payload, sig_header, get_settings().stripe_webhook_secret)
         return event.to_dict()

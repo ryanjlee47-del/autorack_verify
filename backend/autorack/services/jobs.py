@@ -50,6 +50,7 @@ from ..models import (
     utcnow,
 )
 from . import email, ratelimit
+from .audit import Actor
 from .dashboard import day_bounds, tz_of
 
 log = logging.getLogger("autorack.jobs")
@@ -267,7 +268,9 @@ def summary_email(wh: Warehouse, n: dict[str, Any], to: str) -> email.Email:
 
 def run_daily_summaries(db: Session, now: datetime) -> int:
     sent = 0
-    for wh in db.scalars(select(Warehouse).where(Warehouse.daily_summary_enabled.is_(True))):
+    for wh in db.scalars(
+        select(Warehouse).where(Warehouse.daily_summary_enabled.is_(True), Warehouse.closed_at.is_(None))
+    ):
         local = now.astimezone(tz_of(wh))
         if local.hour < wh.daily_summary_hour:
             continue
@@ -299,7 +302,7 @@ def run_daily_summaries(db: Session, now: datetime) -> int:
 def run_flag_alerts(db: Session, now: datetime) -> int:
     sent = 0
     since = now - FLAG_LOOKBACK
-    for wh in db.scalars(select(Warehouse).where(Warehouse.alert_on_flag.is_(True))):
+    for wh in db.scalars(select(Warehouse).where(Warehouse.alert_on_flag.is_(True), Warehouse.closed_at.is_(None))):
         already = select(NotificationSent.key).where(
             NotificationSent.warehouse_id == wh.id, NotificationSent.kind == "flag"
         )
@@ -371,7 +374,7 @@ def run_error_spikes(db: Session, now: datetime) -> int:
     starter who needs help, a relabelled product, a bin that got swapped."""
     sent = 0
     since = now - SPIKE_WINDOW
-    for wh in db.scalars(select(Warehouse).where(Warehouse.alert_error_rate.is_(True))):
+    for wh in db.scalars(select(Warehouse).where(Warehouse.alert_error_rate.is_(True), Warehouse.closed_at.is_(None))):
         base_total, base_err = db.execute(
             select(
                 func.count(),
@@ -450,7 +453,8 @@ def run_account_emails(db: Session, now: datetime) -> int:
     price = money(s.plan_price_cents)
     for wh in db.scalars(
         select(Warehouse).where(
-            Warehouse.subscription_status.in_([SubscriptionStatus.trialing, SubscriptionStatus.past_due])
+            Warehouse.subscription_status.in_([SubscriptionStatus.trialing, SubscriptionStatus.past_due]),
+            Warehouse.closed_at.is_(None),
         )
     ):
         to = recipients(db, wh, want="owners")
@@ -551,6 +555,51 @@ def run_account_emails(db: Session, now: datetime) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Closed accounts: reminder, then deletion
+# ---------------------------------------------------------------------------
+
+DELETION_REMINDER = timedelta(days=7)
+
+
+def run_account_deletions(db: Session, now: datetime) -> int:
+    from . import account
+
+    deleted = 0
+    for wh in db.scalars(
+        select(Warehouse).where(Warehouse.deletion_due_at.is_not(None), Warehouse.purged_at.is_(None))
+    ):
+        if wh.deletion_due_at is None or wh.closed_at is None:
+            continue
+        if now >= wh.deletion_due_at:
+            counts = account.purge(db, wh, Actor("system", label="retention policy"))
+            db.commit()
+            log.info("purged closed warehouse %s: %s", wh.id, counts)
+            deleted += 1
+        elif now >= wh.deletion_due_at - DELETION_REMINDER:
+            due = wh.deletion_due_at.astimezone(tz_of(wh))
+            to = account.owners(db, wh)
+
+            def build(addr: str, w: Warehouse = wh, when: datetime = due) -> email.Email:
+                return email.notice_email(
+                    addr,
+                    subject=f"{w.name}: your Autorack data will be deleted on {when:%B} {when.day}",
+                    heading="Last chance to download your data",
+                    lines=[
+                        f"Your closed Autorack account for {w.name} is scheduled for permanent deletion on "
+                        f"{when:%A} {when.day} {when:%B}.",
+                        "Download a full copy (orders, scans, photos, workers and your signed agreement) from "
+                        "Settings, or reopen the account there to keep it.",
+                    ],
+                    button_label="Download your data",
+                    url=app_url("#/settings"),
+                    footer="Sent to the owners of this warehouse.",
+                )
+
+            _send_all(db, wh, "deletion_reminder", wh.deletion_due_at.date().isoformat(), to, build)
+    return deleted
+
+
+# ---------------------------------------------------------------------------
 # Housekeeping and the runner
 # ---------------------------------------------------------------------------
 
@@ -583,6 +632,7 @@ def run_all(db: Session, now: datetime | None = None) -> dict[str, Any]:
                 ("flag_alerts", run_flag_alerts),
                 ("error_spikes", run_error_spikes),
                 ("account_emails", run_account_emails),
+                ("account_deletions", run_account_deletions),
             ):
                 try:
                     out[name] = job(db, now)

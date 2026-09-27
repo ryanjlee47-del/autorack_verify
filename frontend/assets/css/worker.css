@@ -641,3 +641,26 @@ body {
     height: 64px;
   }
 }
+
+/* Privacy notice */
+
+.notice p,
+.notice li {
+  line-height: 1.5;
+}
+
+.notice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 16px;
+  padding: 14px 14px 14px 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.notice .btn-xl {
+  width: 100%;
+  margin-top: 8px;
+}

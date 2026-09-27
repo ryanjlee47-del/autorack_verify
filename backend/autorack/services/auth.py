@@ -39,6 +39,10 @@ from .audit import Actor
 
 log = logging.getLogger("autorack.auth")
 
+# The "what Autorack records about you" notice workers see on the phone.
+# Bump when its content changes: every worker is shown it again.
+WORKER_NOTICE_VERSION = "1"
+
 
 def normalize_email(addr: str) -> str:
     return addr.strip().lower()
@@ -111,7 +115,7 @@ def memberships_for(db: Session, user: User) -> list[tuple[Membership, Warehouse
     rows = db.execute(
         select(Membership, Warehouse)
         .join(Warehouse, Warehouse.id == Membership.warehouse_id)
-        .where(Membership.user_id == user.id, Membership.active.is_(True))
+        .where(Membership.user_id == user.id, Membership.active.is_(True), Warehouse.purged_at.is_(None))
         .order_by(Warehouse.name, Warehouse.created_at)
     )
     return [(m, w) for m, w in rows]

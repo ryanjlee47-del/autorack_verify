@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security · Autorack</title>
+  <meta name="description" content="How Autorack protects warehouse data, and how to report a security issue.">
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/icons/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/assets/css/tokens.css">
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+  <header class="site-nav">
+    <div class="container nav-inner">
+      <a class="lockup site-brand" href="/" aria-label="Autorack home">
+        <img class="lockup-mark" src="/assets/brand/mark.svg" alt="" width="30" height="30">
+        <span class="lockup-text"><span class="lockup-word">AUTORACK</span><span class="lockup-tag">VERIFIED LOGISTICS</span></span>
+      </a>
+      <nav class="nav-links" aria-label="Main">
+        <a href="/#how">How it works</a>
+        <a href="/#features">Features</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#faq">FAQ</a>
+      </nav>
+      <div class="nav-actions">
+        <a class="nav-signin" href="/app/login.html">Sign in</a>
+        <a class="btn btn-primary" href="/app/signup.html">Start free trial</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="section legal-page">
+      <div class="container legal-body">
+        <p class="legal-draft" role="note">Draft: confirm the bracketed items (providers, regions, contact) before relying on this page.</p>
+        <p class="section-kicker">Trust</p>
+        <h1>Security at Autorack</h1>
+        <p class="muted">Last updated: [date of publication]</p>
+        <p>Autorack holds your orders, your scan history and information about your team. This page describes, in plain terms, how we protect it. It reflects how the software is actually built; if something here stops being true, we'll update the page.</p>
+
+        <h2>Where your data lives</h2>
+        <ul>
+          <li>The application runs on [Render] and the database on [Neon Postgres], both in the [United States].</li>
+          <li>Data is encrypted in transit (HTTPS) everywhere, and [encrypted at rest by our database provider].</li>
+          <li>The database is backed up continuously with point-in-time recovery [retention per plan: confirm].</li>
+          <li>Card payments are handled entirely by Stripe. Card numbers never touch our servers.</li>
+        </ul>
+
+        <h2>Signing in</h2>
+        <ul>
+          <li><strong>No passwords.</strong> Managers sign in with a single-use link emailed to them, valid for 15 minutes. There's no password to be guessed, reused or phished.</li>
+          <li>Sign-in links and sessions are stored only as one-way hashes, so a copy of our database wouldn't let anyone sign in. Sessions can be revoked at any time.</li>
+          <li>Workers sign in on linked phones with a 4-digit PIN. PINs are stored only as salted hashes (PBKDF2), and a phone locks after 5 wrong tries (25 across a warehouse) for 10 minutes.</li>
+          <li>A phone only works after it's been linked with your warehouse's setup code, and you can unlink a lost phone from the dashboard instantly.</li>
+        </ul>
+
+        <h2>Keeping customers apart</h2>
+        <ul>
+          <li>Every record belongs to exactly one warehouse, and every query is scoped to the signed-in warehouse.</li>
+          <li>An automated test runs on every change and tries every endpoint with another customer's IDs, failing the release if anything leaks.</li>
+          <li>Roles limit what each person can do: owners, managers, and supervisors who can't see billing or change orders.</li>
+        </ul>
+
+        <h2>A record you can trust</h2>
+        <ul>
+          <li>Scan history, the activity log and signed agreements are append-only: the database itself refuses edits, so no bug or person can quietly rewrite what happened.</li>
+          <li>Every change by your team, your phones and our staff is in your warehouse's activity log.</li>
+          <li>Autorack staff access to customer data is limited to a few named people. Any change they make to your account, and any export of your data, is recorded in your warehouse's activity log.</li>
+        </ul>
+
+        <h2>In the browser and on the phone</h2>
+        <ul>
+          <li>A strict Content Security Policy blocks injected scripts, and pages can't be framed by other sites.</li>
+          <li>Exports protect against spreadsheet formula injection.</li>
+          <li>Phones keep orders and unsynced scans only in the app's own storage, and only for the warehouse they're linked to.</li>
+        </ul>
+
+        <h2>Your data, your control</h2>
+        <ul>
+          <li>Owners can download everything (orders, scans, photos, workers, the activity log and the signed agreement) at any time from Settings.</li>
+          <li>When an account is closed, its data is permanently deleted after 45 days, with a reminder beforehand. We can delete sooner on request.</li>
+        </ul>
+
+        <h2>If something goes wrong</h2>
+        <p>We follow a written incident-response process. If we confirm that a security incident affected your data, we will tell your account's owners by email without undue delay, explain what happened and what we're doing about it, and follow up until it's resolved. [Commitment on timing, e.g. within 72 hours of confirmation: confirm with counsel.]</p>
+
+        <h2>Reporting a vulnerability</h2>
+        <p>If you believe you've found a security problem in Autorack, please email [security contact email] with the details. Please don't access or change other customers' data, and give us a reasonable time to fix the issue before disclosing it. We'll acknowledge your report within [3 business days] and keep you updated.</p>
+      </div>
+    </article>
+  </main>
+
+  <footer class="site-foot">
+    <div class="container foot-grid">
+      <div class="foot-brand">
+        <a class="lockup" href="/" aria-label="Autorack home">
+          <img class="lockup-mark" src="/assets/brand/mark.svg" alt="" width="30" height="30">
+          <span class="lockup-text"><span class="lockup-word">AUTORACK</span><span class="lockup-tag">VERIFIED LOGISTICS</span></span>
+        </a>
+        <p>Barcode pick verification for small and mid-sized warehouses.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Product</h4>
+        <a href="/#how">How it works</a>
+        <a href="/#features">Features</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#faq">FAQ</a>
+      </div>
+      <div class="foot-col">
+        <h4>Get started</h4>
+        <a href="/app/signup.html">Start free trial</a>
+        <a href="/app/login.html">Owner sign-in</a>
+        <a href="/w/">Scanner app</a>
+      </div>
+      <div class="foot-col">
+        <h4>Legal</h4>
+        <a href="/privacy.html">Privacy policy</a>
+        <a href="/security.html">Security</a>
+        <a href="/legal/license-agreement-v1.pdf">License agreement</a>
+      </div>
+    </div>
+    <div class="container foot-bottom">
+      <span>© 2026 Autorack</span>
+    </div>
+  </footer>
+</body>
+</html>

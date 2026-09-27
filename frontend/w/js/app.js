@@ -86,6 +86,8 @@ async function api(path, opts = {}) {
       } else if (e.status === 402) {
         app.locked = e.message;
         showLocked();
+      } else if (e.status === 403 && e.code === "notice_required") {
+        showNotice(app.noticeVersion || "1");
       }
     }
     throw e;
@@ -156,6 +158,7 @@ function topbar(...right) {
 function rerender() {
   const screens = {
     link: showLink, pin: showPin, orders: showOrders, pick: showPick, complete: showComplete, locked: showLocked,
+    notice: () => showNotice(app.noticeVersion || "1"),
   };
   (screens[app.screen] || showPin)();
 }
@@ -254,7 +257,9 @@ function showPin(message) {
       };
       writeJson(LS_SESSION, app.session);
       app.locked = null;
-      showOrders();
+      app.noticeVersion = r.notice_version;
+      if (r.notice_required) showNotice(r.notice_version);
+      else showOrders();
     } catch (ex) {
       if (ex.status === 402) return;
       pin = "";
@@ -297,6 +302,47 @@ function showPin(message) {
     if (/^[0-9]$/.test(e.key)) press(e.key);
     else if (e.key === "Backspace") press("back");
   };
+}
+
+// ---------------------------------------------------------------------------
+// Privacy notice: what Autorack records about the worker, once per worker
+// ---------------------------------------------------------------------------
+
+function showNotice(version) {
+  let busy = false;
+  const err = h("p", { class: "form-error", role: "alert" });
+  const warehouse = app.device ? app.device.warehouseName : "";
+  setScreen("notice",
+    topbar(langToggle()),
+    h("main", { class: "screen narrow notice" },
+      h("h1", null, T("noticeTitle")),
+      h("p", null, T("noticeIntro", { name: app.session ? app.session.workerName : "", warehouse })),
+      h("ul", { class: "notice-list" },
+        h("li", null, T("noticeName")),
+        h("li", null, T("noticeScans")),
+        h("li", null, T("noticeProblems")),
+        h("li", null, T("noticePhone"))),
+      h("p", null, T("noticeWho", { warehouse })),
+      h("p", null, T("noticeNot")),
+      h("p", { class: "muted small" }, T("noticeQuestions", { warehouse }), " ",
+        h("a", { href: "/privacy.html", target: "_blank", rel: "noopener" }, T("noticePolicy"))),
+      err,
+      h("button", {
+        class: "btn btn-primary btn-xl",
+        onclick: async () => {
+          if (busy) return;
+          busy = true;
+          err.textContent = "";
+          try {
+            await api("/api/worker/notice", { method: "POST", body: { version } });
+            showOrders();
+          } catch (e) {
+            err.textContent = e.isNetwork ? T("pinNeedsNetwork") : e.message;
+          } finally {
+            busy = false;
+          }
+        },
+      }, T("noticeAccept"))));
 }
 
 // ---------------------------------------------------------------------------

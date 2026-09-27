@@ -32,6 +32,13 @@ def evaluate(wh: Warehouse, now: datetime | None = None) -> Access:
     status = wh.subscription_status
     s = get_settings()
 
+    if wh.closed_at:
+        return Access(
+            False,
+            "closed",
+            "This account is closed. Reopen it from Settings to scan again; download your data there too.",
+        )
+
     if status == SubscriptionStatus.pilot:
         return Access(True, "pilot", "Free pilot.")
     if status == SubscriptionStatus.active:

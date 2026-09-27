@@ -109,7 +109,38 @@ def login(body: PinIn, dctx: DeviceContext = Depends(current_device), db: Sessio
         "session_id": str(sess.id),
         "expires_at": sess.expires_at.isoformat(),
         "worker": {"id": str(worker.id), "name": worker.name},
+        "notice_required": worker.notice_version != auth_svc.WORKER_NOTICE_VERSION,
+        "notice_version": auth_svc.WORKER_NOTICE_VERSION,
     }
+
+
+class NoticeAck(BaseModel):
+    version: str = Field(max_length=16)
+
+
+@router.post("/notice")
+def acknowledge_notice(
+    body: NoticeAck, ctx: WorkerContext = Depends(current_worker), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """The worker read what Autorack records about them (their name, every
+    scan, problem reports and photos) and who can see it."""
+    if body.version != auth_svc.WORKER_NOTICE_VERSION:
+        raise bad_request("notice_outdated", "The notice changed. Reload to read the current one.")
+    if ctx.worker.notice_version != body.version:
+        ctx.worker.notice_version = body.version
+        ctx.worker.notice_acknowledged_at = utcnow()
+        audit.record(
+            db,
+            ctx.actor,
+            "worker.notice_acknowledged",
+            warehouse_id=ctx.warehouse.id,
+            target_type="worker",
+            target_id=ctx.worker.id,
+            version=body.version,
+            device=str(ctx.device.id),
+        )
+        db.commit()
+    return {"ok": True, "acknowledged_at": ctx.worker.notice_acknowledged_at.isoformat()}
 
 
 @router.post("/logout")

@@ -23,6 +23,7 @@ python -m autorack.cli <command> --help
 | `list-warehouses` | See every warehouse, its status and whether it can scan. |
 | `end-sessions owner@acme.com` | Sign every worker out (e.g. after a security concern). |
 | `prune` | Housekeeping (the job loop also does this hourly). |
+| `revoke-sessions owner@acme.com [--workers]` / `revoke-sessions --all` | Incident response: sign dashboard users (and optionally every phone's worker) out. |
 | `run-jobs` | Send any due emails now (summaries, alerts, trial/payment notices). |
 | `check-config` | Validate production settings. |
 | `seed-demo` | Demo data for local development. Refuses in production. |
@@ -82,3 +83,27 @@ scanning.
   `services/agreement.py`. Every owner is asked to sign again on next sign-in.
   Never edit a published PDF in place: the app refuses to start signing if a
   file no longer matches its recorded SHA-256.
+
+## Closing accounts and deleting data
+
+- Owners can **download all their data** (Settings → Your data: one ZIP of
+  CSVs, photos and the signed agreement) and **close the account** (Settings →
+  Close account, typing the warehouse name to confirm). You can do both from
+  the operator console too.
+- Closing cancels the Stripe subscription, signs every worker out and stops
+  scanning. The data is deleted automatically `ACCOUNT_RETENTION_DAYS` (45)
+  days later, with a reminder email a week before; reopening cancels it.
+- Deletion removes everything except a tombstone row and the signed license
+  agreements. Users who belong to no other warehouse are deleted (or, if they
+  signed an agreement, disabled). "Delete data now" in the operator console
+  does it immediately, for a customer who asks.
+- Security incidents: see [INCIDENT_RESPONSE.md](INCIDENT_RESPONSE.md). The
+  operator console's **Notices** page emails every owner (or chosen ones).
+
+## Worker privacy notice
+
+The first time each worker signs in on a phone, they see what Autorack records
+about them (name, scans, problem reports and photos, shift totals; no
+location) and tap "I understand" before they can open orders. The Workers
+page shows who has read it. If the notice's content changes, bump
+`WORKER_NOTICE_VERSION` in `services/auth.py` and everyone sees it again.

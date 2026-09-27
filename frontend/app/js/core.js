@@ -123,9 +123,16 @@ function warehousePicker(me) {
 export function accessBanner() {
   const a = ctx.me && ctx.me.access;
   if (!a) return null;
+  if (a.state === "closed") {
+    const due = ctx.me.warehouse.deletion_due_at;
+    return h("div", { class: "banner banner-bad app-banner" },
+      "This account is closed. Scanning is off",
+      due ? `, and its data will be permanently deleted on ${new Date(due).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}. ` : ". ",
+      h("a", { href: "#/settings" }, isOwner() ? "Download your data or reopen →" : "Details →"));
+  }
   if (!a.allowed) {
     return h("div", { class: "banner banner-bad app-banner" },
-      a.message, " ", h("a", { href: "#/billing" }, "Go to billing →"));
+      a.message, " ", isOwner() ? h("a", { href: "#/billing" }, "Go to billing →") : null);
   }
   if (a.state === "grace") {
     return h("div", { class: "banner banner-warn app-banner" }, a.message, " ", h("a", { href: "#/billing" }, "Update payment →"));

@@ -322,6 +322,8 @@ export async function settingsView() {
 
     card("License agreement", agreementCard(agreement)),
 
+    owner ? card("Your data", dataCard()) : null,
+
     card("Warehouses",
       h("p", { class: "muted small" }, "One sign-in can run several sites. Each warehouse has its own orders, workers, phones and team, and its own $175/month subscription."),
       table([
@@ -335,6 +337,8 @@ export async function settingsView() {
         },
       ], ctx.me.warehouses),
       owner ? h("button", { class: "btn", onclick: addWarehouse }, "Add another warehouse") : null),
+
+    owner ? accountCard() : null,
 
     owner ? card("Activity log",
       h("p", { class: "muted small" }, "Every change made by your team, the phones, and billing. This log can't be edited."),
@@ -406,4 +410,84 @@ function agreementCard(a) {
     h("div", { class: "row" },
       h("button", { class: "btn", onclick: () => download("/api/agreement/signed.pdf", "Autorack-License-Agreement-signed.pdf") }, "Download signed copy"),
       h("a", { class: "btn btn-ghost", href: "/privacy.html", target: "_blank", rel: "noopener" }, "Privacy policy")));
+}
+
+function fmtLongDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+}
+
+function dataCard() {
+  return h("div", { class: "stack" },
+    h("p", null, "Download everything this warehouse has in Autorack as one ZIP file: orders and lines, every scan, problem reports and their photos, workers (without PINs), phones, your team, taught barcodes, imports, the activity log, and your signed license agreement."),
+    h("p", { class: "muted small" }, "Spreadsheet files (CSV) open in Excel, Numbers or Google Sheets. Large warehouses can take a minute."),
+    h("div", { class: "row" },
+      h("button", {
+        class: "btn btn-primary",
+        onclick: async (e) => {
+          e.target.disabled = true;
+          e.target.textContent = "Preparing…";
+          await download("/api/account/export.zip", "autorack-export.zip");
+          e.target.disabled = false;
+          e.target.textContent = "Download all data (ZIP)";
+        },
+      }, "Download all data (ZIP)")));
+}
+
+function accountCard() {
+  const wh = ctx.me.warehouse;
+  if (wh.closed_at) {
+    return h("section", { class: "card card-danger" },
+      h("h2", { class: "card-title" }, "Account closed"),
+      h("p", null, "Closed ", fmtDateTime(wh.closed_at, tz()), ". Scanning is off and billing has stopped."),
+      h("p", null, h("strong", null, `All data will be permanently deleted on ${fmtLongDate(wh.deletion_due_at)}.`),
+        " Download a copy above before then."),
+      h("div", { class: "row" },
+        h("button", {
+          class: "btn btn-primary",
+          onclick: async () => {
+            if (!(await confirmDialog("Reopen this account?", "The deletion is cancelled and your data stays. To scan again, subscribe on the Billing page (or finish your trial).", { confirmLabel: "Reopen account" }))) return;
+            try {
+              await api("/api/account/reopen", { method: "POST" });
+              toast("Account reopened", "ok");
+              await loadMe();
+              settingsView().catch(fail);
+            } catch (e) {
+              fail(e);
+            }
+          },
+        }, "Reopen account")));
+  }
+  return h("section", { class: "card card-danger" },
+    h("h2", { class: "card-title" }, "Close account"),
+    h("p", null, `Closing ${wh.name} cancels its subscription and stops all scanning right away. Your data stays available to view and download for ${ctx.me.warehouse.retention_days || 45} days, then it's permanently deleted. You can reopen any time before then.`),
+    h("button", { class: "btn btn-danger", onclick: closeAccount }, "Close this account…"));
+}
+
+async function closeAccount() {
+  const wh = ctx.me.warehouse;
+  const r = await dialog("Close this account?", (close) => {
+    const name = h("input", { class: "input", autocomplete: "off", placeholder: wh.name });
+    const reason = h("textarea", { class: "input", rows: "2", maxlength: "500", placeholder: "Optional: why are you leaving? It helps us improve." });
+    const btn = h("button", { class: "btn btn-danger", type: "submit", disabled: true }, "Close account");
+    name.addEventListener("input", () => { btn.disabled = name.value.trim().toLowerCase() !== wh.name.trim().toLowerCase(); });
+    return h("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); close({ confirm_name: name.value, reason: reason.value || null }); } },
+      h("ul", { class: "plain-list" },
+        h("li", null, "Every phone stops scanning now, and workers are signed out."),
+        h("li", null, "The subscription is cancelled; you won't be charged again."),
+        h("li", null, "Your data is deleted permanently after 45 days, unless you reopen before then."),
+        h("li", null, "Download a copy first if you might need it.")),
+      h("label", null, "Type ", h("strong", null, wh.name), " to confirm"), name,
+      reason,
+      h("div", { class: "dialog-actions" },
+        h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Keep account"), btn));
+  });
+  if (!r) return;
+  try {
+    await api("/api/account/close", { method: "POST", body: r });
+    toast("Account closed. We've emailed you the deletion date.", "ok", 7000);
+    await loadMe();
+    settingsView().catch(fail);
+  } catch (e) {
+    fail(e);
+  }
 }

@@ -21,6 +21,7 @@ from .db import get_sessionmaker
 from .errors import ApiError
 from .models import (
     MagicLinkToken,
+    Membership,
     Order,
     OwnerSession,
     SubscriptionStatus,
@@ -210,6 +211,37 @@ def cmd_end_sessions(db: Session, a: argparse.Namespace) -> None:
     print("Ended all worker sessions.")
 
 
+def cmd_revoke_sessions(db: Session, a: argparse.Namespace) -> None:
+    """Incident response: sign dashboard users out (one warehouse's team, or
+    everyone), and optionally every worker on every phone too."""
+    now = utcnow()
+    stmt = select(OwnerSession).where(OwnerSession.revoked_at.is_(None))
+    wh = None
+    if not a.all:
+        if not a.warehouse:
+            sys.exit("Pass a warehouse (id or owner email), or --all.")
+        wh = _find_warehouse(db, a.warehouse)
+        members = select(Membership.user_id).where(Membership.warehouse_id == wh.id)
+        stmt = stmt.where(OwnerSession.user_id.in_(members))
+    n = 0
+    for s in db.scalars(stmt):
+        s.revoked_at = now
+        n += 1
+    w = 0
+    if a.workers:
+        ws = select(WorkerSession).where(WorkerSession.ended_at.is_(None))
+        if wh is not None:
+            ws = ws.where(WorkerSession.warehouse_id == wh.id)
+        for s in db.scalars(ws):
+            s.ended_at = now
+            w += 1
+    audit.record(
+        db, OPERATOR, "sessions.revoked", warehouse_id=wh.id if wh else None, dashboard_sessions=n, worker_sessions=w
+    )
+    db.commit()
+    print(f"Revoked {n} dashboard session(s) and ended {w} worker session(s). People sign in again as usual.")
+
+
 def cmd_check_config(db: Session, a: argparse.Namespace) -> None:
     s = get_settings()
     problems = s.validate_for_production()
@@ -254,6 +286,10 @@ def main(argv: list[str] | None = None) -> None:
     add("prune", cmd_prune, "Delete expired tokens and old rate-limit rows (run daily)")
     c = add("end-sessions", cmd_end_sessions, "Sign every worker out of a warehouse")
     c.add_argument("warehouse")
+    c = add("revoke-sessions", cmd_revoke_sessions, "Incident response: sign dashboard users (and workers) out")
+    c.add_argument("warehouse", nargs="?", help="warehouse id or an owner's email")
+    c.add_argument("--all", action="store_true", help="every warehouse")
+    c.add_argument("--workers", action="store_true", help="also end every worker session on the phones")
     add("check-config", cmd_check_config, "Validate configuration for production")
     add("run-jobs", cmd_run_jobs, "Send due emails now: daily summaries, alerts, trial and payment notices")
 

@@ -128,6 +128,9 @@ def me(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db))
             "leaderboard_enabled": wh.leaderboard_enabled,
             "onboarding_dismissed": wh.onboarding_dismissed,
             "cost_per_error_cents": wh.cost_per_error_cents,
+            "closed_at": wh.closed_at.isoformat() if wh.closed_at else None,
+            "deletion_due_at": wh.deletion_due_at.isoformat() if wh.deletion_due_at else None,
+            "retention_days": get_settings().account_retention_days,
         }
         out["access"] = {
             "allowed": acc.allowed,

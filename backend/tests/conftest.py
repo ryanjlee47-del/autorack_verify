@@ -207,6 +207,9 @@ def login(client: TestClient, phone: Phone, pin: str) -> Phone:
     phone.session_token = data["session_token"]
     phone.session_id = data["session_id"]
     phone.worker_id = data["worker"]["id"]
+    if data.get("notice_required"):
+        r = client.post("/api/worker/notice", json={"version": data["notice_version"]}, headers=phone.h)
+        assert r.status_code == 200, r.text
     return phone
 
 

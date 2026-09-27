@@ -2,7 +2,7 @@
 // (OPERATOR_EMAILS). Signs in with the same session as the dashboard.
 
 import {
-  brandLockup, confirmDialog, fmtAgo, fmtDate, fmtDateTime, fmtMoney, fmtNumber, fmtPercent, h, mount, toast,
+  brandLockup, confirmDialog, dialog, fmtAgo, fmtDate, fmtDateTime, fmtMoney, fmtNumber, fmtPercent, h, mount, toast,
 } from "../../shared/dom.js";
 import { columnChart } from "../../app/js/chart.js";
 import {
@@ -16,6 +16,7 @@ const TABS = [
   ["#/usage", "Feature usage"],
   ["#/photos", "Photos"],
   ["#/activity", "Activity"],
+  ["#/notices", "Notices"],
 ];
 
 const STATUS_LABEL = {
@@ -49,6 +50,7 @@ function tile(label, value, hint, cls) {
 }
 
 function statusBadge(r) {
+  if (r.closed_at) return h("span", { class: "badge badge-bad" }, `Closed · deletes ${fmtDate(r.deletion_due_at)}`);
   const tone = { pilot: "badge-in_progress", trialing: "badge-pending", active: "badge-ok", past_due: "badge-warn" }[r.status] || "badge-bad";
   const days = r.status === "trialing" && r.trial_days_left !== null ? ` · ${r.trial_days_left}d` : "";
   return h("span", { class: `badge ${tone}` }, `${STATUS_LABEL[r.status] || r.status}${days}`);
@@ -138,6 +140,16 @@ async function warehouseDetail(id) {
       fail(e);
     }
   };
+  const post = async (url, body, question) => {
+    if (!(await confirmDialog(question, "Recorded in the warehouse's activity log under your name.", { confirmLabel: "Confirm" }))) return;
+    try {
+      await api(url, { method: "POST", body });
+      toast("Done", "ok");
+      reload();
+    } catch (e) {
+      fail(e);
+    }
+  };
   const s = w.summary;
   shell("#/warehouses",
     h("a", { href: "#/warehouses", class: "back-link" }, "← Warehouses"),
@@ -149,7 +161,14 @@ async function warehouseDetail(id) {
       h("div", { class: "row" },
         h("button", { class: "btn", onclick: () => setStatus({ status: "trialing", trial_days: 14 }, "Give a fresh 14-day trial?") }, "Extend trial 14 days"),
         w.status !== "pilot" ? h("button", { class: "btn btn-primary", onclick: () => setStatus({ status: "pilot" }, `Make ${w.name} a free pilot?`) }, "Make pilot") : null,
-        w.status !== "canceled" ? h("button", { class: "btn btn-ghost", onclick: () => setStatus({ status: "canceled" }, `Cancel ${w.name}? Scanning stops; data stays.`) }, "Cancel") : null)),
+        h("button", { class: "btn", onclick: () => download(`/api/admin/warehouses/${id}/export.zip`, "export.zip") }, "Export data"),
+        w.closed_at
+          ? h("button", { class: "btn", onclick: () => post(`/api/admin/warehouses/${id}/reopen`, {}, `Reopen ${w.name}? The scheduled deletion is cancelled.`) }, "Reopen")
+          : h("button", { class: "btn btn-danger", onclick: () => closeWarehouse(w, reload) }, "Close account…"),
+        w.closed_at ? h("button", { class: "btn btn-danger", onclick: () => purgeWarehouse(w) }, "Delete data now…") : null)),
+    w.closed_at ? h("div", { class: "banner banner-bad" },
+      `Closed ${fmtDateTime(w.closed_at)} by ${w.closed_by || "?"}${w.close_reason ? ` (“${w.close_reason}”)` : ""}. `,
+      h("strong", null, `Data is deleted automatically on ${fmtDate(w.deletion_due_at)}.`)) : null,
     h("div", { class: "tiles" },
       tile("Scans (7 days)", fmtNumber(w.scans_7d)),
       tile("Mistakes caught (7 days)", fmtNumber(w.errors_7d)),
@@ -192,6 +211,90 @@ async function warehouseDetail(id) {
         { label: "Who", key: "actor" },
         { label: "What", render: (e) => h("span", { class: "mono small" }, e.action) },
       ], w.events, { empty: "Nothing yet." })));
+}
+
+async function closeWarehouse(w, reload) {
+  const reason = await dialog(`Close ${w.name}?`, (close) => {
+    const input = h("input", { class: "input", maxlength: "500", placeholder: "Reason (shown to you, emailed nowhere)" });
+    return h("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); close(input.value); } },
+      h("p", null, "Termination by Autorack. Same as the owner closing it: the Stripe subscription is cancelled, every phone stops, owners are emailed, and the data is deleted automatically after the retention period unless reopened."),
+      input,
+      h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
+        h("button", { class: "btn btn-danger", type: "submit" }, "Close account")));
+  });
+  if (reason === null) return;
+  try {
+    await api(`/api/admin/warehouses/${w.id}/close`, { method: "POST", body: { reason: reason || null } });
+    toast("Account closed", "ok");
+    reload();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function purgeWarehouse(w) {
+  const typed = await dialog(`Delete ${w.name}'s data now?`, (close) => {
+    const input = h("input", { class: "input mono", autocomplete: "off", placeholder: "DELETE" });
+    return h("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); close(input.value); } },
+      h("p", null, "Permanently deletes every order, scan, photo, worker, phone and log entry for this warehouse, now instead of on the scheduled date. Only the signed license agreement is kept. This can't be undone."),
+      h("p", { class: "muted small" }, "Use this when the customer asks for immediate deletion. Export a copy for them first if they want one."),
+      h("label", null, "Type DELETE to confirm"), input,
+      h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
+        h("button", { class: "btn btn-danger", type: "submit" }, "Delete permanently")));
+  });
+  if (!typed) return;
+  try {
+    const r = await api(`/api/admin/warehouses/${w.id}/purge`, { method: "POST", body: { confirm: typed } });
+    toast(`Deleted: ${r.deleted.orders} orders, ${r.deleted.scans} scans, ${r.deleted.photos} photos.`, "ok", 8000);
+    location.hash = "#/warehouses";
+  } catch (e) {
+    fail(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Notices to customers
+// ---------------------------------------------------------------------------
+
+async function notices() {
+  const past = await api("/api/admin/notices");
+  const subject = h("input", { class: "input", maxlength: "200", placeholder: "e.g. Scheduled maintenance Sunday 2–3am PT" });
+  const message = h("textarea", { class: "input", rows: "8", maxlength: "10000", placeholder: "Plain text. A blank line starts a new paragraph." });
+  const status = h("p", { class: "muted small" });
+  const send = async (really) => {
+    const body = { subject: subject.value.trim(), message: message.value.trim(), send: really };
+    try {
+      const preview = await api("/api/admin/notices", { method: "POST", body: { ...body, send: false } });
+      if (!really) {
+        status.textContent = `Would email ${preview.recipients} owner(s) of ${preview.warehouses} open account(s).`;
+        return;
+      }
+      if (!(await confirmDialog("Send this notice?", `Emails ${preview.recipients} owner(s) of ${preview.warehouses} open account(s) now. It's logged in each warehouse's activity log.`, { confirmLabel: "Send now", danger: true }))) return;
+      const r = await api("/api/admin/notices", { method: "POST", body });
+      toast(`Sent to ${r.sent} owner(s)${r.failed ? `, ${r.failed} failed` : ""}.`, r.failed ? "warn" : "ok", 7000);
+      notices().catch(fail);
+    } catch (e) {
+      fail(e);
+    }
+  };
+  shell("#/notices",
+    h("div", { class: "page-head" }, h("div", null, h("h1", null, "Notices"),
+      h("p", { class: "muted" }, "Email the owners of every open account: a security incident, planned maintenance, a change to the terms. See docs/INCIDENT_RESPONSE.md for when and what to send."))),
+    card("New notice",
+      h("div", { class: "stack" },
+        h("label", null, "Subject"), subject,
+        h("label", null, "Message"), message,
+        status,
+        h("div", { class: "row" },
+          h("button", { class: "btn", onclick: () => send(false) }, "Preview recipients"),
+          h("button", { class: "btn btn-danger", onclick: () => send(true) }, "Send to all owners…")))),
+    card("Sent", table([
+      { label: "When", render: (n) => h("span", { class: "muted nowrap" }, fmtDateTime(n.at)) },
+      { label: "Subject", render: (n) => h("strong", null, n.subject) },
+      { label: "By", key: "by" },
+      { label: "Owners emailed", align: "right", render: (n) => fmtNumber(n.recipients) },
+      { label: "Failed", align: "right", render: (n) => fmtNumber(n.failed || 0) },
+    ], past, { empty: "No notices sent yet." })));
 }
 
 function photoGrid(photos, showWarehouse = true) {
@@ -237,6 +340,7 @@ async function activity(params) {
   const label = {
     "warehouse.created": "Signed up", "user.login": "Signed in", "orders.imported": "Imported orders",
     "team.invited": "Invited someone", "billing.status_changed": "Billing changed", "warehouse.status_set": "Plan set by operator",
+    "account.closed": "Closed the account", "account.reopened": "Reopened the account", "account.purged": "Data deleted",
     "device.linked": "Linked a phone", "worker.created": "Added a worker", "agreement.signed": "Signed the agreement",
   };
   shell("#/activity",
@@ -260,6 +364,7 @@ const ROUTES = [
   [/^\/usage$/, (m, p) => usage(p)],
   [/^\/photos$/, () => photos()],
   [/^\/activity$/, (m, p) => activity(p)],
+  [/^\/notices$/, () => notices()],
 ];
 
 async function route() {

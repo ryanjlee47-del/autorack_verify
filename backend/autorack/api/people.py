@@ -67,7 +67,9 @@ def list_workers(
         if wid not in listed
     ]
     for r in rows:
-        r["created_at"] = workers[r["worker_id"]].created_at.isoformat()
+        w = workers[r["worker_id"]]
+        r["created_at"] = w.created_at.isoformat()
+        r["notice_acknowledged_at"] = w.notice_acknowledged_at.isoformat() if w.notice_acknowledged_at else None
     return {**stats, "workers": rows}
 
 

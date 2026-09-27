@@ -115,6 +115,12 @@ export async function workersView(params) {
         { label: "Undos", align: "right", render: (w) => fmtNumber(w.undos ?? 0) },
         { label: "Flags", align: "right", render: (w) => fmtNumber(w.flags ?? 0) },
         { label: "Last active", render: (w) => h("span", { class: "muted" }, fmtAgo(w.last_active)) },
+        {
+          label: "Privacy notice",
+          render: (w) => (w.notice_acknowledged_at
+            ? h("span", { class: "muted", title: new Date(w.notice_acknowledged_at).toLocaleString() }, "Read ✓")
+            : h("span", { class: "muted" }, "Not yet")),
+        },
         canManage() ? { label: "", render: rowActions } : null,
       ].filter(Boolean), workers, { empty: "No workers yet. Add one, then link a phone so they can sign in." })),
   ]);

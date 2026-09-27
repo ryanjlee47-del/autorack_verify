@@ -39,11 +39,13 @@ from ..models import (
     Worker,
     utcnow,
 )
+from ..services import account as account_svc
 from ..services import agreement as agreement_svc
-from ..services import audit, jobs, onboarding, usage
+from ..services import audit, email, jobs, onboarding, usage
 from ..services import dashboard as dash
 from ..services.access import evaluate
 from ..services.audit import Actor
+from .account import zip_response
 from .orders import photo_response
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -147,6 +149,10 @@ def _warehouse_rows(db: Session, whs: list[Warehouse]) -> list[dict[str, Any]]:
                 "team": team.get(w.id, 0),
                 "photos": photos.get(w.id, 0),
                 "has_stripe": bool(w.stripe_subscription_id),
+                "closed_at": w.closed_at.isoformat() if w.closed_at else None,
+                "deletion_due_at": w.deletion_due_at.isoformat() if w.deletion_due_at else None,
+                "close_reason": w.close_reason,
+                "closed_by": w.closed_by,
             }
         )
     return out
@@ -166,7 +172,7 @@ def health_label(row: dict[str, Any]) -> str:
 @router.get("/overview")
 def overview(uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)) -> dict[str, Any]:
     now = utcnow()
-    whs = list(db.scalars(select(Warehouse).order_by(Warehouse.created_at.desc())))
+    whs = list(db.scalars(select(Warehouse).where(Warehouse.purged_at.is_(None)).order_by(Warehouse.created_at.desc())))
     rows = _warehouse_rows(db, whs)
     for r in rows:
         r["health"] = health_label(r)
@@ -191,7 +197,10 @@ def overview(uctx: UserContext = Depends(require_operator), db: Session = Depend
         (
             r
             for r in rows
-            if r["status"] == "trialing" and r["trial_days_left"] is not None and r["trial_days_left"] <= 7
+            if r["status"] == "trialing"
+            and not r["closed_at"]
+            and r["trial_days_left"] is not None
+            and r["trial_days_left"] <= 7
         ),
         key=lambda r: r["trial_ends_at"] or "",
     )
@@ -345,6 +354,153 @@ def warehouse_agreement(
     )
 
 
+class CloseAccountIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+def _wh(db: Session, warehouse_id: uuid.UUID) -> Warehouse:
+    wh = db.get(Warehouse, warehouse_id)
+    if not wh:
+        raise not_found("Warehouse not found")
+    return wh
+
+
+@router.post("/warehouses/{warehouse_id}/close")
+def close_warehouse(
+    warehouse_id: uuid.UUID,
+    body: CloseAccountIn,
+    uctx: UserContext = Depends(require_operator),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Termination by Autorack (Section 9): same effect as an owner closing."""
+    account_svc.close(db, _wh(db, warehouse_id), _actor(uctx), reason=body.reason)
+    db.commit()
+    return warehouse_detail(warehouse_id, uctx, db)
+
+
+@router.post("/warehouses/{warehouse_id}/reopen")
+def reopen_warehouse(
+    warehouse_id: uuid.UUID, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    account_svc.reopen(db, _wh(db, warehouse_id), _actor(uctx))
+    db.commit()
+    return warehouse_detail(warehouse_id, uctx, db)
+
+
+class PurgeIn(BaseModel):
+    confirm: str = Field(max_length=20)
+
+
+@router.post("/warehouses/{warehouse_id}/purge")
+def purge_warehouse(
+    warehouse_id: uuid.UUID,
+    body: PurgeIn,
+    uctx: UserContext = Depends(require_operator),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Delete a closed account's data now (e.g. the customer asked for it)
+    instead of waiting for the retention date."""
+    if body.confirm != "DELETE":
+        raise bad_request("confirm_required", "Type DELETE to confirm.")
+    counts = account_svc.purge(db, _wh(db, warehouse_id), _actor(uctx))
+    db.commit()
+    return {"deleted": counts}
+
+
+@router.get("/warehouses/{warehouse_id}/export.zip")
+def export_warehouse(
+    warehouse_id: uuid.UUID, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+) -> Any:
+    wh = _wh(db, warehouse_id)
+    fh = account_svc.export_zip(db, wh)
+    audit.record(db, _actor(uctx), "account.exported", warehouse_id=wh.id, target_type="warehouse", target_id=wh.id)
+    db.commit()
+    return zip_response(fh, account_svc.export_filename(wh))
+
+
+# ---------------------------------------------------------------------------
+# Notices to customers (incidents, maintenance, policy changes)
+# ---------------------------------------------------------------------------
+
+
+class NoticeIn(BaseModel):
+    subject: str = Field(min_length=3, max_length=200)
+    message: str = Field(min_length=10, max_length=10_000)
+    warehouse_ids: list[uuid.UUID] | None = None  # None: every open account
+    send: bool = False  # False: preview who would get it
+
+
+@router.post("/notices")
+def send_notice(
+    body: NoticeIn, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Email the owners of every account (or chosen ones): a security
+    incident, planned maintenance, a change to the terms. Logged in each
+    warehouse's activity log. With send=false, only counts recipients."""
+    stmt = select(Warehouse).where(Warehouse.purged_at.is_(None))
+    if body.warehouse_ids:
+        stmt = stmt.where(Warehouse.id.in_(body.warehouse_ids))
+    else:
+        stmt = stmt.where(Warehouse.closed_at.is_(None))
+    targets = [(wh, account_svc.owners(db, wh)) for wh in db.scalars(stmt.order_by(Warehouse.name))]
+    recipients = sorted({addr for _, addrs in targets for addr in addrs})
+    if not body.send:
+        return {"warehouses": len(targets), "recipients": len(recipients), "sent": 0}
+    paragraphs = [p.strip() for p in body.message.split("\n\n") if p.strip()]
+    sent = failed = 0
+    for addr in recipients:
+        try:
+            email.send(
+                email.notice_email(
+                    addr,
+                    subject=body.subject,
+                    heading=body.subject,
+                    lines=paragraphs,
+                    button_label="Open Autorack",
+                    url=f"{get_settings().frontend_url.rstrip('/')}/app/",
+                    footer="An important notice from Autorack about your account. Questions? Just reply.",
+                )
+            )
+            sent += 1
+        except email.EmailError:
+            failed += 1
+    actor = _actor(uctx)
+    for wh, addrs in targets:
+        audit.record(
+            db,
+            actor,
+            "notice.sent",
+            warehouse_id=wh.id,
+            target_type="warehouse",
+            target_id=wh.id,
+            subject=body.subject,
+            recipients=len(addrs),
+        )
+    audit.record(
+        db,
+        actor,
+        "operator.notice",
+        warehouse_id=None,
+        subject=body.subject,
+        message=body.message[:2000],
+        warehouses=len(targets),
+        recipients=len(recipients),
+        failed=failed,
+    )
+    db.commit()
+    return {"warehouses": len(targets), "recipients": len(recipients), "sent": sent, "failed": failed}
+
+
+@router.get("/notices")
+def list_notices(uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    return [
+        {"at": a.created_at.isoformat(), "by": a.actor_label, **a.details}
+        for a in db.scalars(
+            select(AuditLog).where(AuditLog.action == "operator.notice").order_by(AuditLog.id.desc()).limit(50)
+        )
+    ]
+
+
 @router.get("/usage")
 def feature_usage(
     days: int = Query(30, ge=1, le=365), uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
@@ -429,6 +585,9 @@ def activity(
         "team.invited",
         "billing.status_changed",
         "warehouse.status_set",
+        "account.closed",
+        "account.reopened",
+        "account.purged",
         "device.linked",
         "worker.created",
     ]

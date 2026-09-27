@@ -165,6 +165,16 @@ class Warehouse(Base):
     require_ship_scan: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     onboarding_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
+    # Closing an account (owner or operator): scanning stops at once and the
+    # data is deleted after a grace period (license agreement, Section 9.1),
+    # unless the account is reopened first. `purged_at` marks the tombstone
+    # left behind: the row and its signed agreements, nothing else.
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_by: Mapped[str | None] = mapped_column(String(320))
+    close_reason: Mapped[str | None] = mapped_column(String(500))
+    deletion_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     users: Mapped[list[User]] = relationship(back_populates="warehouse")
@@ -276,6 +286,9 @@ class Worker(Base):
     # warehouse" in the database. Useless without SECRET_KEY.
     pin_fingerprint: Mapped[str] = mapped_column(String(64))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # The "what Autorack records about you" notice, acknowledged on a phone.
+    notice_version: Mapped[str | None] = mapped_column(String(16))
+    notice_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     warehouse: Mapped[Warehouse] = relationship(back_populates="workers")

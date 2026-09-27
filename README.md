@@ -71,6 +71,12 @@ signature certificate is stored and downloadable). Warehouses that haven't
 signed the current version are asked to before the dashboard opens. A draft
 privacy policy is at `/privacy.html`.
 
+Owners can **download all their data** as one ZIP and **close the account**
+(billing cancelled, scanning stopped, data deleted after 45 days with a
+reminder; reopen any time before). Workers see a **privacy notice** on the
+phone before their first order. `/security.html` describes the safeguards and
+`docs/INCIDENT_RESPONSE.md` what to do when something goes wrong.
+
 New warehouses get a **setup checklist** and can load 12 sample orders with a
 printable barcode sheet, to try scanning before importing anything.
 
