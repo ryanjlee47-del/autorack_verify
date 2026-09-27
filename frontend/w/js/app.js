@@ -584,10 +584,13 @@ function renderPickBody() {
     app.locked ? h("div", { class: "banner banner-bad" }, app.locked) : null);
 
   const targetCard = target
-    ? h("section", { class: "target" },
+    ? h("section", { class: ["target", productOf(target) && productOf(target).thumb && "target-with-photo"] },
+      productPhoto(target),
       h("div", { class: "target-label" }, T("pickNext")),
       target.location ? h("div", { class: "target-location" }, target.location) : null,
       h("div", { class: "target-name" }, lineLabel(target)),
+      target.kit_name ? h("div", { class: "kit-tag" }, T("kitPart", { kit: target.kit_name })) : null,
+      packerNote(target),
       h("div", { class: "target-meta" },
         target.sku ? h("span", { class: "mono" }, target.sku) : null,
         h("span", { class: "mono muted" }, target.expected_barcode)),
@@ -624,7 +627,7 @@ function renderPickBody() {
         },
       },
       h("div", { class: "line-main" },
-        h("span", { class: "line-name" }, lineLabel(l)),
+        h("span", { class: "line-name" }, productPhoto(l, "line-photo"), lineLabel(l)),
         h("span", { class: "line-qty" },
           done && !short ? `✓ ${l.expected_quantity}` : `${l.scanned_quantity}/${l.expected_quantity}`)),
       h("div", { class: "line-sub" },
@@ -724,7 +727,7 @@ function renderTallyBody() {
       const state = blind ? null : l.scanned_quantity === l.expected_quantity ? "ok" : l.scanned_quantity > l.expected_quantity ? "over" : null;
       return h("li", { class: ["line", state === "ok" && "line-done", state === "over" && "line-over"] },
         h("div", { class: "line-main" },
-          h("span", { class: "line-name" }, lineLabel(l)),
+          h("span", { class: "line-name" }, productPhoto(l, "line-photo"), lineLabel(l)),
           h("span", { class: "line-qty" }, blind ? String(l.scanned_quantity) : `${l.scanned_quantity}/${l.expected_quantity}`)),
         h("div", { class: "line-sub" },
           l.location ? h("span", null, l.location) : null,
@@ -811,6 +814,21 @@ async function beginReturn(code) {
   }
 }
 
+/** The catalog product behind a line (picture, packer note), if linked. */
+function productOf(line) {
+  return line && line.product_id && app.order && app.order.products ? app.order.products[line.product_id] : null;
+}
+
+function productPhoto(line, cls = "target-photo") {
+  const p = productOf(line);
+  return p && p.thumb ? h("img", { class: cls, src: p.thumb, alt: "" }) : null;
+}
+
+function packerNote(line) {
+  const p = productOf(line);
+  return p && p.packer_note ? h("div", { class: "packer-note" }, "⚠ ", p.packer_note) : null;
+}
+
 /** "Lot A100 only · Serial · Exp": what this line records for each unit. */
 function traceTags(line) {
   const tags = [
@@ -893,7 +911,7 @@ async function handleScan(rawText) {
     lot: details.lot || null,
     serial: details.serial || null,
     expiry: details.expiry || null,
-    local: { result: c.result, lineId: c.lineId },
+    local: { result: c.result, lineId: c.lineId, qty: c.qty || 1 },
   };
   try {
     await store.outboxAdd(ev);
@@ -902,7 +920,7 @@ async function handleScan(rawText) {
     return;
   }
   app.pending.push(ev);
-  remember({ id: ev.id, orderId: order.id, kind: "scan", result: c.result, lineId: c.lineId, serial: details.serial || null, at: ev.client_scanned_at });
+  remember({ id: ev.id, orderId: order.id, kind: "scan", result: c.result, lineId: c.lineId, qty: c.qty || 1, serial: details.serial || null, at: ev.client_scanned_at });
   const after = currentLines();
   const line = after.find((l) => l.id === c.lineId) || c.line;
   if (c.result === "match" && line && line.scanned_quantity >= line.expected_quantity) app.targetLineId = null;
@@ -929,7 +947,9 @@ function showResult(r) {
     extra: extraIsBad
       ? ["bad", "✕", T("resultNotReturned"), T("resultNotReturnedDetail")]
       : ["warn", "+", T("resultExtra"), T(order.kind === "count" ? "resultExtraDetailCount" : "resultExtraDetail")],
-    match: ["ok", "✓", T("resultMatch"), r.line ? `${lineLabel(r.line)} · ${T("resultMatchDetail", { done: r.line.scanned_quantity, total: r.line.expected_quantity })}` : ""],
+    match: r.sub
+      ? ["warn", "⇄", T("resultSubstitute"), T("resultSubstituteDetail", { sub: r.sub, item: r.line ? lineLabel(r.line) : "" })]
+      : ["ok", "✓", r.qty ? T("resultCase", { n: r.qty }) : T("resultMatch"), r.line ? `${lineLabel(r.line)} · ${T("resultMatchDetail", { done: r.line.scanned_quantity, total: r.line.expected_quantity })}` : ""],
     mismatch: r.problem === "wrong_lot"
       ? ["bad", "✕", T("resultWrongLot"), T("resultWrongLotDetail", { lot: r.line.required_lot })]
       : r.problem === "expired"
@@ -937,7 +957,9 @@ function showResult(r) {
         : r.problem === "serial_repeat"
           ? ["bad", "✕", T("resultSerialRepeat"), T("resultSerialRepeatDetail", { serial: r.details.serial })]
           : ["bad", "✕", T("resultMismatch"), T("resultMismatchDetail")],
-    over_pick: ["warn", "!", T("resultOverPick"), r.line ? `${lineLabel(r.line)} · ${T("resultOverPickDetail")}` : T("resultOverPickDetail")],
+    over_pick: r.qty && r.line && S.remaining(r.line) > 0
+      ? ["warn", "!", T("resultCaseTooBig", { n: r.qty }), T("resultCaseTooBigDetail", { left: S.remaining(r.line) })]
+      : ["warn", "!", T("resultOverPick"), r.line ? `${lineLabel(r.line)} · ${T("resultOverPickDetail")}` : T("resultOverPickDetail")],
     review: ["warn", "?", T("resultReview"), T("resultReviewDetail")],
     order_code: ["warn", "!", T("resultOrderCode"), T("resultOrderCodeDetail")],
     storage_failed: ["bad", "✕", T("storageFailed"), ""],
@@ -1125,7 +1147,7 @@ async function undoLast() {
     client_seq: await store.nextSeq().catch(() => Date.now()),
     target_scan_id: lastScan.id,
     offline: !app.status.online,
-    local: { lineId: lastScan.lineId },
+    local: { lineId: lastScan.lineId, qty: lastScan.qty || 1 },
   };
   try {
     await store.outboxAdd(ev);

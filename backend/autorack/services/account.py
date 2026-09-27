@@ -43,6 +43,7 @@ from ..models import (
     FeatureUsage,
     ImportBatch,
     Integration,
+    KitComponent,
     MagicLinkToken,
     Membership,
     NotificationSent,
@@ -51,6 +52,10 @@ from ..models import (
     OrderLineItem,
     OwnerSession,
     Photo,
+    Product,
+    ProductBarcode,
+    ProductImage,
+    ProductSubstitute,
     ScanEvent,
     StripeEvent,
     SubscriptionStatus,
@@ -306,6 +311,33 @@ def export_zip(db: Session, wh: Warehouse) -> IO[bytes]:
             (
                 [a.alias_key, a.target_key, a.note, a.created_at]
                 for a in db.scalars(select(BarcodeAlias).where(BarcodeAlias.warehouse_id == wid))
+            ),
+        )
+        counts["products"] = _csv(
+            zf,
+            "products.csv",
+            ["product_id", "sku", "barcode", "name", "location", "weight_grams", "packer_note", "active", "created_at"],
+            (
+                [p.id, p.sku, p.barcode, p.name, p.location, p.weight_grams, p.packer_note, p.active, p.created_at]
+                for p in db.scalars(select(Product).where(Product.warehouse_id == wid).order_by(Product.name))
+            ),
+        )
+        counts["product_barcodes"] = _csv(
+            zf,
+            "product_barcodes.csv",
+            ["product_id", "barcode", "pack_qty", "label"],
+            (
+                [b.product_id, b.barcode, b.pack_qty, b.label]
+                for b in db.scalars(select(ProductBarcode).where(ProductBarcode.warehouse_id == wid))
+            ),
+        )
+        counts["kits"] = _csv(
+            zf,
+            "kit_components.csv",
+            ["kit_product_id", "component_product_id", "quantity"],
+            (
+                [k.kit_id, k.component_id, k.quantity]
+                for k in db.scalars(select(KitComponent).where(KitComponent.warehouse_id == wid))
             ),
         )
         counts["imports"] = _csv(
@@ -569,6 +601,11 @@ def purge(db: Session, wh: Warehouse, actor: Actor) -> dict[str, int]:
     gone("scans", delete(ScanEvent).where(ScanEvent.warehouse_id == wid))
     gone("order_lines", delete(OrderLineItem).where(OrderLineItem.warehouse_id == wid))
     gone("orders", delete(Order).where(Order.warehouse_id == wid))
+    gone("product_substitutes", delete(ProductSubstitute).where(ProductSubstitute.warehouse_id == wid))
+    gone("kit_components", delete(KitComponent).where(KitComponent.warehouse_id == wid))
+    gone("product_barcodes", delete(ProductBarcode).where(ProductBarcode.warehouse_id == wid))
+    gone("product_images", delete(ProductImage).where(ProductImage.warehouse_id == wid))
+    gone("products", delete(Product).where(Product.warehouse_id == wid))
     gone("imports", delete(ImportBatch).where(ImportBatch.warehouse_id == wid))
     gone("connections", delete(Integration).where(Integration.warehouse_id == wid))
     gone("barcode_aliases", delete(BarcodeAlias).where(BarcodeAlias.warehouse_id == wid))

@@ -5,6 +5,7 @@ import { agreementGate, loadAgreement } from "./agreement.js";
 import { api, ctx, fail, getToken, loadMe, logout, stopPolling, switchWarehouse, toLogin } from "./core.js";
 import { connectionsView } from "./views/connections.js";
 import { dashboardView } from "./views/dashboard.js";
+import { productView, productsView } from "./views/products.js";
 import { billingView, insightsView, settingsView } from "./views/more.js";
 import { boardView, reportsView } from "./views/reports.js";
 import { importView, newOrderView, orderDetailView, ordersView } from "./views/orders.js";
@@ -26,6 +27,8 @@ const ROUTES = [
   [/^\/board$/, (m, p) => boardView(p)],
   [/^\/billing$/, (m, p) => billingView(p)],
   [/^\/connections$/, () => connectionsView()],
+  [/^\/products$/, (m, p) => productsView(p)],
+  [/^\/products\/([0-9a-f-]{36})$/, (m) => productView(m[1])],
   [/^\/settings$/, () => settingsView()],
 ];
 

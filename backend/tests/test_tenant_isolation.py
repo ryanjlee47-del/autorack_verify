@@ -28,6 +28,10 @@ BODIES: dict[tuple[str, str], dict] = {
     ("PATCH", "/api/devices/{device_id}"): {"label": "x"},
     ("PATCH", "/api/team/{user_id}"): {"name": "x"},
     ("PATCH", "/api/integrations/{integration_id}"): {"enabled": False},
+    ("PATCH", "/api/products/{product_id}"): {"name": "x"},
+    ("POST", "/api/products/{product_id}/barcodes"): {"barcode": "A-NEW-CODE", "pack_qty": 6},
+    ("PUT", "/api/products/{product_id}/components"): {"components": []},
+    ("POST", "/api/products/{product_id}/substitutes"): {"substitute_id": "00000000-0000-0000-0000-000000000000"},
 }
 NO_BODY = {
     ("GET", "/api/orders/{order_id}"),
@@ -41,12 +45,22 @@ NO_BODY = {
     ("GET", "/api/worker/orders/{order_id}"),
     ("DELETE", "/api/integrations/{integration_id}"),
     ("POST", "/api/integrations/{integration_id}/sync"),
+    ("POST", "/api/integrations/{integration_id}/products"),
     ("POST", "/api/orders/{order_id}/push-tracking"),
     ("POST", "/api/orders/{order_id}/return"),
     ("POST", "/api/orders/{order_id}/reopen"),
     ("GET", "/api/orders/{order_id}/variance.csv"),
     ("POST", "/api/orders/{order_id}/share"),
     ("DELETE", "/api/orders/{order_id}/share"),
+    ("GET", "/api/products/{product_id}"),
+    ("DELETE", "/api/products/{product_id}"),
+    ("POST", "/api/products/{product_id}/restore"),
+    ("POST", "/api/products/{product_id}/image"),
+    ("DELETE", "/api/products/{product_id}/image"),
+    ("GET", "/api/products/{product_id}/image"),
+    ("DELETE", "/api/products/{product_id}/barcodes/{barcode_id}"),
+    ("POST", "/api/products/{product_id}/assign-barcode"),
+    ("DELETE", "/api/products/{product_id}/substitutes/{substitute_id}"),
 }
 
 
@@ -69,6 +83,15 @@ def _connection_for(client, owner) -> str:
         db.add(integ)
         db.commit()
         return str(integ.id)
+
+
+def _catalog_for(client, owner) -> dict[str, str]:
+    mk = lambda **f: client.post("/api/products", json=f, headers=owner.h).json()  # noqa: E731
+    p = mk(name="B-SECRET-PRODUCT", sku="B-SECRET-SKU", barcode="B-SECRET-UPC")
+    sub = mk(name="B-SECRET-SUB", sku="B-SUB", barcode="B-SUB-UPC")
+    r = client.post(f"/api/products/{p['id']}/barcodes", json={"barcode": "B-CASE", "pack_qty": 12}, headers=owner.h)
+    client.post(f"/api/products/{p['id']}/substitutes", json={"substitute_id": sub["id"]}, headers=owner.h)
+    return {"product_id": p["id"], "barcode_id": r.json()["barcodes"][0]["id"], "substitute_id": sub["id"]}
 
 
 @pytest.fixture
@@ -101,6 +124,7 @@ def two_tenants(client):
         "photo_id": photo_id,
         "flag_event_id": flag["id"],
         "integration_id": _connection_for(client, b),
+        **_catalog_for(client, b),
     }
     return a, a_phone, b, ids
 
@@ -138,6 +162,8 @@ def test_lists_and_reports_never_include_other_tenants(client, two_tenants):
         "/api/audit",
         "/api/imports",
         "/api/integrations",
+        "/api/products",
+        "/api/products?q=SECRET",
         "/api/dashboard/summary",
         "/api/dashboard/live",
         "/api/dashboard/workers",

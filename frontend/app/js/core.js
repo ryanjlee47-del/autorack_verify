@@ -99,6 +99,7 @@ function nav() {
   return [
     ["#/", "Dashboard"],
     ["#/orders", "Orders"],
+    ["#/products", "Products"],
     ["#/reports", "Reports"],
     wh.leaderboard_enabled ? ["#/board", "Floor board"] : null,
     ["#/workers", "Workers"],

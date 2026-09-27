@@ -7,7 +7,7 @@
 // the outbox, so the numbers on screen never double-count and never go
 // backwards unless the server actually disagreed.
 
-import { buildIndex, matchAgainstIndex, parseGs1 } from "../../shared/barcode.js";
+import { buildIndex, matchAgainstIndex, normalizedKey, parseGs1 } from "../../shared/barcode.js";
 
 export const ORDER_QR_PREFIX = "AUTORACK:ORDER:";
 
@@ -82,10 +82,11 @@ export function displayLines(order, pending) {
   for (const ev of ordered) {
     const lineId = (ev.local && ev.local.lineId) || (ev.kind === "short" && ev.line_item_id);
     if (!lineId || !qty.has(lineId)) continue;
+    const units = (ev.local && ev.local.qty) || 1;
     if (ev.kind === "scan" && (ev.local.result === "match" || ev.local.result === "counted")) {
-      qty.set(lineId, qty.get(lineId) + 1);
+      qty.set(lineId, qty.get(lineId) + units);
     }
-    if (ev.kind === "void") qty.set(lineId, Math.max(0, qty.get(lineId) - 1));
+    if (ev.kind === "void") qty.set(lineId, Math.max(0, qty.get(lineId) - units));
     if (ev.kind === "short") {
       const left = Math.max(0, expected.get(lineId) - qty.get(lineId) - short.get(lineId));
       short.set(lineId, short.get(lineId) + Math.min(ev.quantity || 0, left));
@@ -135,13 +136,30 @@ export function checkLabel(order, raw) {
  *   review     low-confidence tier, or ambiguous between lines
  *   mismatch   confidently not on this order
  */
+/**
+ * What one scan of `raw` stands for, beyond the line it matched: a case
+ * barcode counts its pack size (`qty`), and an approved substitute is
+ * marked (`sub`: the substitute's name). Mirrors services/scans.py.
+ */
+export function scanExtras(order, raw) {
+  const key = normalizedKey(String(raw || ""));
+  const packs = (order.match && order.match.packs) || {};
+  const subs = (order.match && order.match.subs) || {};
+  const out = {};
+  if (packs[key] > 1) out.qty = packs[key];
+  if (subs[key]) out.sub = subs[key];
+  return out;
+}
+
 export function classify(order, lines, raw) {
   const { index, options } = matcherFor(order);
   const m = matchAgainstIndex(index, raw, options);
+  const extras = m.resolved ? scanExtras(order, raw) : {};
+  const units = extras.qty || 1;
   if (isTally(order)) {
     // counted | extra | review, as the server decides for tally jobs.
     if (m.resolved && !m.needsConfirmation && lines.some((l) => l.id === m.lineId)) {
-      return { result: "counted", lineId: m.lineId, tier: m.tier };
+      return { result: "counted", lineId: m.lineId, tier: m.tier, ...extras };
     }
     if (m.resolved || m.ambiguous) return { result: "review", lineId: m.resolved ? m.lineId : null, tier: m.tier };
     return { result: "extra", lineId: null, tier: null };
@@ -149,10 +167,13 @@ export function classify(order, lines, raw) {
   if (m.resolved && !m.needsConfirmation) {
     const line = lines.find((l) => l.id === m.lineId);
     if (line) {
+      // A whole case when fewer units are left is an over-pick: open it.
+      const enough = remaining(line) >= units;
       return {
-        result: remaining(line) > 0 ? "match" : "over_pick",
+        result: enough ? "match" : "over_pick",
         lineId: line.id,
         tier: m.tier,
+        ...(enough ? extras : extras.qty ? { qty: extras.qty } : {}),
       };
     }
   }

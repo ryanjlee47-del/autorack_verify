@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from ..models import (
     PICK_RESULTS,
     TALLY_KINDS,
+    UNIT_RESULTS,
     Order,
     OrderFlag,
     OrderKind,
@@ -68,7 +69,9 @@ def day_bounds(wh: Warehouse, day: date | None = None) -> tuple[datetime, dateti
 
 
 def _result_counts(db: Session, wh_id: uuid.UUID, since: datetime | None, until: datetime | None) -> dict[str, int]:
-    stmt = select(ScanEvent.result, func.count()).where(ScanEvent.warehouse_id == wh_id)
+    stmt = select(
+        ScanEvent.result, func.sum(case((ScanEvent.result.in_(UNIT_RESULTS), ScanEvent.quantity), else_=1))
+    ).where(ScanEvent.warehouse_id == wh_id)
     if since:
         stmt = stmt.where(ScanEvent.client_scanned_at >= since)
     if until:
@@ -359,11 +362,11 @@ def worker_stats(db: Session, wh: Warehouse, days: int = 7) -> dict[str, Any]:
             select(
                 ScanEvent.worker_id,
                 func.sum(case((ScanEvent.result.in_(PICK_RESULTS), 1), else_=0)),
-                func.sum(case((ScanEvent.result == ScanResult.match, 1), else_=0)),
+                func.sum(case((ScanEvent.result == ScanResult.match, ScanEvent.quantity), else_=0)),
                 func.sum(case((ScanEvent.result == ScanResult.mismatch, 1), else_=0)),
                 func.sum(case((ScanEvent.result == ScanResult.over_pick, 1), else_=0)),
                 func.sum(case((ScanEvent.result == ScanResult.review, 1), else_=0)),
-                func.sum(case((ScanEvent.result == ScanResult.void, 1), else_=0)),
+                func.sum(case((ScanEvent.result == ScanResult.void, ScanEvent.quantity), else_=0)),
                 func.count(func.distinct(ScanEvent.order_id)),
                 func.max(ScanEvent.client_scanned_at),
             )
@@ -457,7 +460,11 @@ def trend(db: Session, wh: Warehouse, days: int = 30) -> dict[str, Any]:
     local_day = cast(func.timezone(wh.timezone if tz.key == wh.timezone else "UTC", ScanEvent.client_scanned_at), Date)
     buckets: dict[date, dict[str, int]] = {}
     for d, result, n in db.execute(
-        select(local_day, ScanEvent.result, func.count())
+        select(
+            local_day,
+            ScanEvent.result,
+            func.sum(case((ScanEvent.result.in_(UNIT_RESULTS), ScanEvent.quantity), else_=1)),
+        )
         .where(ScanEvent.warehouse_id == wh.id, ScanEvent.client_scanned_at >= start)
         .group_by(local_day, ScanEvent.result)
     ):

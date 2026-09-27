@@ -1379,3 +1379,82 @@ body.tv {
 .btn-google:hover {
   background: #f8f9fa;
 }
+
+/* Products */
+.product-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--surface-2);
+  font-size: 20px;
+}
+
+.product-photo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  margin-bottom: 12px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.product-photo-img {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: var(--radius-sm);
+  font-size: 64px;
+}
+
+.pick-list {
+  display: grid;
+  gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.pick-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pick-item:hover {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.badge-inline {
+  margin-left: 6px;
+}
+
+.banner-ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.line-item-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.trace-fields label.check,
+.form-grid label.check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}

@@ -41,6 +41,11 @@ def _sum(cond: Any) -> Any:
     return func.coalesce(func.sum(case((cond, 1), else_=0)), 0)
 
 
+def _units(cond: Any) -> Any:
+    """Units, not scans: a case barcode counts its pack size."""
+    return func.coalesce(func.sum(case((cond, ScanEvent.quantity), else_=0)), 0)
+
+
 def _accuracy(matches: int, errors: int) -> float | None:
     attempts = matches + errors
     return round(matches / attempts, 4) if attempts else None
@@ -65,7 +70,7 @@ def build(db: Session, wh: Warehouse, start_day: date, end_day: date) -> dict[st
 
     # --- totals -------------------------------------------------------------
     m, v, e, rv = db.execute(
-        select(_sum(is_match), _sum(is_void), _sum(is_error), _sum(ScanEvent.result == ScanResult.review)).where(
+        select(_units(is_match), _units(is_void), _sum(is_error), _sum(ScanEvent.result == ScanResult.review)).where(
             *scan_window
         )
     ).one()
@@ -111,7 +116,7 @@ def build(db: Session, wh: Warehouse, start_day: date, end_day: date) -> dict[st
     cust = func.coalesce(func.nullif(func.trim(Order.customer), ""), NO_CUSTOMER)
     by_customer: dict[str, dict[str, Any]] = {}
     for name, units, voids, errors, orders in db.execute(
-        select(cust, _sum(is_match), _sum(is_void), _sum(is_error), func.count(func.distinct(ScanEvent.order_id)))
+        select(cust, _units(is_match), _units(is_void), _sum(is_error), func.count(func.distinct(ScanEvent.order_id)))
         .join(Order, Order.id == ScanEvent.order_id)
         .where(*scan_window, ScanEvent.result.in_([*PICK_RESULTS, ScanResult.void]))
         .group_by(cust)
@@ -150,8 +155,8 @@ def build(db: Session, wh: Warehouse, start_day: date, end_day: date) -> dict[st
             counted.normalized_barcode,
             func.max(counted.sku),
             func.max(counted.sku_description),
-            _sum(is_match),
-            _sum(is_void),
+            _units(is_match),
+            _units(is_void),
         )
         .join(ScanEvent, ScanEvent.line_item_id == counted.id)
         .where(*scan_window)
@@ -194,8 +199,8 @@ def build(db: Session, wh: Warehouse, start_day: date, end_day: date) -> dict[st
     for wid, units, voids, errors, reviews, orders in db.execute(
         select(
             ScanEvent.worker_id,
-            _sum(is_match),
-            _sum(is_void),
+            _units(is_match),
+            _units(is_void),
             _sum(is_error),
             _sum(ScanEvent.result == ScanResult.review),
             func.count(func.distinct(ScanEvent.order_id)),
@@ -223,7 +228,7 @@ def build(db: Session, wh: Warehouse, start_day: date, end_day: date) -> dict[st
     buckets = {
         d: (int(u) - int(vv), int(er))
         for d, u, vv, er in db.execute(
-            select(local_day, _sum(is_match), _sum(is_void), _sum(is_error)).where(*scan_window).group_by(local_day)
+            select(local_day, _units(is_match), _units(is_void), _sum(is_error)).where(*scan_window).group_by(local_day)
         )
     }
     days = []
@@ -299,8 +304,8 @@ def board(db: Session, wh: Warehouse) -> dict[str, Any]:
     for wid, units, voids, errors, first, last in db.execute(
         select(
             ScanEvent.worker_id,
-            _sum(is_match),
-            _sum(is_void),
+            _units(is_match),
+            _units(is_void),
             _sum(is_error),
             func.min(ScanEvent.client_scanned_at),
             func.max(ScanEvent.client_scanned_at),

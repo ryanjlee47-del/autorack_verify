@@ -398,7 +398,21 @@ function lineName(l) {
 function linesTable(order, editable, reload) {
   const cols = [
     { label: "Location", render: (l) => l.location || h("span", { class: "muted" }, "–") },
-    { label: "Item", render: (l) => h("div", null, h("div", null, l.description || l.sku || "–"), l.sku && l.description ? h("div", { class: "muted small mono" }, l.sku) : null, traceBadges(l)) },
+    {
+      label: "Item",
+      render: (l) => {
+        const prod = l.product_id && order.products ? order.products[l.product_id] : null;
+        return h("div", { class: "line-item-cell" },
+          prod && prod.thumb ? h("img", { class: "product-thumb", src: prod.thumb, alt: "" }) : null,
+          h("div", null,
+            l.product_id ? h("a", { href: `#/products/${l.product_id}` }, l.description || l.sku || "–") : h("div", null, l.description || l.sku || "–"),
+            l.sku && l.description ? h("div", { class: "muted small mono" }, l.sku) : null,
+            l.kit_name ? h("div", { class: "muted small" }, `Part of kit: ${l.kit_name}`) : null,
+            l.confirm_without_scan ? h("div", { class: "muted small" }, "No barcode: confirmed by tap") : null,
+            prod && prod.packer_note ? h("div", { class: "warn-text small" }, "⚠ ", prod.packer_note) : null,
+            traceBadges(l)));
+      },
+    },
     { label: "Barcode", render: (l) => h("span", { class: "mono" }, l.expected_barcode) },
     {
       label: order.kind && order.kind !== "pick" ? "Counted" : "Verified", align: "right",
@@ -503,6 +517,9 @@ function scanHistory(order, scans, linesById, reload, editable) {
       label: "Result",
       render: (s) => h("span", { class: "row nowrap" },
         h("span", { class: `badge badge-${s.voided ? "void" : s.result}` }, resultLabel[s.result] || s.result),
+        s.quantity > 1 ? h("span", { class: "badge badge-inline" }, `×${s.quantity}`) : null,
+        s.substitution ? h("span", { class: "badge badge-warn badge-inline", title: "An approved substitute" }, "Substitute") : null,
+        s.confirmed ? h("span", { class: "badge badge-warn badge-inline", title: "Confirmed by tapping: no barcode" }, "Tapped") : null,
         s.was_offline ? h("span", { class: "muted small", title: "Scanned offline, synced later" }, "offline") : null),
     },
     {

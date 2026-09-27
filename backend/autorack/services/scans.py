@@ -95,6 +95,8 @@ class EventOutcome:
     match_tier: int | None = None
     error: dict[str, str] | None = None
     problem: str | None = None
+    quantity: int | None = None
+    substitution: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if v is not None}
@@ -306,24 +308,32 @@ def _apply_scan(
     tally = order.kind in TALLY_KINDS
     details = unit_details(raw, ev)
     problem: str | None = None
+    scanned_key = matching.normalized_key(raw)
+    # A case/inner-pack barcode counts its pack size; an approved substitute
+    # counts for the line it stands in for.
+    units = int(getattr(index, "packs", {}).get(scanned_key, 1)) if mr.is_resolved else 1
+    substitution = mr.is_resolved and scanned_key in getattr(index, "subs", {})
     if tally and mr.is_resolved and line is not None and not mr.needs_confirmation:
         # Receiving, returns, counts: record what's there, past the expected
         # quantity too -- the difference is the point.
         result = ScanResult.counted
-        line.scanned_quantity += 1
+        line.scanned_quantity += units
     elif tally and not (mr.is_resolved or mr.ambiguous):
         result = ScanResult.extra
     elif mr.is_resolved and line is not None and not mr.needs_confirmation:
-        if order_svc.line_remaining(line) > 0:
+        if order_svc.line_remaining(line) >= units:
             problem = trace_problem(db, wh, line, details)
+            if units > 1 and line.track_serial:
+                problem = "details_missing"  # a case can't carry one serial per unit: scan units
             if problem == "details_missing":
                 result = ScanResult.review
             elif problem:
                 result = ScanResult.mismatch  # the right product, but it mustn't ship
             else:
                 result = ScanResult.match
-                line.scanned_quantity += 1
+                line.scanned_quantity += units
         else:
+            # Nothing left, or a whole case when fewer units are needed.
             result = ScanResult.over_pick
     elif mr.is_resolved or mr.ambiguous:
         # Low-confidence (suffix) hit, or several candidates: a human decides.
@@ -356,6 +366,8 @@ def _apply_scan(
             serial=details.serial,
             expiry=details.expiry,
             problem=problem,
+            quantity=units,
+            substitution=bool(substitution) and result in (ScanResult.match, ScanResult.counted),
         )
     )
     db.flush()
@@ -367,6 +379,8 @@ def _apply_scan(
         line_item_id=str(line.id) if line is not None and result != ScanResult.extra else None,
         match_tier=int(mr.tier) if mr.tier is not None else None,
         problem=problem,
+        quantity=units if units != 1 else None,
+        substitution=True if substitution and result in (ScanResult.match, ScanResult.counted) else None,
     )
 
 
@@ -465,7 +479,7 @@ def _apply_void(
     if line is None and target.result != ScanResult.extra:
         raise EventError("void_target_missing", "That scan can't be undone.")
     if line is not None:
-        line.scanned_quantity = max(0, line.scanned_quantity - 1)
+        line.scanned_quantity = max(0, line.scanned_quantity - target.quantity)
     db.add(
         ScanEvent(
             id=ev.id,
@@ -478,6 +492,7 @@ def _apply_void(
             scanned_barcode=target.scanned_barcode,
             normalized_barcode=target.normalized_barcode,
             result=ScanResult.uncounted if tally else ScanResult.void,
+            quantity=target.quantity,
             is_match=False,
             voids_scan_id=target.id,
             was_offline=ev.offline,

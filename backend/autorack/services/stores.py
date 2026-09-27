@@ -53,6 +53,17 @@ class StoreError(Exception):
 
 
 @dataclass
+class StoreProduct:
+    external_id: str
+    name: str
+    sku: str | None
+    barcode: str | None
+    image_url: str | None = None
+    weight_grams: int | None = None
+    location: str | None = None
+
+
+@dataclass
 class StoreOrder:
     store_order_id: str
     number: str
@@ -189,6 +200,19 @@ query Orders($after: String, $q: String) {
 }
 """
 
+SHOPIFY_PRODUCTS = """
+query Variants($after: String) {
+  productVariants(first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id sku barcode title
+      image { url }
+      product { title featuredImage { url } }
+    }
+  }
+}
+"""
+
 SHOPIFY_FULFILLMENT_ORDERS = """
 query FO($id: ID!) {
   order(id: $id) { fulfillmentOrders(first: 20) { nodes { id status } } }
@@ -292,6 +316,35 @@ class Shopify:
                 after = page.get("endCursor")
         return out
 
+    def products(self) -> list[StoreProduct]:
+        out: list[StoreProduct] = []
+        after = None
+        with client() as c:
+            for _ in range(50):  # up to 5,000 variants per pull
+                data = self._gql(c, SHOPIFY_PRODUCTS, {"after": after})
+                conn = data.get("productVariants") or {}
+                for v in conn.get("nodes") or []:
+                    prod = v.get("product") or {}
+                    title = prod.get("title") or ""
+                    if v.get("title") and v["title"] != "Default Title":
+                        title = f"{title} - {v['title']}"
+                    out.append(
+                        StoreProduct(
+                            external_id=str(v["id"]),
+                            name=title[:500] or (v.get("sku") or "Product"),
+                            sku=(v.get("sku") or "").strip()[:100] or None,
+                            barcode=(v.get("barcode") or "").strip()[:200] or None,
+                            image_url=(
+                                (v.get("image") or {}).get("url") or (prod.get("featuredImage") or {}).get("url")
+                            ),
+                        )
+                    )
+                page = conn.get("pageInfo") or {}
+                if not page.get("hasNextPage"):
+                    break
+                after = page.get("endCursor")
+        return out
+
     def push(self, order: Order) -> str:
         with client() as c:
             data = self._gql(c, SHOPIFY_FULFILLMENT_ORDERS, {"id": order.store_order_id})
@@ -373,6 +426,30 @@ class ShipStation:
                         else:
                             so.skipped_lines.append(str(it.get("name") or "item"))
                     out.append(so)
+                if page >= int(body.get("pages") or 1):
+                    break
+        return out
+
+    def products(self) -> list[StoreProduct]:
+        out: list[StoreProduct] = []
+        with client() as c:
+            for page in range(1, 21):
+                body = _get(
+                    c, self.who, f"{SHIPSTATION_BASE}/products", auth=self.auth, params={"pageSize": 500, "page": page}
+                ).json()
+                for p in body.get("products") or []:
+                    oz = p.get("weightOz")
+                    out.append(
+                        StoreProduct(
+                            external_id=str(p.get("productId")),
+                            name=(p.get("name") or p.get("sku") or "Product")[:500],
+                            sku=(p.get("sku") or "").strip()[:100] or None,
+                            barcode=(p.get("upc") or "").strip()[:200] or None,
+                            image_url=p.get("thumbnailUrl") or None,
+                            weight_grams=round(float(oz) * 28.3495) if oz else None,
+                            location=(p.get("warehouseLocation") or "").strip()[:100] or None,
+                        )
+                    )
                 if page >= int(body.get("pages") or 1):
                     break
         return out
@@ -497,6 +574,54 @@ class WooCommerce:
             out.append(so)
         return out
 
+    def products(self) -> list[StoreProduct]:
+        out: list[StoreProduct] = []
+
+        def grams(v: Any) -> int | None:
+            try:
+                return round(float(v) * self.weight_factor) if v not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+
+        with client() as c:
+            variable: list[dict[str, Any]] = []
+            for page in range(1, 51):
+                batch = self._get(c, "/products", per_page=100, page=page, status="publish")
+                for p in batch:
+                    image = ((p.get("images") or [{}])[0] or {}).get("src")
+                    if p.get("type") == "variable":
+                        variable.append({**p, "_image": image})
+                        continue
+                    out.append(
+                        StoreProduct(
+                            external_id=str(p["id"]),
+                            name=(p.get("name") or "Product")[:500],
+                            sku=(p.get("sku") or "").strip()[:100] or None,
+                            barcode=(p.get("global_unique_id") or "").strip()[:200] or None,
+                            image_url=image,
+                            weight_grams=grams(p.get("weight")),
+                        )
+                    )
+                if len(batch) < 100:
+                    break
+            for p in variable[:100]:
+                for v in self._get(c, f"/products/{p['id']}/variations", per_page=100):
+                    attrs = ", ".join(str(a.get("option")) for a in v.get("attributes") or [] if a.get("option"))
+                    out.append(
+                        StoreProduct(
+                            external_id=f"{p['id']}:{v['id']}",
+                            name=f"{p.get('name')}{' - ' + attrs if attrs else ''}"[:500],
+                            sku=(v.get("sku") or "").strip()[:100] or None,
+                            barcode=(v.get("global_unique_id") or "").strip()[:200] or None,
+                            image_url=(v.get("image") or {}).get("src") or p.get("_image"),
+                            weight_grams=grams(v.get("weight")),
+                        )
+                    )
+        return out
+
+    # WooCommerce reports weight in the store's unit; kg is the default.
+    weight_factor = 1000.0
+
     def push(self, order: Order) -> str:
         carrier = f" via {order.carrier}" if order.carrier else ""
         with client() as c:
@@ -564,6 +689,9 @@ class SheetLink:
 
     def push(self, order: Order) -> str:
         return "spreadsheets don't take tracking back"
+
+    def products(self) -> list[StoreProduct]:
+        return []
 
 
 Connector = Shopify | ShipStation | WooCommerce | SheetLink

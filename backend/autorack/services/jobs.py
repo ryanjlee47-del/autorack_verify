@@ -26,13 +26,14 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Integer, String, cast, delete, func, select, text
+from sqlalchemy import Integer, String, case, cast, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import (
     PICK_RESULTS,
+    UNIT_RESULTS,
     MagicLinkToken,
     Membership,
     NotificationSent,
@@ -158,7 +159,7 @@ def daily_numbers(db: Session, wh: Warehouse, day: Any = None) -> dict[str, Any]
     start, end, day = day_bounds(wh, day)
     counts = {r.value: 0 for r in ScanResult}
     for result, n in db.execute(
-        select(ScanEvent.result, func.count())
+        select(ScanEvent.result, func.sum(case((ScanEvent.result.in_(UNIT_RESULTS), ScanEvent.quantity), else_=1)))
         .where(ScanEvent.warehouse_id == wh.id, ScanEvent.client_scanned_at >= start, ScanEvent.client_scanned_at < end)
         .group_by(ScanEvent.result)
     ):

@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -440,8 +440,123 @@ def run_store_sync(db: Session, now: datetime) -> int:
     ).all()
     due = [i for i in candidates if next_due(i) <= now][:MAX_PER_RUN]
     for integ in due:
-        sync_one(db, integ, now)
+        result = sync_one(db, integ, now)
+        if result.get("ok") and products_due(integ, now):
+            sync_products(db, integ, now)
     return len(due)
+
+
+# ---------------------------------------------------------------------------
+# Pulling the catalog (products, barcodes, pictures)
+# ---------------------------------------------------------------------------
+
+PRODUCTS_EVERY = timedelta(hours=24)
+IMAGES_PER_RUN = 60
+
+
+def products_due(integ: Integration, now: datetime) -> bool:
+    if integ.kind == IntegrationKind.sheet:
+        return False
+    at = (integ.cursor or {}).get("products_at")
+    return not at or datetime.fromisoformat(at) <= now - PRODUCTS_EVERY
+
+
+def sync_products(db: Session, integ: Integration, now: datetime | None = None) -> dict[str, Any]:
+    """Create or update catalog products from the store, and fetch pictures
+    for products that have none. Never raises for one bad product."""
+    from ..models import Product
+    from . import catalog
+
+    now = now or utcnow()
+    wh = db.get(Warehouse, integ.warehouse_id)
+    assert wh is not None
+    try:
+        found = connector_for(integ).products()  # type: ignore[union-attr]
+    except stores.StoreError as exc:
+        return {"ok": False, "error": exc.message}
+    source = integ.kind.value
+    created = updated = images = 0
+    warnings: list[str] = []
+    changed: list[Product] = []
+    for sp in found[:10_000]:
+        if not (sp.sku or sp.barcode):
+            continue
+        p = db.scalar(
+            select(Product).where(
+                Product.warehouse_id == wh.id, Product.source == source, Product.external_id == sp.external_id[:100]
+            )
+        )
+        if p is None and sp.sku:
+            p = db.scalar(
+                select(Product).where(
+                    Product.warehouse_id == wh.id,
+                    Product.active.is_(True),
+                    func.upper(Product.sku) == sp.sku.upper(),
+                )
+            )
+        if p is None and sp.barcode:
+            p = db.scalar(
+                select(Product).where(
+                    Product.warehouse_id == wh.id,
+                    Product.active.is_(True),
+                    Product.normalized_barcode == catalog.key(sp.barcode),
+                )
+            )
+            if p is not None and sp.sku and p.sku and p.sku.upper() != sp.sku.upper():
+                p = None  # same barcode, different SKU: a separate product (the barcode clash is reported)
+        is_new = p is None
+        try:
+            with db.begin_nested():
+                if p is None:
+                    p = Product(warehouse_id=wh.id, name=sp.name, source=source, external_id=sp.external_id[:100])
+                    db.add(p)
+                    db.flush()
+                before = (p.sku, p.normalized_barcode)
+                p.name = sp.name or p.name
+                if p.source == source:
+                    p.external_id = sp.external_id[:100]
+                if sp.sku and not p.sku:
+                    p.sku = sp.sku
+                if sp.barcode and catalog.key(sp.barcode) != p.normalized_barcode:
+                    try:
+                        p.normalized_barcode = catalog.check_barcode_free(db, wh.id, sp.barcode, product_id=p.id)
+                        p.barcode = sp.barcode
+                    except ApiError:
+                        warnings.append(f"{sp.name}: barcode {sp.barcode} is already on another product.")
+                if sp.weight_grams is not None:
+                    p.weight_grams = sp.weight_grams
+                if sp.location and not p.location:
+                    p.location = sp.location
+                db.flush()
+        except Exception as exc:
+            warnings.append(f"{sp.name}: {exc.__class__.__name__}")
+            continue
+        created += is_new
+        updated += not is_new
+        if is_new or before != (p.sku, p.normalized_barcode):
+            changed.append(p)
+        if not p.image_id and sp.image_url and images < IMAGES_PER_RUN:
+            try:
+                content = stores.fetch_public(sp.image_url, "The store's picture server").content
+                with db.begin_nested():
+                    catalog.set_image(db, p, content)
+                images += 1
+                if p not in changed:
+                    changed.append(p)
+            except (stores.StoreError, ApiError):
+                pass
+    for p in changed:
+        catalog.relink(db, wh, p)
+    integ.cursor = {**(integ.cursor or {}), "products_at": now.isoformat(), "products": len(found)}
+    db.commit()
+    return {
+        "ok": True,
+        "found": len(found),
+        "created": created,
+        "updated": updated,
+        "images": images,
+        "warnings": warnings[:20],
+    }
 
 
 # ---------------------------------------------------------------------------

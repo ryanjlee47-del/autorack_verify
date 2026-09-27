@@ -43,6 +43,10 @@ class LineInput:
     track_serial: bool = False
     track_expiry: bool = False
     required_lot: str | None = None
+    product_id: uuid.UUID | None = None
+    kit_product_id: uuid.UUID | None = None
+    kit_name: str | None = None
+    confirm_without_scan: bool = False
 
 
 TRACK_WORDS = {
@@ -118,8 +122,14 @@ def merge_line_inputs(lines: list[LineInput]) -> list[LineInput]:
             for attr in ("sku", "description", "location", "required_lot"):
                 if not getattr(merged[key], attr) and getattr(li, attr):
                     setattr(merged[key], attr, getattr(li, attr))
-            for attr in ("track_lot", "track_serial", "track_expiry"):
+            for attr in ("track_lot", "track_serial", "track_expiry", "confirm_without_scan"):
                 setattr(merged[key], attr, getattr(merged[key], attr) or getattr(li, attr))
+            if not merged[key].product_id and li.product_id:
+                merged[key].product_id = li.product_id
+            if merged[key].kit_product_id != li.kit_product_id:
+                # Some units from a kit, some loose (or two kits): no single kit to name.
+                merged[key].kit_product_id = None
+                merged[key].kit_name = None
         else:
             merged[key] = dataclasses.replace(li)
     return list(merged.values())
@@ -145,6 +155,9 @@ def create_order(
     number = clean(external_order_number, 100)
     if not lines:
         raise bad_request("lines_required", "An order needs at least one line.")
+    from . import catalog  # catalog builds on this module
+
+    lines = catalog.apply(db, wh.id, lines)
     minimum = min_quantity(kind)
     if any(li.quantity < minimum for li in lines):
         raise bad_request("quantity_invalid", f"Quantities must be at least {minimum}.")
@@ -207,6 +220,10 @@ def _new_line(warehouse_id: uuid.UUID, order_id: uuid.UUID, line_no: int, li: Li
         track_serial=li.track_serial,
         track_expiry=li.track_expiry,
         required_lot=clean(li.required_lot, 100),
+        product_id=li.product_id,
+        kit_product_id=li.kit_product_id,
+        kit_name=clean(li.kit_name, 300),
+        confirm_without_scan=li.confirm_without_scan,
     )
 
 
@@ -233,15 +250,24 @@ def add_line(db: Session, wh: Warehouse, order: Order, li: LineInput, actor: Act
     existing = lines_for(db, order.id)
     if len(existing) >= MAX_LINES_PER_ORDER:
         raise bad_request("too_many_lines", f"Orders are limited to {MAX_LINES_PER_ORDER} lines.")
-    key = matching.normalized_key(validate_barcode(li.barcode))
+    validate_barcode(li.barcode)
     if li.quantity < min_quantity(order.kind):
         raise bad_request("quantity_invalid", f"Quantity must be at least {min_quantity(order.kind)}.")
-    for line in existing:
-        if line.normalized_barcode == key:
+    from . import catalog
+
+    added = catalog.apply(db, wh.id, [li])  # a kit adds its parts
+    taken = {x.normalized_barcode for x in existing}
+    for new in added:
+        if matching.normalized_key(new.barcode) in taken:
             raise conflict("duplicate_line", "That barcode is already on this order. Edit its quantity instead.")
-    line = _new_line(wh.id, order.id, max((x.line_no for x in existing), default=0) + 1, li)
-    db.add(line)
+    next_no = max((x.line_no for x in existing), default=0)
+    line: OrderLineItem | None = None
+    for i, new in enumerate(merge_line_inputs(added), start=1):
+        made = _new_line(wh.id, order.id, next_no + i, new)
+        db.add(made)
+        line = line or made
     db.flush()
+    assert line is not None
     bump(order)
     audit.record(
         db, actor, "order.line_added", warehouse_id=wh.id, target_type="order", target_id=order.id, line_id=line.id
@@ -464,8 +490,16 @@ def build_index(db: Session, wh: Warehouse, lines: list[OrderLineItem]) -> match
     for alias in aliases_for(db, wh.id, set(by_key)):
         for line in by_key.get(alias.target_key, []):
             index.add_alias(alias.alias_key, str(line.id))
+    from . import catalog
+
+    extras = catalog.match_extras(db, lines)
+    for k, line_id in extras.aliases:
+        index.add_alias(k, line_id)
     report = matching.analyze_collisions([(str(li.id), li.expected_barcode) for li in lines], suffix_len=wh.suffix_len)
     matching.apply_collision_report(index, report)
+    # Scans of these keys count more than one unit / are approved substitutes.
+    index.packs = extras.packs  # type: ignore[attr-defined]
+    index.subs = extras.subs  # type: ignore[attr-defined]
     return index
 
 
@@ -489,6 +523,34 @@ def line_dict(line: OrderLineItem) -> dict[str, Any]:
         "track_serial": line.track_serial,
         "track_expiry": line.track_expiry,
         "required_lot": line.required_lot,
+        "product_id": str(line.product_id) if line.product_id else None,
+        "kit_name": line.kit_name,
+        "confirm_without_scan": line.confirm_without_scan,
+    }
+
+
+def products_for_lines(db: Session, lines: list[OrderLineItem]) -> dict[str, dict[str, Any]]:
+    """Picture, bin, weight and packer note of each linked product, keyed by
+    id. Thumbnails are inlined so the phone has them offline."""
+    from ..models import Product
+    from . import catalog
+
+    ids = {li.product_id for li in lines if li.product_id}
+    if not ids:
+        return {}
+    products = list(db.scalars(select(Product).where(Product.id.in_(ids))))
+    thumbs = catalog.thumb_data_urls(db, {p.image_id for p in products if p.image_id})
+    return {
+        str(p.id): {
+            "name": p.name,
+            "sku": p.sku,
+            "location": p.location,
+            "weight_grams": p.weight_grams,
+            "packer_note": p.packer_note,
+            "thumb": thumbs.get(p.image_id) if p.image_id else None,
+            "image_id": str(p.image_id) if p.image_id else None,
+        }
+        for p in products
     }
 
 
@@ -548,7 +610,10 @@ def offline_payload(db: Session, wh: Warehouse, order: Order) -> dict[str, Any]:
             "suffix_len": wh.suffix_len,
             "index": [{"line_id": lid, "tier": tier, "key": key} for lid, tier, key in index.rows()],
             "disabled_keys": index.disabled_rows(),
+            "packs": getattr(index, "packs", {}),
+            "subs": getattr(index, "subs", {}),
         },
+        "products": products_for_lines(db, lines),
         "open_flags": open_flag_count(db, order.id),
         "require_ship_scan": wh.require_ship_scan,
         "fetched_at": utcnow().isoformat(),

@@ -32,6 +32,7 @@ from ..deps import (
 )
 from ..errors import ApiError, bad_request, not_found
 from ..models import (
+    UNIT_RESULTS,
     FlagReason,
     Order,
     OrderFlag,
@@ -330,7 +331,7 @@ def shift_summary(ctx: WorkerContext = Depends(current_worker), db: Session = De
     belongs to the person being measured."""
     counts = dict.fromkeys((r.value for r in ScanResult), 0)
     for result, n in db.execute(
-        select(ScanEvent.result, func.count())
+        select(ScanEvent.result, func.sum(case((ScanEvent.result.in_(UNIT_RESULTS), ScanEvent.quantity), else_=1)))
         .where(ScanEvent.worker_session_id == ctx.session.id)
         .group_by(ScanEvent.result)
     ):

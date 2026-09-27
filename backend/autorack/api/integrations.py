@@ -93,6 +93,8 @@ def connect(
     db.commit()
     # First pull straight away, so the owner sees their orders arrive.
     result = integrations.sync_one(db, integ)
+    if result.get("ok") and integrations.products_due(integ, utcnow()):
+        result["products"] = integrations.sync_products(db, integ)
     return {"connection": integrations.integration_dict(integ), "sync": result}
 
 
@@ -150,6 +152,20 @@ def sync_now(
         raise ApiError(429, "too_soon", "It just synced. Give it a few seconds.")
     result = integrations.sync_one(db, integ)
     return {"connection": integrations.integration_dict(integ), "sync": result}
+
+
+@router.post("/integrations/{integration_id}/products")
+def import_store_products(
+    integration_id: uuid.UUID, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Pull the store's products (names, SKUs, barcodes, pictures) into the
+    catalog now. It also happens by itself once a day."""
+    _require_access(ctx)
+    integ = integrations.get(db, ctx.warehouse.id, integration_id)
+    if integ.kind == IntegrationKind.sheet:
+        raise bad_request("no_products", "A spreadsheet link has no product catalog.")
+    memory_limiter.check(f"products:{integ.id}", 6, 3600, "Products were just imported. Try again later.")
+    return integrations.sync_products(db, integ)
 
 
 @router.post("/integrations/import-address")

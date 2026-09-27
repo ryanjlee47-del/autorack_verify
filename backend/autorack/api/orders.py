@@ -346,6 +346,7 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
         "lines": [{**order_svc.line_dict(li), "mismatches": errors_by_line.get(li.id, 0)} for li in lines],
         "flags": [flag_dict(f, workers, photos.get(f.id, [])) for f in flags],
         "qr_svg": qr_svg(order_svc.order_qr_payload(order)),
+        "products": order_svc.products_for_lines(db, lines),
         "variance": tasks.variance(db, order) if order.kind in TALLY_KINDS else None,
         "returns": tasks.returns_of(db, order) if order.kind == OrderKind.pick else [],
         "return_of": _return_of(db, order),
@@ -615,6 +616,9 @@ def order_scans(
             "serial": s.serial,
             "expiry": s.expiry.isoformat() if s.expiry else None,
             "problem": s.problem,
+            "quantity": s.quantity,
+            "substitution": s.substitution,
+            "confirmed": s.confirmed,
         }
         for s in scans
     ]

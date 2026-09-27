@@ -132,6 +132,9 @@ class OrderKind(enum.StrEnum):
 
 TALLY_KINDS = (OrderKind.receive, OrderKind.ret, OrderKind.count)
 PICK_RESULTS = (ScanResult.match, ScanResult.over_pick, ScanResult.mismatch, ScanResult.review)
+# Results whose `quantity` is units (a case scan counts its pack size); every
+# other result is one scan, one event.
+UNIT_RESULTS = (ScanResult.match, ScanResult.void, ScanResult.counted, ScanResult.uncounted)
 
 
 class FlagReason(enum.StrEnum):
@@ -381,6 +384,120 @@ class WorkerSession(Base):
 # ---------------------------------------------------------------------------
 
 
+class Product(Base):
+    """The catalog: what a warehouse stocks, so the phone can show a picture,
+    the bin and notes, and so case barcodes, kits and substitutes work."""
+
+    __tablename__ = "products"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    sku: Mapped[str | None] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(500))
+    barcode: Mapped[str | None] = mapped_column(String(200))
+    normalized_barcode: Mapped[str | None] = mapped_column(String(200))
+    location: Mapped[str | None] = mapped_column(String(100))
+    weight_grams: Mapped[int | None] = mapped_column(Integer)
+    # Shown in big letters when this item is picked or packed ("Fragile").
+    packer_note: Mapped[str | None] = mapped_column(String(500))
+    no_barcode: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    track_lot: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    track_serial: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    track_expiry: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    image_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    # Which 3PL client owns it (None for a warehouse's own stock).
+    client_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="manual", server_default="manual")
+    external_id: Mapped[str | None] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index(
+            "uq_products_sku",
+            "warehouse_id",
+            "sku",
+            unique=True,
+            postgresql_where=text("sku IS NOT NULL AND active"),
+        ),
+        Index("ix_products_warehouse_barcode", "warehouse_id", "normalized_barcode"),
+    )
+
+
+class ProductImage(Base):
+    """A product picture, resized on upload (full: 1024px, thumb: 192px)."""
+
+    __tablename__ = "product_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), index=True)
+    content_type: Mapped[str] = mapped_column(String(32))
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    thumb: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProductBarcode(Base):
+    """Another barcode for a product: a second unit barcode (UPC vs EAN), or
+    a case/inner pack that counts `pack_qty` units in one scan."""
+
+    __tablename__ = "product_barcodes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), index=True)
+    barcode: Mapped[str] = mapped_column(String(200))
+    normalized_barcode: Mapped[str] = mapped_column(String(200))
+    pack_qty: Mapped[int] = mapped_column(Integer, default=1)
+    label: Mapped[str | None] = mapped_column(String(60))
+
+    __table_args__ = (
+        UniqueConstraint("warehouse_id", "normalized_barcode", name="uq_product_barcodes_key"),
+        CheckConstraint("pack_qty >= 1 AND pack_qty <= 100000", name="ck_product_barcodes_pack_qty"),
+    )
+
+
+class KitComponent(Base):
+    """A kit (bundle) is picked as its parts: ordering 1 kit means picking
+    `quantity` of each component."""
+
+    __tablename__ = "kit_components"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    kit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), index=True)
+    component_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+
+    __table_args__ = (
+        UniqueConstraint("kit_id", "component_id", name="uq_kit_components_pair"),
+        CheckConstraint("quantity >= 1", name="ck_kit_components_qty"),
+        CheckConstraint("kit_id <> component_id", name="ck_kit_components_not_self"),
+    )
+
+
+class ProductSubstitute(Base):
+    """A manager-approved alternative: scanning `substitute_id` on a line for
+    `product_id` counts, and is recorded as a substitution, not a mistake."""
+
+    __tablename__ = "product_substitutes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), index=True)
+    substitute_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"))
+    note: Mapped[str | None] = mapped_column(String(300))
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("product_id", "substitute_id", name="uq_product_substitutes_pair"),
+        CheckConstraint("product_id <> substitute_id", name="ck_product_substitutes_not_self"),
+    )
+
+
 class ImportBatch(Base):
     __tablename__ = "import_batches"
 
@@ -524,6 +641,14 @@ class OrderLineItem(Base):
     track_expiry: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Only this lot may ship (a recall, a customer's spec, first-expiry-first-out).
     required_lot: Mapped[str | None] = mapped_column(String(100))
+    # The catalog product this line is (matched by barcode or SKU), and the
+    # kit it came from when an ordered kit was split into its parts.
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"), index=True)
+    kit_product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"))
+    kit_name: Mapped[str | None] = mapped_column(String(300))
+    # No barcode on this item: the worker confirms it by tapping (recorded as
+    # not scan-verified).
+    confirm_without_scan: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     order: Mapped[Order] = relationship(back_populates="line_items")
@@ -574,6 +699,12 @@ class ScanEvent(Base):
     # Why a scan of the right product was refused: wrong_lot | expired |
     # serial_repeat | details_missing.
     problem: Mapped[str | None] = mapped_column(String(32))
+    # Units this scan stands for: a case barcode counts its pack size.
+    quantity: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # An approved substitute was scanned in place of the ordered product.
+    substitution: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Confirmed by tapping, for an item with no barcode: not scan-verified.
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     was_offline: Mapped[bool] = mapped_column(Boolean, default=False)
     client_seq: Mapped[int | None] = mapped_column(BigInteger)
     client_scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

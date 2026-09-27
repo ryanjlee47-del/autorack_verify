@@ -229,3 +229,26 @@ test("lot, serial and expiry come from GS1 barcodes and are checked", async () =
   assert.equal(traceProblem(serialLine, { serial: "SN1" }, hist, today), "serial_repeat");
   assert.equal(traceProblem(serialLine, { serial: "SN1" }, [...hist, { kind: "void", target: "x" }], today), null);
 });
+
+test("case barcodes count their pack size and substitutes are marked", async () => {
+  const { scanExtras } = await import("../w/js/state.js");
+  const o = order();
+  o.match = {
+    ...o.match,
+    index: [...o.match.index, { line_id: "a", tier: 5, key: "10025300000205" }, { line_id: "b", tier: 5, key: "SUB-9" }],
+    packs: { "10025300000205": 12 },
+    subs: { "SUB-9": "Widget, new box" },
+  };
+  o.lines[0].expected_quantity = 13;
+  assert.deepEqual(scanExtras(o, "10025300000205"), { qty: 12 });
+  const first = classify(o, o.lines, "10025300000205");
+  assert.deepEqual(first, { result: "match", lineId: "a", tier: 5, qty: 12 });
+  const pending = [{ id: "c1", kind: "scan", order_id: "o1", client_seq: 1, local: { result: "match", lineId: "a", qty: 12 } }];
+  const lines = displayLines(o, pending);
+  assert.equal(lines[0].scanned_quantity, 12);
+  // Only 1 left: a whole case is an over-pick.
+  assert.equal(classify(o, lines, "10025300000205").result, "over_pick");
+  const undo = [...pending, { id: "v", kind: "void", order_id: "o1", client_seq: 2, local: { lineId: "a", qty: 12 } }];
+  assert.equal(displayLines(o, undo)[0].scanned_quantity, 0);
+  assert.deepEqual(classify(o, o.lines, "SUB-9"), { result: "match", lineId: "b", tier: 5, sub: "Widget, new box" });
+});

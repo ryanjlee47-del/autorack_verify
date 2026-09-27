@@ -19,6 +19,16 @@ from autorack.models import Integration, Order, utcnow
 from autorack.services import email, integrations, jobs, secretbox, stores
 
 
+def _png() -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (400, 400), (200, 30, 30)).save(buf, "PNG")
+    return buf.getvalue()
+
+
 class FakeStores:
     """One fake for every vendor, routed by host."""
 
@@ -30,6 +40,7 @@ class FakeStores:
         self.woo_orders: list[dict[str, Any]] = []
         self.sheet = b"order_number,barcode,quantity\nS-1,012345678905,2\n"
         self.fail_with: int | None = None
+        self.shopify_variants: list[dict[str, Any]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -50,6 +61,18 @@ class FakeStores:
                             "orders": {
                                 "pageInfo": {"hasNextPage": False, "endCursor": None},
                                 "nodes": self.shopify_orders,
+                            }
+                        }
+                    },
+                )
+            if "productVariants" in q:
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "productVariants": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": self.shopify_variants,
                             }
                         }
                     },
@@ -80,6 +103,8 @@ class FakeStores:
                 return httpx.Response(200, json=[{"id": 21, "global_unique_id": "012345678905"}])
             if path.endswith("/notes") or request.method == "PUT":
                 return httpx.Response(200, json={})
+        if host == "cdn.shopify.com":
+            return httpx.Response(200, content=_png(), headers={"content-type": "image/png"})
         if host == "docs.google.com":
             return httpx.Response(200, content=self.sheet, headers={"content-type": "text/csv"})
         return httpx.Response(404)
@@ -448,3 +473,40 @@ def test_inbound_email_imports_attachments(client, db, monkeypatch):
 def test_jobs_runner_includes_sync_and_push(db):
     out = jobs.run_all(db, utcnow())
     assert out["store_sync"] == 0 and out["tracking_push"] == 0
+
+
+def test_store_products_come_into_the_catalog_with_pictures(client, fake):
+    owner = signup(client)
+    client.post("/api/products", json={"name": "Old name", "sku": "WID"}, headers=owner.h)  # matched by SKU
+    fake.shopify_variants = [
+        {
+            "id": "gid://shopify/ProductVariant/1",
+            "sku": "WID",
+            "barcode": "012345678905",
+            "title": "Blue",
+            "image": {"url": "https://cdn.shopify.com/blue.png"},
+            "product": {"title": "Widget", "featuredImage": None},
+        },
+        {
+            "id": "gid://shopify/ProductVariant/2",
+            "sku": "TAPE",
+            "barcode": "012345678905",  # clashes: kept off, reported
+            "title": "Default Title",
+            "image": None,
+            "product": {"title": "Tape", "featuredImage": {"url": "https://cdn.shopify.com/tape.png"}},
+        },
+        {"id": "gid://shopify/ProductVariant/3", "sku": "", "barcode": "", "title": "x", "product": {"title": "Gift"}},
+    ]
+    r = connect_shopify(client, owner)
+    res = r.json()["sync"]["products"]
+    assert (res["found"], res["created"], res["updated"], res["images"]) == (3, 1, 1, 2), res
+    assert any("already on another product" in w for w in res["warnings"])
+    listed = {p["sku"]: p for p in client.get("/api/products", headers=owner.h).json()["products"]}
+    assert listed["WID"]["name"] == "Widget - Blue" and listed["WID"]["barcode"] == "012345678905"
+    assert listed["WID"]["thumb"].startswith("data:image/jpeg") and listed["TAPE"]["barcode"] is None
+    assert listed["WID"]["source"] == "manual" and listed["TAPE"]["source"] == "shopify"
+    # Again: nothing new, no duplicates.
+    integ_id = client.get("/api/integrations", headers=owner.h).json()["connections"][0]["id"]
+    again = client.post(f"/api/integrations/{integ_id}/products", headers=owner.h).json()
+    assert (again["created"], again["updated"]) == (0, 2)
+    assert len(client.get("/api/products", headers=owner.h).json()["products"]) == 2

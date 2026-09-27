@@ -7,6 +7,7 @@ import { brandLockup, fmtDateTime, fmtMoney, fmtNumber, fmtPercent, h, mount, sv
 import { getToken } from "./core.js";
 import { customerTable, skuTable, workerTable } from "./views/reports.js";
 import { reportErrors } from "../../shared/report-errors.js";
+import { svg as code128 } from "../../shared/code128.js";
 
 reportErrors("print");
 
@@ -139,6 +140,7 @@ async function main() {
   }
   const me = await request("/api/auth/me", { token });
   if (params.get("proof")) return proof(params.get("proof"), token, me);
+  if (params.get("labels")) return labels(params.get("labels"), token);
   if (params.get("report")) return report(params.get("from"), params.get("to"), token);
   if (params.get("setup")) {
     const link = await request("/api/warehouse/device-link", { token });
@@ -178,4 +180,44 @@ function traced(s) {
 
 function traceText(s) {
   return [s.lot && `Lot ${s.lot}`, s.serial && `S/N ${s.serial}`, s.expiry && `Exp ${s.expiry}`].filter(Boolean).join(" · ");
+}
+
+/**
+ * Product labels: Code 128 barcode, name and SKU. `size=thermal` prints one
+ * 2.25" x 1.25" label per page (Zebra/Rollo/DYMO); `size=sheet` fills Avery
+ * 5160-style sheets, 30 per Letter page. `qty` copies of each.
+ */
+async function labels(ids, token) {
+  const size = params.get("size") === "sheet" ? "sheet" : "thermal";
+  const copies = Math.min(Math.max(Number(params.get("qty")) || 1, 1), 500);
+  const r = await request(`/api/products?ids=${encodeURIComponent(ids)}&limit=500`, { token });
+  const skipped = [];
+  const one = (p) => {
+    const code = p.barcode || p.sku;
+    let bars = null;
+    try {
+      bars = svg(code128(code, { height: 60 }), "label-bars");
+    } catch {
+      skipped.push(p.name);
+      return null;
+    }
+    return h("div", { class: "label" },
+      h("div", { class: "label-name" }, p.name),
+      bars,
+      h("div", { class: "label-code mono" }, code),
+      p.sku && p.sku !== code ? h("div", { class: "label-sku mono" }, p.sku) : null);
+  };
+  const items = r.products.filter((p) => p.barcode || p.sku).flatMap((p) => Array.from({ length: copies }, () => one(p))).filter(Boolean);
+  document.body.classList.add(`labels-${size}`);
+  if (size === "sheet") {
+    const pages = [];
+    for (let i = 0; i < items.length; i += 30) pages.push(h("section", { class: "label-sheet" }, ...items.slice(i, i + 30)));
+    mount(host, ...pages);
+  } else {
+    mount(host, h("div", { class: "label-roll" }, ...items));
+  }
+  const noCode = r.products.filter((p) => !p.barcode && !p.sku).map((p) => p.name);
+  status.textContent = `${items.length} label${items.length === 1 ? "" : "s"} ready` +
+    (noCode.length || skipped.length ? ` · skipped (no printable code): ${[...noCode, ...skipped].join(", ")}` : "");
+  setTimeout(() => window.print(), 300);
 }
