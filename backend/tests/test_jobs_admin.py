@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import JPEG, last_link_token, make_order, scan, scan_event, signup, sync, worker_on_phone
+from conftest import JPEG, google_login, make_order, scan, scan_event, signup, sync, worker_on_phone
 from sqlalchemy import select
 
 from autorack.config import get_settings
@@ -175,8 +175,7 @@ def test_cron_endpoint_needs_secret(client, monkeypatch):
 @pytest.fixture
 def operator(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "operator_emails", "ops@autorack.example.com, Boss@Autorack.example.com")
-    client.post("/api/auth/magic-link", json={"email": "ops@autorack.example.com"})
-    token = client.post("/api/auth/verify", json={"token": last_link_token("ops@autorack.example.com")}).json()["token"]
+    token = google_login(client, "ops@autorack.example.com")
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -246,7 +245,10 @@ def test_operator_who_also_owns_a_warehouse(client, monkeypatch):
 
 
 def test_unknown_emails_still_get_no_account(client, db):
-    client.post("/api/auth/magic-link", json={"email": "random@example.com"})
+    from conftest import fragment, google_redirect
+
+    loc = google_redirect(client, "/api/auth/google/start", "random@example.com")
+    assert fragment(loc)["error"] == "no_account"
     assert db.scalar(select(User).where(User.email == "random@example.com")) is None
 
 

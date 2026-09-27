@@ -74,7 +74,7 @@ A test fails if the landing page and the constant disagree.
 
 ## 5. Email
 
-Magic links are the only way owners sign in, so email must work.
+Email carries invitations, alerts, summaries and reports (sign-in is with Google, section 10).
 [Resend](https://resend.com) is simplest: verify your domain, create an API
 key, set `EMAIL_BACKEND=resend`. Any SMTP relay (Postmark, SES, Mailgun) works
 with `EMAIL_BACKEND=smtp`.
@@ -83,7 +83,7 @@ with `EMAIL_BACKEND=smtp`.
 
 The API sends the daily summary, instant alerts, and trial/payment emails from
 a background loop that runs every minute (`JOBS_ENABLED=true`, the default). It
-also prunes expired sign-in links and sessions hourly. Every email is recorded
+also prunes expired sign-in codes and sessions hourly. Every email is recorded
 once in `notifications_sent`, so running the jobs twice never double-sends.
 
 **Free hosts that sleep when idle (Render free)** don't run the loop while
@@ -168,3 +168,28 @@ multipart forms, which Autorack reads too.
 same host as `FRONTEND_URL` (Cloudflare Pages + Render), set `API_PUBLIC_URL`
 to the API's address (`https://YOUR-APP.onrender.com`) so the drop URL points
 to the right place.
+
+## 10. Sign in with Google (required)
+
+Owners, managers, supervisors and you (the operator) sign in only with Google.
+Workers on phones still use their PIN.
+
+1. Google Cloud Console → create a project (e.g. "Autorack") → **APIs & Services
+   → OAuth consent screen**: External, app name "Autorack", your support email,
+   scopes `openid`, `email`, `profile` (no sensitive scopes, so no Google review).
+   Publish the app (status "In production").
+2. **Credentials → Create credentials → OAuth client ID** → Web application.
+   - Authorized redirect URI: `https://YOUR-API/api/auth/google/callback`
+     (the API's address: `API_PUBLIC_URL`, or `FRONTEND_URL` if the API serves
+     the site too).
+3. On Render set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. The server
+   refuses to start in production without them.
+
+People whose work email isn't Gmail/Google Workspace can create a free Google
+account for their existing address at accounts.google.com/signup ("use my
+current email address instead"). An account is locked to the Google account
+that first signs in with it; if someone changes Google accounts, clear
+`users.google_sub` for them (or re-invite a new address).
+
+For support and local development, `python -m autorack.cli login-link --email
+someone@example.com` still prints a one-time sign-in link.

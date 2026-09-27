@@ -132,7 +132,7 @@ uvicorn autorack.main:app --reload
 ```
 
 `seed-demo` prints a one-time sign-in link and the phone setup link. With the
-default `EMAIL_BACKEND=console`, new sign-in links are printed to the API log.
+default settings, `python -m autorack.cli login-link --email ...` prints a fresh one; owners otherwise sign in with Google (see docs/DEPLOYMENT.md section 10).
 
 - Landing page: http://localhost:8000/
 - Dashboard: http://localhost:8000/app/

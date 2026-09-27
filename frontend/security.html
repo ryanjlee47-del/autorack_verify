@@ -53,8 +53,8 @@
 
         <h2>Signing in</h2>
         <ul>
-          <li><strong>No passwords.</strong> Managers sign in with a single-use link emailed to them, valid for 15 minutes. There's no password to be guessed, reused or phished.</li>
-          <li>Sign-in links and sessions are stored only as one-way hashes, so a copy of our database wouldn't let anyone sign in. Sessions can be revoked at any time.</li>
+          <li><strong>Sign in with Google, no passwords.</strong> Owners and managers sign in with their Google account, so Google's protections (2-step verification, suspicious-login checks) apply, and there's no Autorack password to be guessed, reused or phished. An account is tied to the Google account that first signs in with it.</li>
+          <li>Sign-in codes and sessions are stored only as one-way hashes, so a copy of our database wouldn't let anyone sign in. Sessions can be revoked at any time.</li>
           <li>Workers sign in on linked phones with a 4-digit PIN. PINs are stored only as salted hashes (PBKDF2), and a phone locks after 5 wrong tries (25 across a warehouse) for 10 minutes.</li>
           <li>A phone only works after it's been linked with your warehouse's setup code, and you can unlink a lost phone from the dashboard instantly.</li>
         </ul>

@@ -1361,3 +1361,21 @@ body.tv {
   font-size: 13px;
   color: var(--text-2);
 }
+
+/* Sign in with Google (Google's branding: white, the G, dark text) */
+.btn-google {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid #747775;
+  background: #fff;
+  color: #1f1f1f;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.btn-google:hover {
+  background: #f8f9fa;
+}

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from conftest import (
     Owner,
-    last_link_token,
+    google_login,
     make_order,
     scan,
     scan_event,
@@ -22,7 +22,7 @@ UPC_B = "036000291452"
 def invite_and_sign_in(client, owner: Owner, addr: str, role: str) -> Owner:
     r = client.post("/api/team", json={"email": addr, "role": role}, headers=owner.h)
     assert r.status_code == 201, r.text
-    token = client.post("/api/auth/verify", json={"token": last_link_token(addr)}).json()["token"]
+    token = google_login(client, addr)
     return Owner(token=token, email=addr, warehouse_id=owner.warehouse_id)
 
 

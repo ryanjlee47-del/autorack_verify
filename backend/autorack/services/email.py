@@ -1,4 +1,4 @@
-"""Outbound email: magic links and invitations.
+"""Outbound email: invitations, alerts, summaries and reports.
 
 Backends:
   console  -- log the message (development; the link appears in the API log)
@@ -131,41 +131,21 @@ def _layout(heading: str, body_html: str, button_label: str, url: str, footer: s
 </table></td></tr></table></body></html>"""
 
 
-def magic_link_email(to: str, url: str, warehouse_name: str) -> Email:
-    minutes = get_settings().magic_link_ttl_minutes
-    footer = (
-        f"This link works once and expires in {minutes} minutes. "
-        "If you didn't ask to sign in, you can ignore this email."
-    )
-    return Email(
-        to=to,
-        subject="Your Autorack sign-in link",
-        text=f"Sign in to Autorack ({warehouse_name}):\n\n{url}\n\n{footer}\n",
-        html=_layout(
-            "Sign in to Autorack",
-            f"Use the button below to sign in to <b>{html.escape(warehouse_name)}</b>.",
-            "Sign in",
-            url,
-            footer,
-        ),
-    )
-
-
 def invite_email(to: str, url: str, warehouse_name: str, inviter: str) -> Email:
-    minutes = get_settings().magic_link_ttl_minutes
     footer = (
-        f"This link expires in {minutes} minutes. You can always request a new one "
-        "from the sign-in page with this email address."
+        f"Sign in with the Google account for {to}. No Google account for this address? "
+        'Create one with your existing email at accounts.google.com/signup (choose "use my current email '
+        'address instead").'
     )
     return Email(
         to=to,
         subject=f"You've been added to {warehouse_name} on Autorack",
-        text=f"{inviter} added you to {warehouse_name} on Autorack.\n\nSign in: {url}\n\n{footer}\n",
+        text=f"{inviter} added you to {warehouse_name} on Autorack.\n\nSign in with Google: {url}\n\n{footer}\n",
         html=_layout(
             f"Join {warehouse_name}",
             f"{html.escape(inviter)} added you to <b>{html.escape(warehouse_name)}</b> on Autorack, "
             "the pick verification dashboard.",
-            "Sign in",
+            "Sign in with Google",
             url,
             footer,
         ),

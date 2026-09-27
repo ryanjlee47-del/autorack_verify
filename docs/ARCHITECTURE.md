@@ -3,7 +3,7 @@
 ## Data model
 
 ```
-Warehouse ──< User (owner/manager, magic-link sign-in) ──< OwnerSession
+Warehouse ──< User (owner/manager, Sign in with Google) ──< OwnerSession
     │
     ├──< Device (a linked phone) ──< WorkerSession >── Worker (PIN)
     │
@@ -81,8 +81,11 @@ change a phone's cached copy needs to know about bumps `orders.version`.
 
 ## Security
 
-- Owners: single-use magic links (15 min), token in the URL fragment so it
-  never reaches server logs; opaque session tokens, stored hashed; revocable.
+- Owners: Sign in with Google only (OAuth code flow + PKCE, state bound to an
+  HttpOnly cookie; ID token checked for issuer, audience, expiry and a verified
+  email; account pinned to the first Google account id). The callback hands the
+  browser a one-time code in the URL fragment, swapped for an opaque session
+  token, stored hashed; revocable. No account is created by signing in.
 - Phones: linked with a rotatable join code; device tokens stored hashed;
   revocable from the dashboard.
 - PINs: salted PBKDF2 for verification, plus an HMAC fingerprint keyed by

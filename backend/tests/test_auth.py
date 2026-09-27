@@ -1,13 +1,14 @@
-"""Owner magic-link auth, and worker device + PIN auth."""
+"""Owner Sign in with Google, and worker device + PIN auth."""
 
 from __future__ import annotations
 
 from datetime import timedelta
+from urllib.parse import parse_qs, urlparse
 
-from conftest import AGREEMENT, add_worker, last_link_token, link_phone, login, signup
-from sqlalchemy import update
+from conftest import AGREEMENT, add_worker, fragment, google_login, google_redirect, link_phone, login, signup
+from sqlalchemy import select, update
 
-from autorack.models import MagicLinkToken, utcnow
+from autorack.models import MagicLinkToken, User, utcnow
 from autorack.services import email
 
 
@@ -21,47 +22,123 @@ def test_signup_sends_link_and_link_signs_in(client):
     assert me["access"]["trial_days_left"] == 14
 
 
-def test_magic_link_is_single_use(client):
+def test_login_code_is_single_use_and_expires(client, db):
     owner = signup(client)
-    client.post("/api/auth/magic-link", json={"email": owner.email})
-    token = last_link_token(owner.email)
-    assert client.post("/api/auth/verify", json={"token": token}).status_code == 200
-    r = client.post("/api/auth/verify", json={"token": token})
+    loc = google_redirect(client, "/api/auth/google/start", owner.email)
+    code = fragment(loc)["token"]
+    assert loc.startswith("https://app.autorack.test/app/login.html#token=")  # never sent to a server log
+    assert client.post("/api/auth/verify", json={"token": code}).status_code == 200
+    r = client.post("/api/auth/verify", json={"token": code})
     assert r.status_code == 401 and r.json()["detail"]["code"] == "link_invalid"
-
-
-def test_magic_link_expires(client, db):
-    owner = signup(client)
-    client.post("/api/auth/magic-link", json={"email": owner.email})
-    token = last_link_token(owner.email)
+    code2 = fragment(google_redirect(client, "/api/auth/google/start", owner.email))["token"]
     db.execute(update(MagicLinkToken).values(expires_at=utcnow() - timedelta(seconds=1)))
     db.commit()
-    assert client.post("/api/auth/verify", json={"token": token}).status_code == 401
+    assert client.post("/api/auth/verify", json={"token": code2}).status_code == 401
 
 
-def test_magic_link_url_keeps_token_out_of_server_logs(client):
+def test_google_start_uses_pkce_and_select_account(client):
+    r = client.get("/api/auth/google/start?next=%23/orders", follow_redirects=False)
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    assert r.headers["location"].startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert q["client_id"] == ["test-client.apps.googleusercontent.com"]
+    assert q["redirect_uri"] == ["https://app.autorack.test/api/auth/google/callback"]
+    assert q["code_challenge_method"] == ["S256"] and q["prompt"] == ["select_account"]
+    assert q["scope"] == ["openid email profile"]
+    cookie = r.headers["set-cookie"]
+    assert "ar_oauth_state=" in cookie and "HttpOnly" in cookie and "Path=/api/auth/google" in cookie
+
+
+def test_next_page_is_kept_and_open_redirects_are_not(client):
     owner = signup(client)
-    client.post("/api/auth/magic-link", json={"email": owner.email})
-    body = email.outbox[-1].text
-    assert "https://app.autorack.test/app/login.html#token=" in body
+    loc = google_redirect(client, "/api/auth/google/start?next=%23/orders/abc", owner.email)
+    assert fragment(loc)["next"] == "#/orders/abc"
+    loc = google_redirect(client, "/api/auth/google/start?next=https://evil.example", owner.email)
+    assert "next" not in fragment(loc)
 
 
-def test_magic_link_does_not_reveal_unknown_emails(client):
-    r = client.post("/api/auth/magic-link", json={"email": "nobody@example.com"})
-    assert r.status_code == 200
-    assert not [m for m in email.outbox if m.to == "nobody@example.com"]
-
-
-def test_magic_link_rate_limited_per_email(client):
+def test_callback_needs_the_state_cookie_from_this_browser(client, fake_google):
     owner = signup(client)
-    codes = [client.post("/api/auth/magic-link", json={"email": owner.email}).status_code for _ in range(6)]
-    assert codes[:5] == [200] * 5 and codes[5] == 429
+    r = client.get("/api/auth/google/start", follow_redirects=False)
+    state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+    client.cookies.clear()  # the callback lands in a different browser
+    fake_google.requests.clear()
+    r = client.get(
+        "/api/auth/google/callback", params={"code": f"email:{owner.email}", "state": state}, follow_redirects=False
+    )
+    assert fragment(r.headers["location"])["error"] == "state_mismatch"
+    assert fake_google.requests == []  # the code was never even exchanged
+
+
+def test_state_is_single_use(client):
+    owner = signup(client)
+    r = client.get("/api/auth/google/start", follow_redirects=False)
+    state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+    params = {"code": f"email:{owner.email}", "state": state}
+    first = client.get("/api/auth/google/callback", params=params, follow_redirects=False)
+    assert "token" in fragment(first.headers["location"])
+    client.cookies.set("ar_oauth_state", state, path="/api/auth/google")
+    again = client.get("/api/auth/google/callback", params=params, follow_redirects=False)
+    assert fragment(again.headers["location"])["error"] == "expired"
+
+
+def test_tokens_for_another_app_or_unverified_emails_are_refused(client, fake_google):
+    owner = signup(client)
+    fake_google.overrides = {"aud": "someone-else.apps.googleusercontent.com"}
+    assert fragment(google_redirect(client, "/api/auth/google/start", owner.email))["error"] == "google_failed"
+    fake_google.overrides = {"email_verified": False}
+    assert fragment(google_redirect(client, "/api/auth/google/start", owner.email))["error"] == "email_unverified"
+    fake_google.overrides = {"iss": "https://evil.example"}
+    assert fragment(google_redirect(client, "/api/auth/google/start", owner.email))["error"] == "google_failed"
+
+
+def test_account_is_bound_to_the_first_google_account(client, db):
+    owner = signup(client)  # first sign-in bound google-<email>
+    user = db.scalar(select(User).where(User.email == owner.email))
+    assert user.google_sub == f"google-{owner.email}"
+    loc = google_redirect(client, "/api/auth/google/start", owner.email, sub="someone-else")
+    assert fragment(loc)["error"] == "account_mismatch"
+
+
+def test_unknown_email_gets_no_account_and_no_user(client, db):
+    loc = google_redirect(client, "/api/auth/google/start", "stranger@example.com")
+    frag = fragment(loc)
+    assert frag["error"] == "no_account" and frag["email"] == "stranger@example.com"
+    assert db.scalar(select(User).where(User.email == "stranger@example.com")) is None
+
+
+def test_cancelled_at_google(client):
+    r = client.get("/api/auth/google/callback", params={"error": "access_denied"}, follow_redirects=False)
+    assert fragment(r.headers["location"])["error"] == "cancelled"
+
+
+def test_there_is_no_email_sign_in(client, app):
+    assert client.post("/api/auth/magic-link", json={"email": "x@example.com"}).status_code in (404, 405)
+    assert "/api/auth/magic-link" not in app.openapi()["paths"]
 
 
 def test_duplicate_signup_rejected(client):
     owner = signup(client)
-    r = client.post("/api/auth/signup", json={"warehouse_name": "Again", "email": owner.email.upper(), **AGREEMENT})
-    assert r.status_code == 409
+    r = client.post("/api/auth/signup", json={"warehouse_name": "Again", **AGREEMENT})
+    loc = google_redirect(client, r.json()["redirect"], owner.email.upper().lower())
+    assert fragment(loc)["error"] == "account_exists"
+
+
+def test_signup_ticket_is_single_use(client):
+    r = client.post("/api/auth/signup", json={"warehouse_name": "Once", **AGREEMENT})
+    url = r.json()["redirect"]
+    signup_email = "once@example.com"
+    assert "token" in fragment(google_redirect(client, url, signup_email))
+    assert fragment(google_redirect(client, url, "twice@example.com"))["error"] == "expired"
+
+
+def test_google_not_configured(client, monkeypatch):
+    from autorack.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "google_client_id", "")
+    r = client.get("/api/auth/google/start", follow_redirects=False)
+    assert fragment(r.headers["location"])["error"] == "google_not_configured"
+    r = client.post("/api/auth/signup", json={"warehouse_name": "X", **AGREEMENT})
+    assert r.status_code == 503
 
 
 def test_logout_revokes_session(client):
@@ -79,7 +156,7 @@ def test_signup_can_be_closed(client, monkeypatch):
     from autorack.config import get_settings
 
     monkeypatch.setattr(get_settings(), "signup_enabled", False)
-    r = client.post("/api/auth/signup", json={"warehouse_name": "X", "email": "x@example.com", **AGREEMENT})
+    r = client.post("/api/auth/signup", json={"warehouse_name": "X", **AGREEMENT})
     assert r.status_code == 403
 
 
@@ -92,8 +169,9 @@ def test_invite_manager_and_manager_cannot_manage_billing(client):
     owner = signup(client)
     r = client.post("/api/team", json={"email": "mgr@example.com", "role": "manager"}, headers=owner.h)
     assert r.status_code == 201
-    token = last_link_token("mgr@example.com")
-    mtoken = client.post("/api/auth/verify", json={"token": token}).json()["token"]
+    invite = [m for m in email.outbox if m.to == "mgr@example.com"][-1]
+    assert "Sign in with Google" in invite.text and "https://app.autorack.test/app/login.html" in invite.text
+    mtoken = google_login(client, "mgr@example.com")
     mh = {"Authorization": f"Bearer {mtoken}"}
     assert client.get("/api/orders", headers=mh).status_code == 200
     assert client.post("/api/billing/checkout", headers=mh).status_code == 403

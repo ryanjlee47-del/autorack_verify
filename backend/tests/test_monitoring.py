@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import last_link_token, signup
+from conftest import google_login, signup
 from sqlalchemy import select
 
 from autorack.config import get_settings
@@ -14,8 +14,7 @@ from autorack.services import email, jobs, monitoring
 @pytest.fixture
 def ops(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "operator_emails", "ops@example.com")
-    client.post("/api/auth/magic-link", json={"email": "ops@example.com"})
-    token = client.post("/api/auth/verify", json={"token": last_link_token("ops@example.com")}).json()["token"]
+    token = google_login(client, "ops@example.com")
     return {"Authorization": f"Bearer {token}"}
 
 

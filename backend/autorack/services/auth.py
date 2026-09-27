@@ -1,4 +1,4 @@
-"""Owner (magic link) and worker (device + PIN) authentication."""
+"""Owner sessions (after Sign in with Google) and worker (device + PIN) authentication."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from ..security import (
     pin_fingerprint,
     verify_pin,
 )
-from . import audit, email, ratelimit
+from . import audit, ratelimit
 from .audit import Actor
 
 log = logging.getLogger("autorack.auth")
@@ -161,7 +161,8 @@ def rotate_join_code(db: Session, wh: Warehouse, actor: Actor) -> str:
 
 
 def issue_magic_link(db: Session, user: User, ip: str | None) -> str:
-    """Create a single-use login token and return the URL that carries it.
+    """A single-use sign-in URL, for the operator's `login-link` CLI (support,
+    local development). People sign in with Google; nothing emails these.
 
     The token rides in the URL *fragment* (after #), which browsers never send
     to a server: it stays out of access logs, proxies and Referer headers.
@@ -178,38 +179,6 @@ def issue_magic_link(db: Session, user: User, ip: str | None) -> str:
     )
     db.flush()
     return f"{s.frontend_url.rstrip('/')}/app/login.html#token={quote(token)}"
-
-
-def request_magic_link(db: Session, email_addr: str, ip: str | None) -> None:
-    """Email a sign-in link if the address belongs to an active user.
-
-    Always behaves the same from the outside, whether or not the address
-    exists, so the endpoint cannot be used to discover customers.
-    """
-    addr = normalize_email(email_addr)
-    ratelimit.check_db(
-        db, "magic_link_ip", ip or "?", 20, timedelta(minutes=15), "Too many sign-in requests. Try again shortly."
-    )
-    ratelimit.check_db(
-        db, "magic_link_email", addr, 5, timedelta(minutes=15), "Too many sign-in links requested for this email."
-    )
-    user = db.scalar(select(User).where(User.email == addr, User.active.is_(True)))
-    if not user and addr in get_settings().operator_email_set and not db.scalar(select(User).where(User.email == addr)):
-        # First sign-in of an operator who runs no warehouse themselves.
-        user = User(warehouse_id=None, email=addr)
-        db.add(user)
-        db.flush()
-    if not user:
-        db.commit()  # keep the rate-limit hits
-        return
-    wh = db.get(Warehouse, user.warehouse_id) if user.warehouse_id else None
-    url = issue_magic_link(db, user, ip)
-    db.commit()
-    try:
-        email.send(email.magic_link_email(user.email, url, wh.name if wh else "Autorack"))
-    except email.EmailError:
-        log.exception("Failed to send magic link to %s", user.email)
-        raise ApiError(503, "email_failed", "We couldn't send the email just now. Please try again.") from None
 
 
 def verify_magic_link(db: Session, token: str, ip: str | None, user_agent: str | None) -> tuple[str, User]:
@@ -230,7 +199,7 @@ def verify_magic_link(db: Session, token: str, ip: str | None, user_agent: str |
     ).first()
     if not row:
         db.commit()
-        raise unauthorized("This sign-in link is invalid, expired, or already used. Request a new one.", "link_invalid")
+        raise unauthorized("That sign-in expired or was already used. Sign in again.", "link_invalid")
     user = db.get(User, row[0])
     if not user or not user.active:
         db.commit()

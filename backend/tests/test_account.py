@@ -15,7 +15,7 @@ from conftest import (
     JPEG,
     Owner,
     add_worker,
-    last_link_token,
+    google_login,
     link_phone,
     make_order,
     scan,
@@ -110,7 +110,7 @@ def test_export_contains_everything_and_no_pins(client):
 def test_only_owners_export(client):
     owner, _ = busy_warehouse(client)
     client.post("/api/team", json={"email": "mgr@example.com", "role": "manager"}, headers=owner.h)
-    token = client.post("/api/auth/verify", json={"token": last_link_token("mgr@example.com")}).json()["token"]
+    token = google_login(client, "mgr@example.com")
     r = client.get("/api/account/export.zip", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 403
 
@@ -281,8 +281,7 @@ def test_append_only_tables_still_refuse_deletes_outside_a_purge(client, db):
 
 def operator(client, monkeypatch) -> dict[str, str]:
     monkeypatch.setattr(get_settings(), "operator_emails", "ops@example.com")
-    client.post("/api/auth/magic-link", json={"email": "ops@example.com"})
-    token = client.post("/api/auth/verify", json={"token": last_link_token("ops@example.com")}).json()["token"]
+    token = google_login(client, "ops@example.com")
     return {"Authorization": f"Bearer {token}"}
 
 

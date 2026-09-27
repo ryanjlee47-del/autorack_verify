@@ -5,14 +5,17 @@ triggers, JSONB -- is Postgres behaviour. SQLite would test something else.
 
 from __future__ import annotations
 
+import base64
+import json
 import os
-import re
+import urllib.parse
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import pytest
 
 os.environ.setdefault("TEST_DATABASE_URL", "postgresql+psycopg://postgres@localhost:5432/autorack_test")
@@ -28,6 +31,9 @@ os.environ.update(
         "STRIPE_PRICE_ID": "price_test_175",
         "STRIPE_WEBHOOK_SECRET": "whsec_test_secret",
         "SIGNUP_ENABLED": "true",
+        "GOOGLE_CLIENT_ID": "test-client.apps.googleusercontent.com",
+        "GOOGLE_CLIENT_SECRET": "test-google-secret",
+        "OPERATOR_EMAILS": "",
     }
 )
 
@@ -38,7 +44,7 @@ from sqlalchemy import text
 from alembic import command
 from autorack.db import get_engine, get_sessionmaker
 from autorack.main import create_app
-from autorack.services import email
+from autorack.services import email, google_auth
 from autorack.services.ratelimit import memory_limiter
 
 # Smallest thing that passes the upload's JPEG signature check.
@@ -61,6 +67,7 @@ def _schema() -> Iterator[None]:
 
 TABLES = [
     "error_events",
+    "oauth_states",
     "agreement_signatures",
     "feature_usage",
     "notifications_sent",
@@ -145,13 +152,85 @@ class Phone:
         return headers
 
 
-def last_link_token(to: str) -> str:
-    for msg in reversed(email.outbox):
-        if msg.to == to:
-            m = re.search(r"#token=([A-Za-z0-9_\-%]+)", msg.text)
-            assert m, msg.text
-            return m.group(1)
-    raise AssertionError(f"no email to {to}")
+# ---------------------------------------------------------------------------
+# A stand-in for Google. The authorization code is "email:<address>" (or
+# "email:<address>|sub:<id>"); the token endpoint answers with an ID token
+# for that address, as Google would after the person picked their account.
+# ---------------------------------------------------------------------------
+
+
+def fake_id_token(claims: dict[str, Any]) -> str:
+    def part(d: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.c2ln"
+
+
+class FakeGoogle:
+    def __init__(self) -> None:
+        self.overrides: dict[str, Any] = {}
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        form = dict(urllib.parse.parse_qsl(request.content.decode()))
+        code = form.get("code", "")
+        if not code.startswith("email:") or not form.get("code_verifier"):
+            return httpx.Response(400, json={"error": "invalid_grant"})
+        addr, _, sub = code[len("email:") :].partition("|sub:")
+        claims = {
+            "iss": "https://accounts.google.com",
+            "aud": form.get("client_id"),
+            "sub": sub or f"google-{addr}",
+            "email": addr,
+            "email_verified": True,
+            "name": addr.split("@")[0].title(),
+            "exp": int(datetime.now(UTC).timestamp()) + 600,
+            **self.overrides,
+        }
+        return httpx.Response(200, json={"id_token": fake_id_token(claims), "access_token": "x"})
+
+
+@pytest.fixture(autouse=True)
+def fake_google(monkeypatch: pytest.MonkeyPatch) -> FakeGoogle:
+    fake = FakeGoogle()
+    monkeypatch.setattr(google_auth, "TRANSPORT", httpx.MockTransport(fake))
+    return fake
+
+
+def google_redirect(client: TestClient, start_url: str, addr: str, sub: str | None = None) -> str:
+    """Walk the browser through Google; returns where the callback sent it."""
+    if start_url.startswith("http"):
+        u = urllib.parse.urlparse(start_url)
+        start_url = u.path + (f"?{u.query}" if u.query else "")
+    r = client.get(start_url, follow_redirects=False)
+    assert r.status_code == 302, r.text
+    loc = r.headers["location"]
+    if "#error=" in loc:
+        return loc
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["state"][0]
+    code = f"email:{addr}" + (f"|sub:{sub}" if sub else "")
+    r = client.get("/api/auth/google/callback", params={"code": code, "state": state}, follow_redirects=False)
+    assert r.status_code == 302, r.text
+    return r.headers["location"]
+
+
+def fragment(url: str) -> dict[str, str]:
+    return dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).fragment))
+
+
+def google_login(client: TestClient, addr: str, start: str = "/api/auth/google/start", sub: str | None = None) -> str:
+    """Sign in with Google as `addr`; returns the dashboard session token."""
+    loc = google_redirect(client, start, addr, sub)
+    frag = fragment(loc)
+    assert "token" in frag, frag
+    r = client.post("/api/auth/verify", json={"token": frag["token"]})
+    assert r.status_code == 200, r.text
+    return str(r.json()["token"])
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 AGREEMENT = {
@@ -176,12 +255,10 @@ def signup(client: TestClient, name: str = "Acme Warehouse", addr: str | None = 
     addr = addr or f"owner-{uuid.uuid4().hex[:8]}@example.com"
     r = client.post(
         "/api/auth/signup",
-        json={"warehouse_name": name, "email": addr, "timezone": "America/Chicago", **AGREEMENT},
+        json={"warehouse_name": name, "timezone": "America/Chicago", **AGREEMENT},
     )
     assert r.status_code == 201, r.text
-    r = client.post("/api/auth/verify", json={"token": last_link_token(addr)})
-    assert r.status_code == 200, r.text
-    token = r.json()["token"]
+    token = google_login(client, addr, start=r.json()["redirect"])
     me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
     return Owner(token=token, email=addr, warehouse_id=me["warehouse"]["id"])
 

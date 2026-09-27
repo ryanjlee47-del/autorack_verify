@@ -51,7 +51,7 @@ from ..models import (
     Worker,
     utcnow,
 )
-from . import email, integrations, monitoring, monthly, ratelimit
+from . import email, google_auth, integrations, monitoring, monthly, ratelimit
 from .audit import Actor
 from .dashboard import day_bounds, tz_of
 
@@ -619,6 +619,7 @@ def prune(db: Session, now: datetime) -> int:
     n = db.execute(delete(MagicLinkToken).where(MagicLinkToken.expires_at < now - timedelta(days=1))).rowcount  # type: ignore[attr-defined]
     n += db.execute(delete(OwnerSession).where(OwnerSession.expires_at < now - timedelta(days=30))).rowcount  # type: ignore[attr-defined]
     n += ratelimit.prune_db(db)
+    n += google_auth.prune(db)
     db.commit()
     return int(n)
 

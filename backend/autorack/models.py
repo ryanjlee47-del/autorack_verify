@@ -222,7 +222,7 @@ class Warehouse(Base):
 
 
 class User(Base):
-    """A person who signs in to the dashboard by magic link.
+    """A person who signs in to the dashboard with Google.
 
     What they can do, and where, lives in `memberships`: one person can run
     several warehouses, with a different role in each.
@@ -235,6 +235,9 @@ class User(Base):
     # account that runs no warehouse of its own.
     warehouse_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("warehouses.id"), index=True)
     email: Mapped[str] = mapped_column(String(320), unique=True)  # stored lowercased
+    # Google's permanent id for the account that first signed in with this
+    # email; a later sign-in with the same email but another account is refused.
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True)
     name: Mapped[str | None] = mapped_column(String(200))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -272,6 +275,26 @@ class MagicLinkToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     requested_ip: Mapped[str | None] = mapped_column(String(64))
+
+
+class OAuthState(Base):
+    """One Sign in with Google attempt: the state and PKCE verifier sent to
+    Google, and (for a sign-up) the warehouse details and signed agreement
+    to create once Google says who this is."""
+
+    __tablename__ = "oauth_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    intent: Mapped[str] = mapped_column(String(16))  # signin | signup
+    payload: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    next_path: Mapped[str | None] = mapped_column(String(200))
+    ip: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class OwnerSession(Base):

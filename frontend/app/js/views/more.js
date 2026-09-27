@@ -298,7 +298,7 @@ export async function settingsView() {
       ], aliases, { empty: "None yet." })),
 
     card("Team",
-      h("p", { class: "muted small" }, "Owners: everything, including billing, settings and the team. Managers: orders, workers, phones and problems. Supervisors: watch the floor and resolve problems; they can't change orders or see billing. Everyone signs in with an emailed link; there are no passwords."),
+      h("p", { class: "muted small" }, "Owners: everything, including billing, settings and the team. Managers: orders, workers, phones and problems. Supervisors: watch the floor and resolve problems; they can't change orders or see billing. Everyone signs in with the Google account for their email; there are no passwords."),
       owner ? h("button", { class: "btn", onclick: () => invite(reload) }, "Invite someone") : null,
       table([
         { label: "Email", render: (u) => h("span", null, u.email, u.name ? h("span", { class: "muted" }, ` (${u.name})`) : null) },
@@ -371,7 +371,7 @@ async function invite(reload) {
       h("option", { value: "owner" }, "Owner: everything, including billing"));
     return h("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); close({ email: email.value, role: role.value }); } },
       h("label", null, "Email"), email, h("label", null, "Role"), role,
-      h("p", { class: "muted small" }, "They get an email with a sign-in link."),
+      h("p", { class: "muted small" }, "They get an email, then sign in with the Google account for that address."),
       h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
         h("button", { class: "btn btn-primary", type: "submit" }, "Send invite")));
   });

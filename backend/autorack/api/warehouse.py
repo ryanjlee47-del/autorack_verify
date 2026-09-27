@@ -198,7 +198,7 @@ def invite(
         db.add(user)
         db.flush()
     membership = auth_svc.add_membership(db, user, ctx.warehouse.id, body.role)
-    url = auth_svc.issue_magic_link(db, user, ctx.ip)
+    url = f"{get_settings().frontend_url.rstrip('/')}/app/login.html"
     audit.record(
         db,
         ctx.actor,
@@ -211,7 +211,7 @@ def invite(
     )
     usage.track(db, ctx.warehouse.id, "team.invite")
     db.commit()
-    # If sending fails they can still request a link from the sign-in page.
+    # If sending fails they can still sign in: the invite is the membership.
     with contextlib.suppress(email.EmailError):
         email.send(email.invite_email(addr, url, ctx.warehouse.name, ctx.user.name or ctx.user.email))
     return member_dict(user, membership)

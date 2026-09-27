@@ -55,7 +55,16 @@ class Settings(BaseSettings):
     inbound_email_address: str = ""
     inbound_email_secret: str = ""
 
-    # Owner auth
+    # Owner auth: Sign in with Google only. Create an OAuth client ("Web
+    # application") in Google Cloud Console; its redirect URI must be
+    # {API_PUBLIC_URL or FRONTEND_URL}/api/auth/google/callback.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    # Overridable only so tests and local demos can stand in for Google.
+    google_auth_url: str = "https://accounts.google.com/o/oauth2/v2/auth"
+    google_token_url: str = "https://oauth2.googleapis.com/token"  # noqa: S105 - a URL, not a secret
+    # One-time codes: the hand-off from Google's callback to the browser, and
+    # the operator's `login-link` CLI.
     magic_link_ttl_minutes: int = 15
     owner_session_days: int = 30
     signup_enabled: bool = True
@@ -143,6 +152,14 @@ class Settings(BaseSettings):
         return (self.api_public_url or self.frontend_url).rstrip("/")
 
     @property
+    def google_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def google_redirect_uri(self) -> str:
+        return f"{self.api_url}/api/auth/google/callback"
+
+    @property
     def inbound_email_enabled(self) -> bool:
         return "{token}" in self.inbound_email_address and len(self.inbound_email_secret) >= 16
 
@@ -161,6 +178,14 @@ class Settings(BaseSettings):
             return problems
         if self.secret_key == DEV_SECRET or len(self.secret_key) < 32:
             problems.append("SECRET_KEY must be set to a random value of at least 32 characters.")
+        if not self.google_enabled:
+            problems.append(
+                "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set: Sign in with Google is the only sign-in."
+            )
+        if not self.google_auth_url.startswith("https://accounts.google.com/") or not self.google_token_url.startswith(
+            "https://oauth2.googleapis.com/"
+        ):
+            problems.append("GOOGLE_AUTH_URL / GOOGLE_TOKEN_URL must point at Google in production.")
         if self.email_backend in ("console", "memory"):
             problems.append("EMAIL_BACKEND must be smtp or resend; owners cannot log in without email.")
         if self.email_backend == "resend" and not self.resend_api_key:

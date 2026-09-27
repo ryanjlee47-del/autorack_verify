@@ -194,10 +194,9 @@ def test_bad_credentials_are_refused_before_saving(client, fake, db):
 def test_only_owners_connect(client, fake):
     owner = signup(client)
     client.post("/api/team", json={"email": "mgr@example.com"}, headers=owner.h)
-    from conftest import last_link_token
+    from conftest import google_login
 
-    client.post("/api/auth/magic-link", json={"email": "mgr@example.com"})
-    tok = client.post("/api/auth/verify", json={"token": last_link_token("mgr@example.com")}).json()["token"]
+    tok = google_login(client, "mgr@example.com")
     r = client.post(
         "/api/integrations",
         json={"kind": "shopify", "shop": "dockside", "token": "shpat_good"},

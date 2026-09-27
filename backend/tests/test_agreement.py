@@ -8,7 +8,7 @@ import io
 from pathlib import Path
 
 import pytest
-from conftest import AGREEMENT, Owner, last_link_token, signup
+from conftest import AGREEMENT, Owner, google_login, signup
 from pypdf import PdfReader
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
@@ -81,11 +81,9 @@ def test_no_account_without_a_valid_signature(client, db, change, code):
 
 def unsigned_warehouse(client, db) -> Owner:
     """A warehouse from before the agreement existed (or made by the CLI)."""
-    wh, user = auth_svc.create_warehouse(db, name="Old Co", owner_email="old@example.com", actor=OPERATOR)
-    auth_svc.issue_magic_link(db, user, None)
+    wh, _user = auth_svc.create_warehouse(db, name="Old Co", owner_email="old@example.com", actor=OPERATOR)
     db.commit()
-    client.post("/api/auth/magic-link", json={"email": "old@example.com"})
-    token = client.post("/api/auth/verify", json={"token": last_link_token("old@example.com")}).json()["token"]
+    token = google_login(client, "old@example.com")
     return Owner(token=token, email="old@example.com", warehouse_id=str(wh.id))
 
 
@@ -111,10 +109,8 @@ def test_only_owners_sign(client, db):
     db.add(mgr_user)
     db.flush()
     auth_svc.add_membership(db, mgr_user, wh.id, auth_svc.UserRole.manager)
-    auth_svc.issue_magic_link(db, mgr_user, None)
     db.commit()
-    client.post("/api/auth/magic-link", json={"email": "mgr@example.com"})
-    token = client.post("/api/auth/verify", json={"token": last_link_token("mgr@example.com")}).json()["token"]
+    token = google_login(client, "mgr@example.com")
     mgr = {"Authorization": f"Bearer {token}"}
     assert client.get("/api/auth/me", headers=mgr).json()["agreement"]["can_sign"] is False
     r = client.post("/api/agreement/sign", json=AGREEMENT, headers=mgr)
@@ -135,8 +131,7 @@ def test_signatures_are_append_only(client, db):
 def test_operator_can_download_any_signed_copy(client, monkeypatch):
     owner = signup(client, "Signed Co")
     monkeypatch.setattr(get_settings(), "operator_emails", "ops@example.com")
-    client.post("/api/auth/magic-link", json={"email": "ops@example.com"})
-    token = client.post("/api/auth/verify", json={"token": last_link_token("ops@example.com")}).json()["token"]
+    token = google_login(client, "ops@example.com")
     ops = {"Authorization": f"Bearer {token}"}
     detail = client.get(f"/api/admin/warehouses/{owner.warehouse_id}", headers=ops).json()
     assert detail["agreement"]["signed_current"] is True
