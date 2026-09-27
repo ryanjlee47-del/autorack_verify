@@ -35,6 +35,7 @@ from ..models import (
     FlagReason,
     Order,
     OrderFlag,
+    OrderKind,
     OrderStatus,
     Photo,
     ScanEvent,
@@ -44,7 +45,7 @@ from ..models import (
     utcnow,
 )
 from ..security import is_valid_pin, normalize_join_code
-from ..services import audit, scans, usage
+from ..services import audit, scans, tasks, usage
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
 from ..services import orders as order_svc
@@ -175,13 +176,19 @@ def open_orders(ctx: WorkerContext = Depends(require_worker_access), db: Session
     for r, o in zip(rows, orders, strict=True):
         r["version"] = o.version
         r["assigned_to_me"] = o.assigned_worker_id == ctx.worker.id
+        if o.blind:
+            r["units_expected"] = 0
     to_ship: list[dict[str, Any]] = []
     if ctx.warehouse.require_ship_scan:
         # Picked but no label scanned yet: the packing bench's queue.
         ready = list(
             db.scalars(
                 select(Order)
-                .where(Order.warehouse_id == ctx.warehouse.id, Order.status == OrderStatus.completed)
+                .where(
+                    Order.warehouse_id == ctx.warehouse.id,
+                    Order.status == OrderStatus.completed,
+                    Order.kind == OrderKind.pick,
+                )
                 .order_by(Order.completed_at)
                 .limit(100)
             )
@@ -225,6 +232,25 @@ def lookup_order(
     return {"order_id": str(order.id), "status": order.status.value}
 
 
+class ReturnStart(BaseModel):
+    code: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/returns", status_code=201)
+def start_return(
+    body: ReturnStart, ctx: WorkerContext = Depends(require_worker_access), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """A parcel came back: find what shipped (order number, tracking number
+    or the pick-sheet QR) and open a return task listing it."""
+    original = tasks.find_returnable(db, ctx.warehouse, body.code)
+    if not original:
+        raise not_found("No shipped order matches that. Try the order number or the tracking number on the label.")
+    ret = tasks.create_return(db, ctx.warehouse, original, ctx.actor)
+    usage.track(db, ctx.warehouse.id, "tasks.return")
+    db.commit()
+    return {"order_id": str(ret.id), "number": ret.external_order_number}
+
+
 @router.get("/orders/{order_id}")
 def order_payload(
     order_id: uuid.UUID, ctx: WorkerContext = Depends(require_worker_access), db: Session = Depends(get_db)
@@ -235,7 +261,7 @@ def order_payload(
 
 class SyncEventIn(BaseModel):
     id: uuid.UUID
-    kind: Literal["scan", "void", "flag", "short", "ship"] = "scan"
+    kind: Literal["scan", "void", "flag", "short", "ship", "finish"] = "scan"
     order_id: uuid.UUID
     session_id: uuid.UUID
     client_scanned_at: datetime

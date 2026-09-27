@@ -371,6 +371,7 @@ async function showOrders() {
       h("div", { class: "grid-2" },
         h("button", { class: "btn btn-primary btn-xl", onclick: () => scanOnce(openFromCode) }, T("ordersScanSheet")),
         h("button", { class: "btn btn-xl", onclick: typeOrderNumber }, T("ordersTypeNumber"))),
+      h("button", { class: "btn btn-lg btn-block", onclick: startReturn }, T("returnStart")),
       note,
       listEl));
 
@@ -416,14 +417,18 @@ function renderOrderList(listEl, orders, cached, toShip = []) {
   mount(listEl, ...shipRows, ...orders.map((o) => {
     const c = cached.get(o.id);
     const ready = c && c.version >= o.version;
-    const pct = o.units_expected ? Math.round((100 * o.units_scanned) / o.units_expected) : 0;
-    return h("button", { class: "order-row", onclick: () => openOrder(o.id) },
+    const tally = o.kind && o.kind !== "pick";
+    const pct = o.units_expected ? Math.min(100, Math.round((100 * o.units_scanned) / o.units_expected)) : 0;
+    return h("button", { class: ["order-row", tally && `order-row-${o.kind}`], onclick: () => openOrder(o.id) },
       h("div", { class: "order-row-main" },
+        tally ? h("span", { class: `badge badge-kind badge-kind-${o.kind}` }, T(`kind_${o.kind}`)) : null,
         h("span", { class: "order-number" }, o.external_order_number || o.id.slice(0, 8)),
         h("span", { class: `badge badge-${o.status}` }, T(`status_${o.status}`)),
         o.assigned_to_me ? h("span", { class: "badge badge-assigned" }, T("ordersAssigned")) : null),
       h("div", { class: "order-row-sub" },
-        h("span", null, T("progressUnits", { done: o.units_scanned, total: o.units_expected })),
+        h("span", null, tally && !o.units_expected
+          ? T("tallyCounted", { n: o.units_scanned })
+          : T("progressUnits", { done: o.units_scanned, total: o.units_expected })),
         h("span", { class: ready ? "ok-text" : "muted" }, ready ? T("ordersReady") : T("ordersNotCached"))),
       h("div", { class: "bar" }, h("span", { style: { width: `${pct}%` } })));
   }));
@@ -466,6 +471,10 @@ async function openOrder(id) {
   }
   if (order.status === "shipped") {
     toast(T("orderShipped"), "warn");
+    return;
+  }
+  if (S.isTally(order) && (order.status === "completed" || order.finished_locally)) {
+    toast(T("taskFinished"), "warn");
     return;
   }
   app.order = order;
@@ -548,6 +557,7 @@ function showPick() {
 }
 
 function renderPickBody() {
+  if (S.isTally(app.order)) return renderTallyBody();
   const order = app.order;
   const lines = currentLines();
   const prog = S.progress(lines);
@@ -612,6 +622,135 @@ function renderPickBody() {
         l.location ? h("span", null, l.location) : null,
         h("span", { class: "mono" }, l.expected_barcode)));
     })));
+}
+
+// ---------------------------------------------------------------------------
+// Receiving, returns, counts: scan everything, then finish
+// ---------------------------------------------------------------------------
+
+function renderTallyBody() {
+  const order = app.order;
+  const lines = currentLines();
+  const blind = Boolean(order.blind);
+  const extras = S.extrasFor(app.history, order.id);
+  const counted = lines.reduce((n, l) => n + l.scanned_quantity, 0);
+  const expected = lines.reduce((n, l) => n + l.expected_quantity, 0);
+  const pct = !blind && expected ? Math.min(100, Math.round((100 * counted) / expected)) : 0;
+
+  mount(document.getElementById("pick-top"),
+    h("div", { class: "pick-head" },
+      h("button", { class: "btn btn-sm", onclick: showOrders }, "← ", T("back")),
+      h("div", { class: "pick-title" },
+        h("span", { class: `badge badge-kind badge-kind-${order.kind}` }, T(`kind_${order.kind}`)),
+        h("span", { class: "order-number" }, order.external_order_number || order.id.slice(0, 8)),
+        h("span", { class: "muted" }, blind ? T("tallyCounted", { n: counted }) : T("progressUnits", { done: counted, total: expected })))),
+    blind ? null : h("div", { class: "bar bar-lg" }, h("span", { style: { width: `${pct}%` } })),
+    order.status === "flagged" || order.open_flags ? h("div", { class: "banner banner-warn" }, T("orderFlagged")) : null,
+    app.locked ? h("div", { class: "banner banner-bad" }, app.locked) : null);
+
+  mount(document.getElementById("pick-body"),
+    h("section", { class: "target target-tally" },
+      h("div", { class: "target-label" }, T(`tallyPrompt_${order.kind}`)),
+      h("div", { class: "tally-big" }, String(counted)),
+      h("div", { class: "target-meta" }, T("tallyItemsCounted"),
+        extras ? h("span", { class: "short-tag" }, T("tallyExtras", { n: extras })) : null),
+      order.kind === "return" && order.customer ? h("div", { class: "muted" }, order.customer) : null),
+    h("div", { class: "actions" },
+      h("button", { class: "btn btn-primary btn-xl action-scan", onclick: startCamera }, T("pickCamera")),
+      h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
+      h("button", { class: "btn btn-lg", onclick: () => flagProblem(null) }, T("pickFlag")),
+      h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo"))),
+    h("button", { class: "btn btn-xl btn-block btn-finish", onclick: finishTask }, T("tallyFinish")),
+    h("h2", { class: "section-title" }, blind ? T("tallyListBlind") : T("pickAllLines")),
+    h("ul", { class: "lines" }, ...S.sortForWalking(lines).map((l) => {
+      const state = blind ? null : l.scanned_quantity === l.expected_quantity ? "ok" : l.scanned_quantity > l.expected_quantity ? "over" : null;
+      return h("li", { class: ["line", state === "ok" && "line-done", state === "over" && "line-over"] },
+        h("div", { class: "line-main" },
+          h("span", { class: "line-name" }, lineLabel(l)),
+          h("span", { class: "line-qty" }, blind ? String(l.scanned_quantity) : `${l.scanned_quantity}/${l.expected_quantity}`)),
+        h("div", { class: "line-sub" },
+          l.location ? h("span", null, l.location) : null,
+          lineLabel(l) !== l.expected_barcode ? h("span", { class: "mono" }, l.expected_barcode) : null));
+    })));
+}
+
+async function finishTask() {
+  const order = app.order;
+  const lines = currentLines();
+  const sum = S.tallySummary(lines, S.extrasFor(app.history, order.id));
+  const detail = order.blind
+    ? [T("tallyFinishBlind", { n: sum.counted })]
+    : sum.matches
+      ? [T("tallyFinishMatches")]
+      : [
+        sum.short ? T("tallyFinishShort", { n: sum.short }) : null,
+        sum.over ? T("tallyFinishOver", { n: sum.over }) : null,
+        sum.extras ? T("tallyFinishExtras", { n: sum.extras }) : null,
+      ].filter(Boolean);
+  const ok = await dialog(T("tallyFinishTitle"), (close) => [
+    h("ul", { class: "finish-summary" }, ...detail.map((d) => h("li", null, d))),
+    h("p", { class: "muted" }, T("tallyFinishHelp")),
+    h("div", { class: "dialog-actions" },
+      h("button", { class: "btn", onclick: () => close(false) }, T("tallyKeepScanning")),
+      h("button", { class: "btn btn-primary", onclick: () => close(true) }, T("tallyFinish"))),
+  ]);
+  if (!ok) return;
+  const ev = {
+    id: uuid4(),
+    kind: "finish",
+    order_id: order.id,
+    session_id: app.session.id,
+    client_scanned_at: new Date().toISOString(),
+    client_seq: await store.nextSeq().catch(() => Date.now()),
+    offline: !app.status.online,
+  };
+  try {
+    await store.outboxAdd(ev);
+  } catch {
+    toast(T("storageFailed"), "bad");
+    return;
+  }
+  app.pending.push(ev);
+  await store.putOrder({ ...order, finished_locally: true }).catch(() => {});
+  app.status.pending += 1;
+  refreshChip();
+  if (app.sync) app.sync.kick();
+  FX.play("ok");
+  toast(T("tallyFinished"), "ok");
+  showOrders();
+}
+
+function startReturn() {
+  dialog(T("returnStartTitle"), (close) => {
+    const input = h("input", { class: "input input-xl", autocomplete: "off", autocapitalize: "characters", placeholder: T("returnStartPlaceholder") });
+    return h("form", {
+      class: "stack",
+      onsubmit: (e) => {
+        e.preventDefault();
+        close({ code: input.value.trim() });
+      },
+    },
+    h("p", { class: "muted" }, T("returnStartHelp")),
+    h("button", { class: "btn btn-primary btn-lg", type: "button", onclick: () => close({ scan: true }) }, T("returnScanLabel")),
+    input,
+    h("div", { class: "dialog-actions" },
+      h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("cancel")),
+      h("button", { class: "btn btn-primary", type: "submit" }, T("manualSubmit"))));
+  }).then((v) => {
+    if (!v) return;
+    if (v.scan) scanOnce(beginReturn);
+    else if (v.code) beginReturn(v.code);
+  });
+}
+
+async function beginReturn(code) {
+  try {
+    const r = await api("/api/worker/returns", { method: "POST", body: { code: String(code).slice(0, 200) } });
+    toast(T("returnStarted", { number: r.number }), "ok");
+    await openOrder(r.order_id);
+  } catch (e) {
+    toast(e.isNetwork ? T("returnNeedsNetwork") : e.message, "bad", 8000);
+  }
 }
 
 async function refreshOrderInBackground(id) {
@@ -680,7 +819,7 @@ async function handleScan(rawText) {
   const after = currentLines();
   const line = after.find((l) => l.id === c.lineId);
   if (c.result === "match" && line && line.scanned_quantity >= line.expected_quantity) app.targetLineId = null;
-  showResult({ ...c, line, scanId: ev.id, complete: S.progress(after).complete });
+  showResult({ ...c, line, scanId: ev.id, complete: !S.isTally(order) && S.progress(after).complete });
   app.status.pending += 1;
   refreshChip();
   if (app.sync) app.sync.kick();
@@ -693,7 +832,16 @@ function remember(entry) {
 }
 
 function showResult(r) {
+  const order = app.order || {};
+  const blind = Boolean(order.blind);
+  const extraIsBad = order.kind === "return";
   const spec = {
+    counted: ["ok", "✓", T("resultCounted"), r.line
+      ? `${lineLabel(r.line)} · ${blind ? T("tallyCounted", { n: r.line.scanned_quantity }) : T("resultMatchDetail", { done: r.line.scanned_quantity, total: r.line.expected_quantity })}`
+      : ""],
+    extra: extraIsBad
+      ? ["bad", "✕", T("resultNotReturned"), T("resultNotReturnedDetail")]
+      : ["warn", "+", T("resultExtra"), T(order.kind === "count" ? "resultExtraDetailCount" : "resultExtraDetail")],
     match: ["ok", "✓", T("resultMatch"), r.line ? `${lineLabel(r.line)} · ${T("resultMatchDetail", { done: r.line.scanned_quantity, total: r.line.expected_quantity })}` : ""],
     mismatch: ["bad", "✕", T("resultMismatch"), T("resultMismatchDetail")],
     over_pick: ["warn", "!", T("resultOverPick"), r.line ? `${lineLabel(r.line)} · ${T("resultOverPickDetail")}` : T("resultOverPickDetail")],
@@ -723,7 +871,7 @@ function showResult(r) {
   const buttons = kind === "ok"
     ? null
     : h("div", { class: "overlay-actions" },
-      r.result === "mismatch" || r.result === "review"
+      r.result === "mismatch" || r.result === "review" || r.result === "extra"
         ? h("button", {
           class: "btn btn-xl btn-ghost-light",
           onclick: (e) => {
@@ -1235,7 +1383,7 @@ async function onSyncResult(batch, resp) {
     if (o.error && o.error.code === "order_cancelled") {
       toast(T("orderCancelled"), "bad", 9000);
       FX.play("bad");
-    } else if (o.error && ["ship", "short", "flag"].includes(kinds.get(o.id))) {
+    } else if (o.error && ["ship", "short", "flag", "finish"].includes(kinds.get(o.id))) {
       // A label or report the server refused (label already used, order not
       // finished...): the worker has to know it didn't count.
       toast(T("syncRefused", { message: o.error.message }), "bad", 10000);

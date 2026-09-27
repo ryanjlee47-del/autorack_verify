@@ -16,8 +16,8 @@ reportErrors("dashboard");
 const ROUTES = [
   [/^\/?$/, () => dashboardView()],
   [/^\/orders$/, (m, p) => ordersView(p)],
-  [/^\/orders\/new$/, () => newOrderView()],
-  [/^\/orders\/import$/, () => importView()],
+  [/^\/orders\/new$/, (m, p) => newOrderView(p)],
+  [/^\/orders\/import$/, (m, p) => importView(p)],
   [/^\/orders\/([0-9a-f-]{36})$/, (m) => orderDetailView(m[1])],
   [/^\/workers$/, (m, p) => workersView(p)],
   [/^\/devices$/, () => devicesView()],

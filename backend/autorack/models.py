@@ -116,6 +116,22 @@ class ScanResult(enum.StrEnum):
     mismatch = "mismatch"  # confidently not in this order: an error caught
     review = "review"  # ambiguous or low-confidence: not counted, needs a human
     void = "void"  # a worker undid one of their earlier matches
+    # Receiving, returns and counts tally what's there instead of policing a
+    # pick, so they have their own results and never touch pick metrics.
+    counted = "counted"  # on the list: counted toward its line (even past the expected quantity)
+    extra = "extra"  # not on the list: recorded as found
+    uncounted = "uncounted"  # a worker undid a counted or extra scan
+
+
+class OrderKind(enum.StrEnum):
+    pick = "pick"  # an order going out: the original job
+    receive = "receive"  # a delivery checked against its purchase order
+    ret = "return"  # a customer return checked against what shipped
+    count = "count"  # a cycle count of one or more locations
+
+
+TALLY_KINDS = (OrderKind.receive, OrderKind.ret, OrderKind.count)
+PICK_RESULTS = (ScanResult.match, ScanResult.over_pick, ScanResult.mismatch, ScanResult.review)
 
 
 class FlagReason(enum.StrEnum):
@@ -397,6 +413,15 @@ class Order(Base):
     status: Mapped[OrderStatus] = mapped_column(
         _enum(OrderStatus, "order_status"), default=OrderStatus.pending, index=True
     )
+    kind: Mapped[OrderKind] = mapped_column(
+        _enum(OrderKind, "order_kind"), default=OrderKind.pick, server_default="pick"
+    )
+    # Counts: hide the expected quantity from the worker, so they count what's there.
+    blind: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Returns: the shipped order this return is checked against.
+    return_of_order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id"))
+    # Receiving/returns/counts end when the worker says so.
+    finished_by_worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
     source: Mapped[OrderSource] = mapped_column(_enum(OrderSource, "order_source"), default=OrderSource.manual)
     import_batch_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("import_batches.id"))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -437,6 +462,7 @@ class Order(Base):
             postgresql_where=text("external_order_number IS NOT NULL AND status <> 'cancelled'"),
         ),
         Index("ix_orders_warehouse_status_created", "warehouse_id", "status", "created_at"),
+        Index("ix_orders_warehouse_kind_status", "warehouse_id", "kind", "status"),
         Index("ix_orders_warehouse_tracking", "warehouse_id", "tracking_number"),
         Index(
             "ix_orders_tracking_push",
@@ -470,7 +496,9 @@ class OrderLineItem(Base):
 
     __table_args__ = (
         UniqueConstraint("order_id", "normalized_barcode", name="uq_line_items_order_barcode"),
-        CheckConstraint("expected_quantity >= 1", name="ck_line_items_expected_qty"),
+        # 0 is allowed for count lists ("the system says none here"); picks,
+        # receipts and returns require at least 1 in the service layer.
+        CheckConstraint("expected_quantity >= 0", name="ck_line_items_expected_qty"),
         CheckConstraint("scanned_quantity >= 0", name="ck_line_items_scanned_qty"),
         CheckConstraint("short_quantity >= 0", name="ck_line_items_short_qty"),
     )

@@ -228,7 +228,9 @@ label {
 }
 
 .badge-completed,
+.badge-finished,
 .badge-match,
+.badge-counted,
 .badge-ok {
   background: var(--ok-bg);
   color: var(--ok);
@@ -237,6 +239,7 @@ label {
 .badge-flagged,
 .badge-over_pick,
 .badge-review,
+.badge-extra,
 .badge-warn {
   background: var(--warn-bg);
   color: var(--warn);
@@ -249,7 +252,8 @@ label {
   color: var(--bad);
 }
 
-.badge-void {
+.badge-void,
+.badge-uncounted {
   background: var(--surface-2);
   color: var(--text-3);
   text-decoration: line-through;
@@ -467,4 +471,28 @@ label {
 .badge-shipped {
   background: var(--blue-soft);
   color: var(--blue-strong);
+}
+
+/* Job kinds: receiving, returns, counts */
+.badge-kind {
+  background: var(--navy);
+  color: #fff;
+}
+
+.badge-kind-receive {
+  background: #0f6b5c;
+}
+
+.badge-kind-return {
+  background: #8a4b08;
+}
+
+.badge-kind-count {
+  background: #5b3f9e;
+}
+
+.btn-block {
+  display: flex;
+  width: 100%;
+  justify-content: center;
 }

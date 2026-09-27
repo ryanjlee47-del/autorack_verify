@@ -18,6 +18,49 @@ const TABS = [
   ["", "All"],
 ];
 
+// What each kind of job is called, and what it can do.
+export const KINDS = {
+  pick: {
+    tab: "Picks", title: "Orders", col: "Order", newLabel: "New order", importLabel: "Import CSV",
+    sub: "Import your pick list, print sheets, and follow every order to verified.",
+    numberLabel: "Order number", numberPh: "e.g. SO-1042", created: "Order created",
+  },
+  receive: {
+    tab: "Receiving", title: "Receiving", col: "PO", newLabel: "New receipt", importLabel: "Import POs",
+    sub: "Check each delivery against its purchase order. Workers scan every item; you see what was short, over, or not on the PO.",
+    numberLabel: "PO number", numberPh: "e.g. PO-2291", created: "Receipt created",
+  },
+  return: {
+    tab: "Returns", title: "Returns", col: "Return",
+    sub: "Returned parcels checked against what shipped. Start one from a shipped order, or on the phone by scanning the parcel's label.",
+  },
+  count: {
+    tab: "Counts", title: "Cycle counts", col: "Count", newLabel: "New count", importLabel: "Import count sheet",
+    sub: "Count a location or a list of items. Blind counts hide the expected quantity from the worker.",
+    numberLabel: "Count name", numberPh: "e.g. Aisle A, bins 1-20", created: "Count created",
+  },
+};
+
+const TALLY_TABS = [
+  ["open", "Open"],
+  ["in_progress", "In progress"],
+  ["flagged", "Flagged"],
+  ["pending", "Not started"],
+  ["completed", "Finished"],
+  ["cancelled", "Cancelled"],
+  ["", "All"],
+];
+
+function kindOf(params) {
+  const k = params.get("kind") || "pick";
+  return KINDS[k] ? k : "pick";
+}
+
+function kindTabs(kind) {
+  return h("div", { class: "tabs kind-tabs" }, ...Object.entries(KINDS).map(([k, v]) =>
+    h("a", { class: ["tab", kind === k && "active"], href: k === "pick" ? "#/orders" : `#/orders?kind=${k}` }, v.tab)));
+}
+
 function printSheets(ids) {
   if (!ids.length) return toast("Select orders to print first.", "warn");
   window.open(`/app/print.html?ids=${ids.join(",")}`, "_blank", "noopener");
@@ -32,6 +75,9 @@ function openProof(id) {
 // ---------------------------------------------------------------------------
 
 export async function ordersView(params) {
+  const kind = kindOf(params);
+  const K = KINDS[kind];
+  const tally = kind !== "pick";
   const status = params.get("status") ?? "open";
   const q = params.get("q") || "";
   const selected = new Set();
@@ -43,21 +89,24 @@ export async function ordersView(params) {
   const search = h("input", { class: "input", type: "search", placeholder: "Search order #, customer, tracking, barcode, SKU", value: q });
   const go = (next) => {
     const p = new URLSearchParams({ status: next.status ?? status, q: next.q ?? search.value });
+    if (tally) p.set("kind", kind);
     location.hash = `#/orders?${p}`;
   };
   search.addEventListener("keydown", (e) => {
     if (e.key === "Enter") go({});
   });
 
+  const q2 = tally ? `?kind=${kind}` : "";
   layout("#/orders", [
-    canManage()
-      ? pageHeader("Orders", "Import your pick list, print sheets, and follow every order to verified.",
+    canManage() && K.newLabel
+      ? pageHeader(K.title, K.sub,
         h("a", { class: "btn", href: "/api/orders/template.csv", onclick: (e) => { e.preventDefault(); download("/api/orders/template.csv", "autorack-orders-template.csv"); } }, "CSV template"),
-        h("a", { class: "btn", href: "#/orders/new" }, "New order"),
-        h("a", { class: "btn btn-primary", href: "#/orders/import" }, "Import CSV"))
-      : pageHeader("Orders", "Follow every order to verified and shipped."),
+        h("a", { class: "btn", href: `#/orders/new${q2}` }, K.newLabel),
+        h("a", { class: "btn btn-primary", href: `#/orders/import${q2}` }, K.importLabel))
+      : pageHeader(K.title, kind === "pick" ? "Follow every order to verified and shipped." : K.sub),
+    kindTabs(kind),
     h("div", { class: "toolbar" },
-      h("div", { class: "tabs" }, ...TABS.map(([value, label]) =>
+      h("div", { class: "tabs" }, ...(tally ? TALLY_TABS : TABS).map(([value, label]) =>
         h("button", { class: ["tab", status === value && "active"], onclick: () => go({ status: value }) }, label))),
       h("div", { class: "row" }, search,
         h("button", { class: "btn", onclick: () => printSheets([...selected]) }, "Print selected"))),
@@ -86,23 +135,25 @@ export async function ordersView(params) {
           return box;
         },
       },
-      { label: "Order", render: (o) => h("span", { class: "mono strong" }, o.external_order_number || o.id.slice(0, 8)) },
-      { label: "Customer", render: (o) => o.customer || h("span", { class: "muted" }, "–") },
-      { label: "Status", render: (o) => statusBadge(o.status) },
+      { label: K.col, render: (o) => h("span", { class: "mono strong" }, o.external_order_number || o.id.slice(0, 8)) },
+      kind === "count" ? null : { label: kind === "receive" ? "Supplier" : "Customer", render: (o) => o.customer || h("span", { class: "muted" }, "–") },
+      { label: "Status", render: (o) => statusBadge(tally && o.status === "completed" ? "finished" : o.status) },
       { label: "Lines", align: "right", render: (o) => String(o.line_count) },
-      { label: "Units", align: "right", render: (o) => `${o.units_scanned}/${o.units_expected}` },
-      { label: "Caught", align: "right", render: (o) => (o.errors_caught ? h("span", { class: "bad-text" }, String(o.errors_caught)) : "0") },
+      { label: tally ? "Counted" : "Units", align: "right", render: (o) => `${o.units_scanned}/${o.units_expected}${o.blind ? " (blind)" : ""}` },
+      tally ? null : { label: "Caught", align: "right", render: (o) => (o.errors_caught ? h("span", { class: "bad-text" }, String(o.errors_caught)) : "0") },
       { label: "Assigned", render: (o) => o.assigned_worker || h("span", { class: "muted" }, "Anyone") },
       { label: "Created", render: (o) => h("span", { class: "muted" }, fmtDateTime(o.created_at, tz())) },
-    ];
+    ].filter(Boolean);
     mount(listHost, table(cols, rows, {
-      empty: status === "open" ? "No open orders. Import a CSV or create one by hand." : "No orders match.",
+      empty: status === "open"
+        ? { pick: "No open orders. Import a CSV or create one by hand.", receive: "Nothing to receive. Create a receipt or import your purchase orders.", return: "No open returns. Start one from a shipped order, or on the phone with “Start a return”.", count: "No counts open. Create one or import a count sheet." }[kind]
+        : "Nothing matches.",
       onRow: (o) => { location.hash = `#/orders/${o.id}`; },
     }));
   };
 
   const load = async () => {
-    const p = new URLSearchParams({ limit: "100", offset: String(offset) });
+    const p = new URLSearchParams({ limit: "100", offset: String(offset), kind });
     if (status) p.set("status", status);
     if (q) p.set("q", q);
     const r = await api(`/api/orders?${p}`);
@@ -126,7 +177,9 @@ export async function orderDetailView(id) {
     api(`/api/orders/${id}/scans`),
     api("/api/workers"),
   ]);
-  const editable = canManage() && order.status !== "cancelled" && order.status !== "shipped";
+  // A finished receipt/return/count is a record: reopen it to change it.
+  const finishedTally = order.kind && order.kind !== "pick" && Boolean(order.completed_at);
+  const editable = canManage() && order.status !== "cancelled" && order.status !== "shipped" && !finishedTally;
   const reload = () => orderDetailView(id).catch(fail);
   const linesById = new Map(order.lines.map((l) => [l.id, l]));
 
@@ -142,7 +195,7 @@ export async function orderDetailView(id) {
         fail(err);
       }
     },
-  }, h("option", { value: "" }, "Anyone can pick"),
+  }, h("option", { value: "" }, order.kind && order.kind !== "pick" ? "Anyone" : "Anyone can pick"),
   ...workers.workers.filter((w) => w.active).map((w) =>
     h("option", { value: w.worker_id, selected: w.worker_id === order.assigned_worker_id }, w.name)));
 
@@ -150,47 +203,82 @@ export async function orderDetailView(id) {
   const closedFlags = order.flags.filter((f) => f.resolved_at);
   const flagLine = (f) => (f.line_item_id && linesById.get(f.line_item_id) ? lineName(linesById.get(f.line_item_id)) : "Whole order");
   const shipped = order.status === "shipped";
+  const tally = order.kind && order.kind !== "pick";
+  const K = KINDS[order.kind] || KINDS.pick;
+  const back = tally ? `#/orders?kind=${order.kind}` : "#/orders";
 
   layout("#/orders", [
-    h("a", { href: "#/orders", class: "back-link" }, "← Orders"),
+    h("a", { href: back, class: "back-link" }, `← ${K.title}`),
     h("div", { class: "page-head" },
       h("div", null,
-        h("h1", { class: "row" }, h("span", { class: "mono" }, order.external_order_number || "Order"), statusBadge(order.status)),
+        h("h1", { class: "row" },
+          tally ? h("span", { class: `badge badge-kind badge-kind-${order.kind}` }, K.tab.replace(/s$/, "")) : null,
+          h("span", { class: "mono" }, order.external_order_number || K.col),
+          statusBadge(tally && order.status === "completed" ? "finished" : order.status)),
+        order.return_of ? h("p", null, "Return of ", h("a", { href: `#/orders/${order.return_of.id}`, class: "mono" }, order.return_of.number || "order"),
+          order.return_of.tracking_number ? h("span", { class: "muted" }, ` · shipped as ${order.return_of.tracking_number}`) : null) : null,
         h("p", { class: "muted" },
           order.customer ? [h("strong", null, order.customer), " · "] : null,
-          `${order.line_count} lines · ${order.units_scanned}/${order.units_expected} units verified`,
+          tally
+            ? `${order.line_count} lines · ${order.units_scanned} of ${order.units_expected} counted${order.blind ? " · blind count" : ""}`
+            : `${order.line_count} lines · ${order.units_scanned}/${order.units_expected} units verified`,
           order.units_short ? ` · ${order.units_short} short` : "",
           ` · created ${fmtDateTime(order.created_at, tz())}`,
-          order.completed_at ? ` · completed ${fmtDateTime(order.completed_at, tz())}` : ""),
+          order.completed_at ? ` · ${tally ? "finished" : "completed"} ${fmtDateTime(order.completed_at, tz())}` : "",
+          order.variance && order.variance.finished_by ? ` by ${order.variance.finished_by}` : ""),
+        order.returns && order.returns.length ? h("p", null, "Returns: ", ...order.returns.flatMap((r, i) => [
+          i ? ", " : "", h("a", { href: `#/orders/${r.id}`, class: "mono" }, r.number)])) : null,
         shipped ? h("p", { class: "ship-line" },
           "Shipped ", fmtDateTime(order.shipped_at, tz()), order.shipped_by ? ` by ${order.shipped_by}` : "",
           " · ", order.carrier ? `${order.carrier} ` : "", h("span", { class: "mono strong" }, order.tracking_number)) : null,
         pushLine(order, reload)),
       h("div", { class: "row" },
-        shipped || order.status === "completed"
+        !tally && (shipped || order.status === "completed")
           ? h("button", { class: shipped ? "btn btn-primary" : "btn", onclick: () => openProof(id) }, "Shipment proof")
           : null,
-        order.status !== "shipped" ? h("button", { class: "btn", onclick: () => printSheets([id]) }, "Print pick sheet") : null,
+        !tally && (shipped || order.status === "completed") && canManage()
+          ? h("button", {
+            class: "btn",
+            onclick: async () => {
+              if (!(await confirmDialog("Start a return?", "Makes a return listing what shipped on this order. A worker scans what came back, and you see anything missing or not from this order.", { confirmLabel: "Start return" }))) return;
+              api(`/api/orders/${id}/return`, { method: "POST" }).then((r) => { location.hash = `#/orders/${r.id}`; }, fail);
+            },
+          }, "Start a return")
+          : null,
+        tally ? h("button", {
+          class: "btn",
+          onclick: () => download(`/api/orders/${id}/variance.csv`, `autorack-${order.kind}-${order.external_order_number || id.slice(0, 8)}.csv`),
+        }, "Download results (CSV)") : null,
+        tally && order.completed_at && canManage() && order.status !== "cancelled" ? h("button", {
+          class: "btn",
+          onclick: async () => {
+            if (!(await confirmDialog("Reopen?", "Workers can scan it again and finish it again. Nothing counted so far is lost.", { confirmLabel: "Reopen" }))) return;
+            api(`/api/orders/${id}/reopen`, { method: "POST" }).then(reload, fail);
+          },
+        }, "Reopen") : null,
+        order.status !== "shipped" && !(tally && order.completed_at) ? h("button", { class: "btn", onclick: () => printSheets([id]) }, tally ? "Print sheet" : "Print pick sheet") : null,
         editable ? h("button", {
           class: "btn btn-danger",
           onclick: async () => {
-            if (!(await confirmDialog("Cancel this order?", "Workers will be told to put its items back. Its scan history is kept.", { confirmLabel: "Cancel order", danger: true }))) return;
+            if (!(await confirmDialog(tally ? "Cancel this?" : "Cancel this order?", tally ? "It disappears from the phones. What was counted is kept." : "Workers will be told to put its items back. Its scan history is kept.", { confirmLabel: tally ? "Cancel it" : "Cancel order", danger: true }))) return;
             await api(`/api/orders/${id}/cancel`, { method: "POST" }).then(reload, fail);
           },
-        }, "Cancel order") : null)),
+        }, tally ? "Cancel" : "Cancel order") : null)),
 
     openFlags.length ? card(`Needs a decision (${openFlags.length})`,
       h("ul", { class: "feed" }, ...openFlags.map((f) => flagItem(id, f, { item: flagLine(f), onDone: reload })))) : null,
 
+    tally ? varianceCard(order) : null,
+
     h("div", { class: "grid-main" },
-      card("Lines",
+      card(tally ? "List" : "Lines",
         linesTable(order, editable, reload),
-        editable ? addLineForm(id, reload) : null),
+        editable ? addLineForm(id, reload, order.kind === "count" ? 0 : 1) : null),
       h("div", { class: "stack-lg" },
-        card("Pick sheet QR",
+        card(tally ? "Sheet QR" : "Pick sheet QR",
           h("div", { class: "qr-box" }, svg(order.qr_svg, "qr")),
-          h("p", { class: "muted small" }, "Workers scan this (on the printed sheet) to open the order on their phone.")),
-        card("Assignment", assign, h("p", { class: "muted small" }, "Assigned orders show first on that worker's phone and are hidden from others.")),
+          h("p", { class: "muted small" }, `Workers scan this (on the printed sheet) to open the ${tally ? K.col.toLowerCase() : "order"} on their phone.`)),
+        card("Assignment", assign, h("p", { class: "muted small" }, `Assigned ${tally ? "jobs" : "orders"} show first on that worker's phone and are hidden from others.`)),
         card("Notes", notesEditor(order, editable)))),
 
     closedFlags.length ? card("Resolved problems",
@@ -198,6 +286,42 @@ export async function orderDetailView(id) {
 
     card("Scan history", scanHistory(order, scans, linesById, reload, editable)),
   ]);
+}
+
+function varianceCard(order) {
+  const v = order.variance;
+  if (!v) return null;
+  const t = v.totals;
+  const stateCell = (r) => {
+    if (r.state === "ok") return h("span", { class: "badge badge-ok" }, "Matches");
+    return h("span", { class: `badge ${r.state === "short" ? "badge-bad" : "badge-warn"}` },
+      r.state === "short" ? `${-r.difference} short` : `${r.difference} over`);
+  };
+  const differing = v.lines.filter((r) => r.state !== "ok");
+  const heading = !v.finished
+    ? "Results so far"
+    : v.matches ? "Everything matched" : "Differences";
+  return card(heading,
+    !v.finished ? h("p", { class: "muted small" }, "Not finished yet. The worker taps Finish on the phone when everything is scanned.") : null,
+    h("div", { class: "tiles tiles-sm" },
+      h("div", { class: "tile" }, h("div", { class: "tile-label" }, "Expected"), h("div", { class: "tile-value" }, fmtNumber(t.expected))),
+      h("div", { class: "tile" }, h("div", { class: "tile-label" }, "Counted"), h("div", { class: "tile-value" }, fmtNumber(t.counted))),
+      h("div", { class: ["tile", t.lines_short && "tile-bad"] }, h("div", { class: "tile-label" }, "Lines short"), h("div", { class: "tile-value" }, fmtNumber(t.lines_short))),
+      h("div", { class: ["tile", t.lines_over && "tile-warn"] }, h("div", { class: "tile-label" }, "Lines over"), h("div", { class: "tile-value" }, fmtNumber(t.lines_over))),
+      h("div", { class: ["tile", t.extra && "tile-warn"] }, h("div", { class: "tile-label" }, order.kind === "return" ? "Not from this order" : "Not on the list"), h("div", { class: "tile-value" }, fmtNumber(t.extra)))),
+    differing.length ? table([
+      { label: "Item", render: (r) => h("div", null, r.description || r.sku || "–", h("div", { class: "muted small mono" }, r.barcode)) },
+      { label: "Location", render: (r) => r.location || h("span", { class: "muted" }, "–") },
+      { label: "Expected", align: "right", render: (r) => fmtNumber(r.expected) },
+      { label: "Counted", align: "right", render: (r) => fmtNumber(r.counted) },
+      { label: "", render: stateCell },
+    ], differing) : null,
+    v.extras.length ? h("div", { class: "stack" },
+      h("h3", null, order.kind === "return" ? "Items that didn't ship on this order" : "Scanned but not on the list"),
+      table([
+        { label: "Barcode", render: (e) => h("span", { class: "mono" }, e.barcode) },
+        { label: "Count", align: "right", render: (e) => fmtNumber(e.counted) },
+      ], v.extras)) : null);
 }
 
 function lineName(l) {
@@ -210,13 +334,13 @@ function linesTable(order, editable, reload) {
     { label: "Item", render: (l) => h("div", null, h("div", null, l.description || l.sku || "–"), l.sku && l.description ? h("div", { class: "muted small mono" }, l.sku) : null) },
     { label: "Barcode", render: (l) => h("span", { class: "mono" }, l.expected_barcode) },
     {
-      label: "Verified", align: "right",
+      label: order.kind && order.kind !== "pick" ? "Counted" : "Verified", align: "right",
       render: (l) => h("span", null,
         h("span", { class: l.scanned_quantity >= l.expected_quantity ? "ok-text" : null }, `${l.scanned_quantity}/${l.expected_quantity}`),
         l.short_quantity ? h("span", { class: "badge badge-warn badge-inline" }, `${l.short_quantity} short`) : null),
     },
-    { label: "Wrong picks", align: "right", render: (l) => (l.mismatches ? h("span", { class: "bad-text" }, String(l.mismatches)) : "0") },
-  ];
+    order.kind && order.kind !== "pick" ? null : { label: "Wrong picks", align: "right", render: (l) => (l.mismatches ? h("span", { class: "bad-text" }, String(l.mismatches)) : "0") },
+  ].filter(Boolean);
   if (editable) {
     cols.push({
       label: "",
@@ -238,7 +362,7 @@ async function editLine(orderId, line, reload) {
   const result = await dialog("Edit line", (close) => {
     const f = {
       barcode: h("input", { class: "input mono", value: line.expected_barcode }),
-      quantity: h("input", { class: "input", type: "number", min: "1", value: String(line.expected_quantity) }),
+      quantity: h("input", { class: "input", type: "number", min: "0", value: String(line.expected_quantity) }),
       sku: h("input", { class: "input", value: line.sku || "" }),
       description: h("input", { class: "input", value: line.description || "" }),
       location: h("input", { class: "input", value: line.location || "" }),
@@ -266,9 +390,9 @@ async function editLine(orderId, line, reload) {
   await api(`/api/orders/${orderId}/lines/${line.id}`, { method: "PATCH", body }).then(reload, fail);
 }
 
-function addLineForm(orderId, reload) {
+function addLineForm(orderId, reload, minQty = 1) {
   const barcode = h("input", { class: "input mono", placeholder: "Barcode", required: true });
-  const qty = h("input", { class: "input input-qty", type: "number", min: "1", value: "1", "aria-label": "Quantity" });
+  const qty = h("input", { class: "input input-qty", type: "number", min: String(minQty), value: "1", "aria-label": "Quantity" });
   const desc = h("input", { class: "input", placeholder: "Description (optional)" });
   const loc = h("input", { class: "input input-qty", placeholder: "Location" });
   return h("form", {
@@ -293,7 +417,7 @@ function notesEditor(order, editable) {
 }
 
 function scanHistory(order, scans, linesById, reload, editable) {
-  const resultLabel = { match: "Right item", void: "Undone", ...{ mismatch: problemLabel("mismatch"), over_pick: problemLabel("over_pick"), review: problemLabel("review") } };
+  const resultLabel = { match: "Right item", void: "Undone", counted: "Counted", extra: order.kind === "return" ? "Not from this order" : "Not on the list", uncounted: "Undone", ...{ mismatch: problemLabel("mismatch"), over_pick: problemLabel("over_pick"), review: problemLabel("review") } };
   return table([
     { label: "When", render: (s) => h("span", { class: "muted" }, fmtDateTime(s.at, tz())) },
     { label: "Worker", key: "worker" },
@@ -345,10 +469,14 @@ async function teachAlias(scan, order, reload) {
 // New order
 // ---------------------------------------------------------------------------
 
-export async function newOrderView() {
+export async function newOrderView(params = new URLSearchParams()) {
+  const kind = kindOf(params) === "return" ? "pick" : kindOf(params);
+  const K = KINDS[kind];
+  const minQty = kind === "count" ? "0" : "1";
   const workers = await api("/api/workers");
-  const number = h("input", { class: "input mono", placeholder: "e.g. SO-1042" });
-  const customer = h("input", { class: "input", placeholder: "Optional, for per-customer reports" });
+  const number = h("input", { class: "input mono", placeholder: K.numberPh });
+  const customer = h("input", { class: "input", placeholder: kind === "receive" ? "Optional" : "Optional, for per-customer reports" });
+  const blind = h("input", { type: "checkbox" });
   const notes = h("input", { class: "input", placeholder: "Optional" });
   const assign = h("select", { class: "input" }, h("option", { value: "" }, "Anyone"),
     ...workers.workers.filter((w) => w.active).map((w) => h("option", { value: w.worker_id }, w.name)));
@@ -357,7 +485,7 @@ export async function newOrderView() {
   const addRow = () => {
     const tr = h("tr", null,
       h("td", null, h("input", { class: "input mono", name: "barcode", placeholder: "Barcode" })),
-      h("td", null, h("input", { class: "input input-qty", name: "quantity", type: "number", min: "1", value: "1" })),
+      h("td", null, h("input", { class: "input input-qty", name: "quantity", type: "number", min: minQty, value: "1" })),
       h("td", null, h("input", { class: "input", name: "description", placeholder: "Description" })),
       h("td", null, h("input", { class: "input", name: "sku", placeholder: "SKU" })),
       h("td", null, h("input", { class: "input input-qty", name: "location", placeholder: "Bin" })),
@@ -370,7 +498,8 @@ export async function newOrderView() {
     e.preventDefault();
     const lines = [...rowsHost.querySelectorAll("tr")].map((tr) => {
       const v = (n) => tr.querySelector(`[name=${n}]`).value.trim();
-      return { barcode: v("barcode"), quantity: Number(v("quantity")) || 1, description: v("description") || null, sku: v("sku") || null, location: v("location") || null };
+      const qty = v("quantity") === "" ? 1 : Number(v("quantity"));
+      return { barcode: v("barcode"), quantity: Number.isFinite(qty) ? qty : 1, description: v("description") || null, sku: v("sku") || null, location: v("location") || null };
     }).filter((l) => l.barcode);
     if (!lines.length) return toast("Add at least one line with a barcode.", "warn");
     try {
@@ -379,9 +508,10 @@ export async function newOrderView() {
         body: {
           external_order_number: number.value.trim() || null, customer: customer.value.trim() || null,
           notes: notes.value || null, assigned_worker_id: assign.value || null, lines,
+          kind, blind: kind === "count" && blind.checked,
         },
       });
-      toast("Order created", "ok");
+      toast(K.created, "ok");
       location.hash = `#/orders/${o.id}`;
     } catch (err) {
       fail(err);
@@ -389,13 +519,19 @@ export async function newOrderView() {
   };
 
   layout("#/orders", [
-    h("a", { href: "#/orders", class: "back-link" }, "← Orders"),
-    pageHeader("New order", "For one-off orders. For your daily pick list, CSV import is faster."),
+    h("a", { href: kind === "pick" ? "#/orders" : `#/orders?kind=${kind}`, class: "back-link" }, `← ${K.title}`),
+    pageHeader(K.newLabel, {
+      pick: "For one-off orders. For your daily pick list, CSV import is faster.",
+      receive: "List what the purchase order says is coming. The worker scans what actually arrived.",
+      count: "List the items to count (with the quantity the system expects, 0 is fine). The worker scans what's actually there.",
+    }[kind]),
     h("form", { onsubmit: submit },
       card(null,
         h("div", { class: "form-grid" },
-          h("label", null, "Order number", number), h("label", null, "Customer", customer),
-          h("label", null, "Assign to", assign), h("label", null, "Notes", notes))),
+          h("label", null, K.numberLabel, number),
+          kind === "count" ? null : h("label", null, kind === "receive" ? "Supplier" : "Customer", customer),
+          h("label", null, "Assign to", assign), h("label", null, "Notes", notes),
+          kind === "count" ? h("label", { class: "check span-2" }, blind, " Blind count: don't show the expected quantity on the phone") : null)),
       card("Lines",
         h("div", { class: "table-wrap" },
           h("table", { class: "table table-form" },
@@ -404,7 +540,7 @@ export async function newOrderView() {
         h("p", { class: "muted small" }, "Tip: click into the barcode field and scan with a USB scanner."),
         h("div", { class: "row" },
           h("button", { class: "btn", type: "button", onclick: addRow }, "+ Add line"),
-          h("button", { class: "btn btn-primary", type: "submit" }, "Create order")))),
+          h("button", { class: "btn btn-primary", type: "submit" }, K.newLabel.replace("New ", "Create "))))),
   ]);
   addRow();
 }
@@ -413,7 +549,10 @@ export async function newOrderView() {
 // Import
 // ---------------------------------------------------------------------------
 
-export async function importView() {
+export async function importView(params = new URLSearchParams()) {
+  const kind = kindOf(params) === "return" ? "pick" : kindOf(params);
+  const K = KINDS[kind];
+  const blindBox = h("input", { type: "checkbox" });
   const previewHost = h("div");
   const historyHost = h("div");
   let file = null;
@@ -442,6 +581,8 @@ export async function importView() {
   const form = (extra = {}) => {
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("kind", kind);
+    if (kind === "count") fd.append("blind", String(blindBox.checked));
     for (const [k, v] of Object.entries(extra)) fd.append(k, v);
     return fd;
   };
@@ -481,23 +622,28 @@ export async function importView() {
             e.target.disabled = true;
             try {
               const r = await api("/api/orders/import", { method: "POST", form: form({ skip_invalid_rows: String(skip.checked) }), timeoutMs: 120000 });
-              toast(`Imported ${r.orders_created} orders (${r.lines_created} lines).`, "ok", 6000);
-              location.hash = "#/orders?status=pending";
+              toast(`Imported ${r.orders_created} (${r.lines_created} lines).`, "ok", 6000);
+              location.hash = kind === "pick" ? "#/orders?status=pending" : `#/orders?kind=${kind}&status=pending`;
             } catch (err) {
               e.target.disabled = false;
               fail(err);
             }
           },
-        }, canImport ? `Import ${p.orders_new} order${p.orders_new === 1 ? "" : "s"}` : "Nothing new to import"),
+        }, canImport ? `Import ${p.orders_new} ${{ pick: "order", receive: "PO", count: "count" }[kind]}${p.orders_new === 1 ? "" : "s"}` : "Nothing new to import"),
         h("button", { class: "btn", onclick: () => { file = null; fileInput.value = ""; mount(previewHost); } }, "Choose another file"))));
   };
 
   layout("#/orders", [
-    h("a", { href: "#/orders", class: "back-link" }, "← Orders"),
-    pageHeader("Import orders", "Export a pick list from your WMS or spreadsheet as CSV. Nothing is saved until you confirm.",
+    h("a", { href: kind === "pick" ? "#/orders" : `#/orders?kind=${kind}`, class: "back-link" }, `← ${K.title}`),
+    pageHeader(K.importLabel, {
+      pick: "Export a pick list from your WMS or spreadsheet as CSV. Nothing is saved until you confirm.",
+      receive: "One row per item on the purchase order: PO number in the order column, then barcode and quantity expected. Nothing is saved until you confirm.",
+      count: "One row per item to count: a count name (e.g. the aisle) in the order column, barcode, the quantity the system expects (0 is fine) and location. Nothing is saved until you confirm.",
+    }[kind],
       h("button", { class: "btn", onclick: () => download("/api/orders/template.csv", "autorack-orders-template.csv") }, "Download template")),
     card(null, fileInput, drop,
-      h("p", { class: "muted small" }, "Uploading every day? ",
+      kind === "count" ? h("label", { class: "check" }, blindBox, " Blind count: don't show the expected quantity on the phone") : null,
+      kind !== "pick" ? null : h("p", { class: "muted small" }, "Uploading every day? ",
         h("a", { href: "#/connections" }, "Connect Shopify, ShipStation, WooCommerce or a Google Sheet"),
         ", or email the CSV in, and orders arrive by themselves.")),
     previewHost,

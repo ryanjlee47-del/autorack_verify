@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from .. import matching
 from ..config import get_settings
 from ..errors import bad_request
-from ..models import ImportBatch, Order, OrderSource, OrderStatus, Warehouse
+from ..models import ImportBatch, Order, OrderKind, OrderSource, OrderStatus, Warehouse
 from . import audit
 from . import orders as order_svc
 from .audit import Actor
@@ -149,7 +149,7 @@ def map_columns(headers: Sequence[str]) -> dict[str, str]:
     return mapping
 
 
-def parse(content: bytes) -> ParseResult:
+def parse(content: bytes, *, min_qty: int = 1) -> ParseResult:
     s = get_settings()
     if len(content) > s.max_import_bytes:
         raise bad_request("file_too_large", f"CSV files are limited to {s.max_import_bytes // (1024 * 1024)} MB.")
@@ -223,9 +223,12 @@ def parse(content: bytes) -> ParseResult:
             except ValueError:
                 errors.append({"row": row_no, "message": f"Order {number}: quantity '{qty_raw}' is not a number."})
                 continue
-            if qty_f != int(qty_f) or qty_f < 1 or qty_f > 100_000:
+            if qty_f != int(qty_f) or qty_f < min_qty or qty_f > 100_000:
                 errors.append(
-                    {"row": row_no, "message": f"Order {number}: quantity must be a whole number, 1 to 100000."}
+                    {
+                        "row": row_no,
+                        "message": f"Order {number}: quantity must be a whole number, {min_qty} to 100000.",
+                    }
                 )
                 continue
             qty = int(qty_f)
@@ -299,8 +302,8 @@ def existing_numbers(
     return found
 
 
-def preview(db: Session, wh: Warehouse, content: bytes) -> dict[str, Any]:
-    pr = parse(content)
+def preview(db: Session, wh: Warehouse, content: bytes, kind: OrderKind = OrderKind.pick) -> dict[str, Any]:
+    pr = parse(content, min_qty=order_svc.min_quantity(kind))
     existing = existing_numbers(db, wh.id, [o.number for o in pr.orders])
     new_orders = [o for o in pr.orders if o.number not in existing and not o.too_many_lines]
     warnings = list(pr.warnings)
@@ -352,8 +355,10 @@ def commit(
     skip_invalid_rows: bool = False,
     source: OrderSource = OrderSource.csv,
     automatic: bool = False,
+    kind: OrderKind = OrderKind.pick,
+    blind: bool = False,
 ) -> ImportBatch:
-    pr = parse(content)
+    pr = parse(content, min_qty=order_svc.min_quantity(kind))
     if pr.errors and not skip_invalid_rows:
         raise bad_request(
             "import_has_errors",
@@ -382,6 +387,8 @@ def commit(
             source=source,
             import_batch_id=batch.id,
             created_by_user_id=user_id,
+            kind=kind,
+            blind=blind,
         )
         created += 1
         lines += len(po.lines)

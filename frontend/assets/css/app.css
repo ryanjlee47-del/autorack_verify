@@ -1312,3 +1312,25 @@ body.tv {
 .push-state {
   margin-top: 6px;
 }
+
+/* Picks | Receiving | Returns | Counts */
+.kind-tabs {
+  gap: 6px;
+  margin: 4px 0 14px;
+  border-bottom: 0;
+}
+
+.kind-tabs .tab {
+  margin: 0;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  text-decoration: none;
+}
+
+.kind-tabs .tab.active {
+  border-color: var(--navy);
+  background: var(--navy);
+  color: #fff;
+}

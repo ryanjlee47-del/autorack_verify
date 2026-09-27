@@ -13,9 +13,11 @@ from sqlalchemy.orm import Session
 from .. import matching
 from ..errors import bad_request, conflict, not_found
 from ..models import (
+    TALLY_KINDS,
     BarcodeAlias,
     Order,
     OrderFlag,
+    OrderKind,
     OrderLineItem,
     OrderSource,
     OrderStatus,
@@ -36,6 +38,12 @@ class LineInput:
     sku: str | None = None
     description: str | None = None
     location: str | None = None
+
+
+def min_quantity(kind: OrderKind) -> int:
+    """A count list may expect 0 ("the system says none here"); everything
+    else needs at least one unit."""
+    return 0 if kind == OrderKind.count else 1
 
 
 def clean(s: str | None, limit: int) -> str | None:
@@ -102,10 +110,16 @@ def create_order(
     assigned_worker_id: uuid.UUID | None = None,
     customer: str | None = None,
     actor: Actor | None = None,
+    kind: OrderKind = OrderKind.pick,
+    blind: bool = False,
+    return_of_order_id: uuid.UUID | None = None,
 ) -> Order:
     number = clean(external_order_number, 100)
     if not lines:
         raise bad_request("lines_required", "An order needs at least one line.")
+    minimum = min_quantity(kind)
+    if any(li.quantity < minimum for li in lines):
+        raise bad_request("quantity_invalid", f"Quantities must be at least {minimum}.")
     if len(lines) > MAX_LINES_PER_ORDER:
         raise bad_request("too_many_lines", f"Orders are limited to {MAX_LINES_PER_ORDER} lines.")
     if number and order_number_in_use(db, wh.id, number):
@@ -119,6 +133,9 @@ def create_order(
         import_batch_id=import_batch_id,
         created_by_user_id=created_by_user_id,
         assigned_worker_id=assigned_worker_id,
+        kind=kind,
+        blind=blind and kind == OrderKind.count,
+        return_of_order_id=return_of_order_id,
     )
     db.add(order)
     db.flush()
@@ -136,13 +153,15 @@ def create_order(
             number=number,
             lines=len(lines),
             source=source.value,
+            kind=kind.value,
         )
     return order
 
 
 def _new_line(warehouse_id: uuid.UUID, order_id: uuid.UUID, line_no: int, li: LineInput) -> OrderLineItem:
     barcode = validate_barcode(li.barcode)
-    if li.quantity < 1 or li.quantity > 100_000:
+    # The lower bound depends on the kind (min_quantity), checked by callers.
+    if li.quantity < 0 or li.quantity > 100_000:
         raise bad_request("quantity_invalid", "Quantity must be between 1 and 100,000.")
     return OrderLineItem(
         warehouse_id=warehouse_id,
@@ -182,6 +201,8 @@ def add_line(db: Session, wh: Warehouse, order: Order, li: LineInput, actor: Act
     if len(existing) >= MAX_LINES_PER_ORDER:
         raise bad_request("too_many_lines", f"Orders are limited to {MAX_LINES_PER_ORDER} lines.")
     key = matching.normalized_key(validate_barcode(li.barcode))
+    if li.quantity < min_quantity(order.kind):
+        raise bad_request("quantity_invalid", f"Quantity must be at least {min_quantity(order.kind)}.")
     for line in existing:
         if line.normalized_barcode == key:
             raise conflict("duplicate_line", "That barcode is already on this order. Edit its quantity instead.")
@@ -215,8 +236,9 @@ def update_line(db: Session, order: Order, line: OrderLineItem, changes: dict[st
             line.normalized_barcode = key
     if "quantity" in changes and changes["quantity"] is not None:
         q = int(changes["quantity"])
-        if q < 1 or q > 100_000:
-            raise bad_request("quantity_invalid", "Quantity must be between 1 and 100,000.")
+        low = min_quantity(order.kind)
+        if q < low or q > 100_000:
+            raise bad_request("quantity_invalid", f"Quantity must be between {low} and 100,000.")
         line.expected_quantity = q
     for field, attr, limit in (
         ("sku", "sku", 100),
@@ -310,7 +332,11 @@ def recompute_status(db: Session, order: Order, lines: list[OrderLineItem] | Non
     if order.status in (OrderStatus.cancelled, OrderStatus.shipped):
         return
     lines = lines if lines is not None else lines_for(db, order.id)
-    all_done = bool(lines) and all(line_done(li) for li in lines)
+    if order.kind in TALLY_KINDS:
+        # Receiving, returns and counts are done when the worker says so.
+        all_done = order.completed_at is not None
+    else:
+        all_done = bool(lines) and all(line_done(li) for li in lines)
     before = order.status
     if open_flag_count(db, order.id):
         order.status = OrderStatus.flagged
@@ -428,6 +454,9 @@ def order_summary(order: Order, lines: list[OrderLineItem]) -> dict[str, Any]:
         "external_order_number": order.external_order_number,
         "customer": order.customer,
         "status": order.status.value,
+        "kind": order.kind.value,
+        "blind": order.blind,
+        "return_of_order_id": str(order.return_of_order_id) if order.return_of_order_id else None,
         "source": order.source.value,
         "version": order.version,
         "notes": order.notes,
@@ -448,7 +477,10 @@ def order_summary(order: Order, lines: list[OrderLineItem]) -> dict[str, Any]:
         else None,
         "line_count": len(lines),
         "units_expected": sum(li.expected_quantity for li in lines),
-        "units_scanned": sum(min(li.scanned_quantity, li.expected_quantity) for li in lines),
+        "units_scanned": sum(
+            li.scanned_quantity if order.kind in TALLY_KINDS else min(li.scanned_quantity, li.expected_quantity)
+            for li in lines
+        ),
         "units_short": sum(li.short_quantity for li in lines),
     }
 
@@ -457,9 +489,16 @@ def offline_payload(db: Session, wh: Warehouse, order: Order) -> dict[str, Any]:
     """Everything a phone needs to verify this order with no network."""
     lines = lines_for(db, order.id)
     index = build_index(db, wh, lines)
+    summary = order_summary(order, lines)
+    line_rows = [line_dict(li) for li in lines]
+    if order.blind:
+        # A blind count: the phone never learns what the system expects.
+        summary["units_expected"] = 0
+        for row in line_rows:
+            row["expected_quantity"] = 0
     return {
-        **order_summary(order, lines),
-        "lines": [line_dict(li) for li in lines],
+        **summary,
+        "lines": line_rows,
         "match": {
             "loose_match_enabled": wh.loose_match_enabled,
             "suffix_len": wh.suffix_len,

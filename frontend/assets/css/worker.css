@@ -664,3 +664,49 @@ body {
   width: 100%;
   margin-top: 8px;
 }
+
+/* Receiving, returns, counts */
+.target-tally {
+  border-left-color: var(--navy);
+  text-align: center;
+}
+
+.tally-big {
+  margin: 4px 0;
+  font-size: 56px;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.target-tally .target-meta {
+  justify-content: center;
+}
+
+.btn-finish {
+  margin: 4px 0 18px;
+}
+
+.line-over {
+  border-color: var(--warn);
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+.line-over .line-qty {
+  color: var(--warn);
+}
+
+.finish-summary {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.finish-summary li + li {
+  margin-top: 4px;
+}
+
+.pick-title .badge-kind {
+  align-self: flex-start;
+}

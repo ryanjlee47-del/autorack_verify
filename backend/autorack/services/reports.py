@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from ..models import (
     Order,
     OrderFlag,
+    OrderKind,
     OrderLineItem,
     OrderStatus,
     ScanEvent,
@@ -73,6 +74,7 @@ def build(db: Session, wh: Warehouse, start_day: date, end_day: date) -> dict[st
             .select_from(Order)
             .where(
                 Order.warehouse_id == wh.id,
+                Order.kind == OrderKind.pick,
                 Order.status.in_([OrderStatus.completed, OrderStatus.shipped]),
                 Order.completed_at >= start,
                 Order.completed_at < end,
@@ -327,6 +329,7 @@ def board(db: Session, wh: Warehouse) -> dict[str, Any]:
             .select_from(Order)
             .where(
                 Order.warehouse_id == wh.id,
+                Order.kind == OrderKind.pick,
                 Order.status.in_([OrderStatus.pending, OrderStatus.in_progress, OrderStatus.flagged]),
             )
         )

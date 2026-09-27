@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime
 from typing import Any, Literal
@@ -18,10 +19,12 @@ from ..db import get_db
 from ..deps import OwnerContext, current_owner, require_manager, require_owner_access
 from ..errors import bad_request, conflict, not_found
 from ..models import (
+    TALLY_KINDS,
     BarcodeAlias,
     ImportBatch,
     Order,
     OrderFlag,
+    OrderKind,
     OrderLineItem,
     OrderStatus,
     Photo,
@@ -30,7 +33,7 @@ from ..models import (
     Worker,
     utcnow,
 )
-from ..services import audit, csv_import, usage
+from ..services import audit, csv_import, tasks, usage
 from ..services import dashboard as dash
 from ..services import orders as order_svc
 from ..services.ratelimit import memory_limiter
@@ -41,7 +44,8 @@ router = APIRouter(tags=["orders"])
 
 class LineIn(BaseModel):
     barcode: str = Field(min_length=1, max_length=200)
-    quantity: int = Field(default=1, ge=1, le=100_000)
+    # 0 is only accepted on count lists (checked in the service).
+    quantity: int = Field(default=1, ge=0, le=100_000)
     sku: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     location: str | None = Field(default=None, max_length=100)
@@ -56,6 +60,9 @@ class OrderCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     assigned_worker_id: uuid.UUID | None = None
     lines: list[LineIn] = Field(min_length=1, max_length=order_svc.MAX_LINES_PER_ORDER)
+    # pick (default) | receive | count. Returns are made from a shipped order.
+    kind: Literal["pick", "receive", "count"] = "pick"
+    blind: bool = False
 
 
 class OrderUpdate(BaseModel):
@@ -96,10 +103,15 @@ def list_orders(
     created_to: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    kind: str = Query("pick", description="pick | receive | return | count | all"),
     ctx: OwnerContext = Depends(current_owner),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     stmt = select(Order).where(Order.warehouse_id == ctx.warehouse.id)
+    if kind != "all":
+        if kind not in {k.value for k in OrderKind}:
+            raise bad_request("kind_invalid", "kind must be pick, receive, return, count or all.")
+        stmt = stmt.where(Order.kind == OrderKind(kind))
     if status:
         wanted = (
             [OrderStatus.pending, OrderStatus.in_progress, OrderStatus.flagged]
@@ -160,8 +172,10 @@ def create_order(
         assigned_worker_id=body.assigned_worker_id,
         customer=body.customer,
         actor=ctx.actor,
+        kind=OrderKind(body.kind),
+        blind=body.blind,
     )
-    usage.track(db, ctx.warehouse.id, "orders.manual")
+    usage.track(db, ctx.warehouse.id, "orders.manual" if body.kind == "pick" else f"tasks.{body.kind}")
     db.commit()
     return order_detail(order.id, ctx, db)
 
@@ -185,18 +199,23 @@ async def _read_upload(file: UploadFile) -> bytes:
 
 @router.post("/orders/import/preview")
 async def import_preview(
-    file: UploadFile = File(...), ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
+    file: UploadFile = File(...),
+    kind: Literal["pick", "receive", "count"] = Form("pick"),
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     memory_limiter.check(
         f"import:{ctx.warehouse.id}", get_settings().import_requests_per_minute, 60, "Too many imports. Wait a minute."
     )
-    return csv_import.preview(db, ctx.warehouse, await _read_upload(file))
+    return csv_import.preview(db, ctx.warehouse, await _read_upload(file), OrderKind(kind))
 
 
 @router.post("/orders/import", status_code=201)
 async def import_commit(
     file: UploadFile = File(...),
     skip_invalid_rows: bool = Form(False),
+    kind: Literal["pick", "receive", "count"] = Form("pick"),
+    blind: bool = Form(False),
     ctx: OwnerContext = Depends(require_owner_access),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -204,7 +223,15 @@ async def import_commit(
         f"import:{ctx.warehouse.id}", get_settings().import_requests_per_minute, 60, "Too many imports. Wait a minute."
     )
     batch = csv_import.commit(
-        db, ctx.warehouse, await _read_upload(file), file.filename, ctx.actor, ctx.user.id, skip_invalid_rows
+        db,
+        ctx.warehouse,
+        await _read_upload(file),
+        file.filename,
+        ctx.actor,
+        ctx.user.id,
+        skip_invalid_rows,
+        kind=OrderKind(kind),
+        blind=blind,
     )
     usage.track(db, ctx.warehouse.id, "orders.import")
     db.commit()
@@ -294,7 +321,17 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
         "lines": [{**order_svc.line_dict(li), "mismatches": errors_by_line.get(li.id, 0)} for li in lines],
         "flags": [flag_dict(f, workers, photos.get(f.id, [])) for f in flags],
         "qr_svg": qr_svg(order_svc.order_qr_payload(order)),
+        "variance": tasks.variance(db, order) if order.kind in TALLY_KINDS else None,
+        "returns": tasks.returns_of(db, order) if order.kind == OrderKind.pick else [],
+        "return_of": _return_of(db, order),
     }
+
+
+def _return_of(db: Session, order: Order) -> dict[str, Any] | None:
+    if not order.return_of_order_id:
+        return None
+    o = db.get(Order, order.return_of_order_id)
+    return {"id": str(o.id), "number": o.external_order_number, "tracking_number": o.tracking_number} if o else None
 
 
 def flag_dict(f: OrderFlag, workers: dict[uuid.UUID, str], photo_ids: list[str]) -> dict[str, Any]:
@@ -382,6 +419,44 @@ def cancel_order(
     order_svc.cancel_order(db, order, ctx.actor)
     db.commit()
     return order_detail(order.id, ctx, db)
+
+
+@router.post("/orders/{order_id}/return", status_code=201)
+def start_return(
+    order_id: uuid.UUID, ctx: OwnerContext = Depends(require_owner_access), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Make a return task from a shipped order: the phone checks what comes
+    back against what went out."""
+    original = _get(db, ctx, order_id, lock=True)
+    ret = tasks.create_return(db, ctx.warehouse, original, ctx.actor, ctx.user.id)
+    usage.track(db, ctx.warehouse.id, "tasks.return")
+    db.commit()
+    return order_detail(ret.id, ctx, db)
+
+
+@router.post("/orders/{order_id}/reopen")
+def reopen_task(
+    order_id: uuid.UUID, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    order = _get(db, ctx, order_id, lock=True)
+    tasks.reopen(db, order, ctx.actor)
+    db.commit()
+    return order_detail(order.id, ctx, db)
+
+
+@router.get("/orders/{order_id}/variance.csv", response_class=PlainTextResponse)
+def variance_csv(
+    order_id: uuid.UUID, ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+) -> PlainTextResponse:
+    order = _get(db, ctx, order_id)
+    if order.kind not in TALLY_KINDS:
+        raise bad_request("not_for_task", "Only receiving, returns and counts have a variance report.")
+    name = re.sub(r"[^\w.-]+", "-", order.external_order_number or str(order.id)[:8])
+    return PlainTextResponse(
+        tasks.variance_csv(db, order),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="autorack-{order.kind.value}-{name}.csv"'},
+    )
 
 
 @router.post("/orders/{order_id}/lines", status_code=201)

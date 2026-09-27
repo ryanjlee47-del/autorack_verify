@@ -40,6 +40,34 @@ function matcherFor(order) {
   return m;
 }
 
+/**
+ * Receiving, returns and counts tally what's there: every listed item counts
+ * (even past the expected quantity), anything else is an "extra", and the
+ * worker finishes the job. Picks police the order.
+ */
+export function isTally(order) {
+  return Boolean(order && order.kind && order.kind !== "pick");
+}
+
+/** Expected vs counted per line, and extras, for the finish screen. */
+export function tallySummary(lines, extras) {
+  let over = 0;
+  let short = 0;
+  let counted = 0;
+  for (const l of lines) {
+    counted += l.scanned_quantity;
+    if (l.scanned_quantity > l.expected_quantity) over += 1;
+    else if (l.scanned_quantity < l.expected_quantity) short += 1;
+  }
+  return { counted, over, short, extras, matches: over === 0 && short === 0 && extras === 0 };
+}
+
+/** Extras queued or confirmed this session that haven't been undone. */
+export function extrasFor(history, orderId) {
+  const voided = new Set(history.filter((h) => h.kind === "void").map((h) => h.target));
+  return history.filter((h) => h.orderId === orderId && h.kind === "scan" && h.result === "extra" && !voided.has(h.id)).length;
+}
+
 /** Units still to pick on a line: expected, minus picked, minus reported short. */
 export function remaining(line) {
   return Math.max(0, line.expected_quantity - line.scanned_quantity - (line.short_quantity || 0));
@@ -54,7 +82,9 @@ export function displayLines(order, pending) {
   for (const ev of ordered) {
     const lineId = (ev.local && ev.local.lineId) || (ev.kind === "short" && ev.line_item_id);
     if (!lineId || !qty.has(lineId)) continue;
-    if (ev.kind === "scan" && ev.local.result === "match") qty.set(lineId, qty.get(lineId) + 1);
+    if (ev.kind === "scan" && (ev.local.result === "match" || ev.local.result === "counted")) {
+      qty.set(lineId, qty.get(lineId) + 1);
+    }
     if (ev.kind === "void") qty.set(lineId, Math.max(0, qty.get(lineId) - 1));
     if (ev.kind === "short") {
       const left = Math.max(0, expected.get(lineId) - qty.get(lineId) - short.get(lineId));
@@ -108,6 +138,14 @@ export function checkLabel(order, raw) {
 export function classify(order, lines, raw) {
   const { index, options } = matcherFor(order);
   const m = matchAgainstIndex(index, raw, options);
+  if (isTally(order)) {
+    // counted | extra | review, as the server decides for tally jobs.
+    if (m.resolved && !m.needsConfirmation && lines.some((l) => l.id === m.lineId)) {
+      return { result: "counted", lineId: m.lineId, tier: m.tier };
+    }
+    if (m.resolved || m.ambiguous) return { result: "review", lineId: m.resolved ? m.lineId : null, tier: m.tier };
+    return { result: "extra", lineId: null, tier: null };
+  }
   if (m.resolved && !m.needsConfirmation) {
     const line = lines.find((l) => l.id === m.lineId);
     if (line) {
@@ -181,7 +219,8 @@ export function corrections(events, outcomes, linesById) {
     if (o.result === "over_pick") out.push({ kind: "warn", key: "correctionOverPick", vars });
     else if (o.result === "mismatch") out.push({ kind: "bad", key: "correctionMismatch", vars });
     else if (o.result === "review") out.push({ kind: "warn", key: "correctionReview", vars });
-    else if (o.result === "match") out.push({ kind: "ok", key: "correctionMatch", vars });
+    else if (o.result === "match" || o.result === "counted") out.push({ kind: "ok", key: "correctionMatch", vars });
+    else if (o.result === "extra") out.push({ kind: "warn", key: "correctionExtra", vars });
   }
   return out;
 }
@@ -191,7 +230,8 @@ export function lastUndoable(history, orderId) {
   const voided = new Set(history.filter((h) => h.kind === "void").map((h) => h.target));
   for (let i = history.length - 1; i >= 0; i--) {
     const h = history[i];
-    if (h.orderId === orderId && h.kind === "scan" && h.result === "match" && !voided.has(h.id)) return h;
+    const undoable = h.result === "match" || h.result === "counted" || h.result === "extra";
+    if (h.orderId === orderId && h.kind === "scan" && undoable && !voided.has(h.id)) return h;
   }
   return null;
 }

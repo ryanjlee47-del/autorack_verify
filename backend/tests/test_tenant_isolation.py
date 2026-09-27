@@ -42,6 +42,9 @@ NO_BODY = {
     ("DELETE", "/api/integrations/{integration_id}"),
     ("POST", "/api/integrations/{integration_id}/sync"),
     ("POST", "/api/orders/{order_id}/push-tracking"),
+    ("POST", "/api/orders/{order_id}/return"),
+    ("POST", "/api/orders/{order_id}/reopen"),
+    ("GET", "/api/orders/{order_id}/variance.csv"),
 }
 
 

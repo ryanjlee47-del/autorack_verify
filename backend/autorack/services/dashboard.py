@@ -21,8 +21,11 @@ from sqlalchemy import Date, and_, case, cast, func, select
 from sqlalchemy.orm import Session
 
 from ..models import (
+    PICK_RESULTS,
+    TALLY_KINDS,
     Order,
     OrderFlag,
+    OrderKind,
     OrderLineItem,
     OrderStatus,
     Photo,
@@ -88,7 +91,9 @@ def summary(db: Session, wh: Warehouse, day: date | None = None) -> dict[str, An
 
     status_counts = dict.fromkeys((s.value for s in OrderStatus), 0)
     for st, n in db.execute(
-        select(Order.status, func.count()).where(Order.warehouse_id == wh.id).group_by(Order.status)
+        select(Order.status, func.count())
+        .where(Order.warehouse_id == wh.id, Order.kind == OrderKind.pick)
+        .group_by(Order.status)
     ):
         status_counts[st.value] = n
     completed_today = (
@@ -97,6 +102,7 @@ def summary(db: Session, wh: Warehouse, day: date | None = None) -> dict[str, An
             .select_from(Order)
             .where(
                 Order.warehouse_id == wh.id,
+                Order.kind == OrderKind.pick,
                 Order.status.in_([OrderStatus.completed, OrderStatus.shipped]),
                 Order.completed_at >= start,
                 Order.completed_at < end,
@@ -148,7 +154,7 @@ def summary(db: Session, wh: Warehouse, day: date | None = None) -> dict[str, An
             "open_problems": open_flags,
         },
         "today": {
-            "scans": sum(v for k, v in today.items() if k != "void"),
+            "scans": sum(today[r.value] for r in PICK_RESULTS),
             "units_picked": today["match"] - today["void"],
             "mismatches": today["mismatch"],
             "over_picks": today["over_pick"],
@@ -244,13 +250,14 @@ def order_rows(db: Session, wh: Warehouse, orders: list[Order]) -> list[dict[str
         return []
     ids = [o.id for o in orders]
     progress = {
-        oid: (n, exp, got)
-        for oid, n, exp, got in db.execute(
+        oid: (n, exp, got, raw)
+        for oid, n, exp, got, raw in db.execute(
             select(
                 OrderLineItem.order_id,
                 func.count(),
                 func.sum(OrderLineItem.expected_quantity),
                 func.sum(func.least(OrderLineItem.scanned_quantity, OrderLineItem.expected_quantity)),
+                func.sum(OrderLineItem.scanned_quantity),
             )
             .where(OrderLineItem.order_id.in_(ids))
             .group_by(OrderLineItem.order_id)
@@ -272,7 +279,8 @@ def order_rows(db: Session, wh: Warehouse, orders: list[Order]) -> list[dict[str
     names = worker_names(db, wh.id)
     out = []
     for o in orders:
-        n, exp, got = progress.get(o.id, (0, 0, 0))
+        n, exp, got, raw = progress.get(o.id, (0, 0, 0, 0))
+        tally = o.kind in TALLY_KINDS
         errs, last, workers = scan_stats.get(o.id, (0, None, 0))
         out.append(
             {
@@ -280,11 +288,14 @@ def order_rows(db: Session, wh: Warehouse, orders: list[Order]) -> list[dict[str
                 "external_order_number": o.external_order_number,
                 "customer": o.customer,
                 "status": o.status.value,
+                "kind": o.kind.value,
+                "blind": o.blind,
                 "source": o.source.value,
                 "tracking_number": o.tracking_number,
                 "line_count": n or 0,
                 "units_expected": int(exp or 0),
-                "units_scanned": int(got or 0),
+                # Receiving/returns/counts: what was actually counted, over or not.
+                "units_scanned": int((raw if tally else got) or 0),
                 "errors_caught": int(errs or 0),
                 "workers": int(workers or 0),
                 "assigned_worker": names.get(o.assigned_worker_id) if o.assigned_worker_id else None,
@@ -347,7 +358,7 @@ def worker_stats(db: Session, wh: Warehouse, days: int = 7) -> dict[str, Any]:
         for wid, scans, m, mm, op, rv, vd, orders, last in db.execute(
             select(
                 ScanEvent.worker_id,
-                func.sum(case((ScanEvent.result != ScanResult.void, 1), else_=0)),
+                func.sum(case((ScanEvent.result.in_(PICK_RESULTS), 1), else_=0)),
                 func.sum(case((ScanEvent.result == ScanResult.match, 1), else_=0)),
                 func.sum(case((ScanEvent.result == ScanResult.mismatch, 1), else_=0)),
                 func.sum(case((ScanEvent.result == ScanResult.over_pick, 1), else_=0)),

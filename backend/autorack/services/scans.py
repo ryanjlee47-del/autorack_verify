@@ -34,10 +34,12 @@ from sqlalchemy.orm import Session
 from .. import matching
 from ..errors import ApiError
 from ..models import (
+    TALLY_KINDS,
     Device,
     FlagReason,
     Order,
     OrderFlag,
+    OrderKind,
     OrderLineItem,
     OrderStatus,
     ScanEvent,
@@ -47,8 +49,9 @@ from ..models import (
     WorkerSession,
     utcnow,
 )
-from . import integrations
+from . import audit, integrations
 from . import orders as order_svc
+from .audit import Actor
 
 log = logging.getLogger("autorack.scans")
 
@@ -58,7 +61,7 @@ MAX_CLOCK_SKEW = timedelta(minutes=5)
 @dataclass
 class SyncEvent:
     id: uuid.UUID
-    kind: Literal["scan", "void", "flag", "short", "ship"]
+    kind: Literal["scan", "void", "flag", "short", "ship", "finish"]
     order_id: uuid.UUID
     session_id: uuid.UUID
     client_scanned_at: datetime
@@ -204,10 +207,14 @@ def _apply_order_group(
                 elif ev.kind == "void":
                     out[ev.id] = _apply_void(db, device, wh, order, lines_by_id, sess, ev)
                 elif ev.kind == "short":
+                    _pick_only(order)
                     out[ev.id] = _apply_short(db, wh, order, lines_by_id, sess, ev)
                 elif ev.kind == "ship":
+                    _pick_only(order)
                     order_svc.recompute_status(db, order, lines)
                     out[ev.id] = _apply_ship(db, wh, order, lines, sess, ev)
+                elif ev.kind == "finish":
+                    out[ev.id] = _apply_finish(db, wh, order, sess, ev)
                 else:
                     out[ev.id] = _apply_flag(db, wh, order, lines_by_id, sess, ev)
             touched = True
@@ -220,6 +227,11 @@ def _apply_order_group(
 
 
 def _existing_outcome(db: Session, wh: Warehouse, ev: SyncEvent) -> EventOutcome | None:
+    if ev.kind == "finish":
+        order = db.get(Order, ev.order_id)
+        if order is not None and order.warehouse_id == wh.id and order.kind in TALLY_KINDS and order.completed_at:
+            return EventOutcome(str(ev.id), "finish", "duplicate", result="finished")
+        return None
     if ev.kind == "ship":
         order = db.get(Order, ev.order_id)
         tracking = order_svc.normalize_tracking(ev.tracking_number or "")
@@ -254,9 +266,16 @@ def _mark_started(order: Order, at: datetime) -> None:
         order.started_at = min(at, utcnow())
 
 
+def _pick_only(order: Order) -> None:
+    if order.kind != OrderKind.pick:
+        raise EventError("not_for_task", "That only applies to picking orders.")
+
+
 def _ensure_open(order: Order) -> None:
     if order.status == OrderStatus.cancelled:
         raise EventError("order_cancelled", "This order was cancelled. Put the items back.")
+    if order.kind in TALLY_KINDS and order.completed_at is not None:
+        raise EventError("task_finished", "This was already finished. Ask a manager to reopen it.")
     if order.status == OrderStatus.shipped:
         raise EventError("order_shipped", "This order has already shipped.")
 
@@ -278,7 +297,15 @@ def _apply_scan(
 
     mr = index.match(raw)
     line: OrderLineItem | None = lines_by_id.get(str(mr.line_id)) if mr.line_id is not None else None
-    if mr.is_resolved and line is not None and not mr.needs_confirmation:
+    tally = order.kind in TALLY_KINDS
+    if tally and mr.is_resolved and line is not None and not mr.needs_confirmation:
+        # Receiving, returns, counts: record what's there, past the expected
+        # quantity too -- the difference is the point.
+        result = ScanResult.counted
+        line.scanned_quantity += 1
+    elif tally and not (mr.is_resolved or mr.ambiguous):
+        result = ScanResult.extra
+    elif mr.is_resolved and line is not None and not mr.needs_confirmation:
         if order_svc.line_remaining(line) > 0:
             result = ScanResult.match
             line.scanned_quantity += 1
@@ -297,7 +324,7 @@ def _apply_scan(
             id=ev.id,
             warehouse_id=wh.id,
             order_id=order.id,
-            line_item_id=line.id if line is not None else None,
+            line_item_id=line.id if line is not None and result != ScanResult.extra else None,
             intended_line_item_id=uuid.UUID(intended) if intended in lines_by_id else None,
             worker_id=sess.worker_id,
             device_id=device.id,
@@ -319,7 +346,7 @@ def _apply_scan(
         "scan",
         "applied",
         result=result.value,
-        line_item_id=str(line.id) if line is not None else None,
+        line_item_id=str(line.id) if line is not None and result != ScanResult.extra else None,
         match_tier=int(mr.tier) if mr.tier is not None else None,
     )
 
@@ -336,28 +363,33 @@ def _apply_void(
     target = db.get(ScanEvent, ev.target_scan_id) if ev.target_scan_id else None
     if not target or target.warehouse_id != wh.id or target.order_id != order.id:
         raise EventError("void_target_missing", "That scan can't be undone.")
-    if target.result != ScanResult.match:
+    tally = order.kind in TALLY_KINDS
+    undoable = (ScanResult.counted, ScanResult.extra) if tally else (ScanResult.match,)
+    if target.result not in undoable:
         raise EventError("void_not_match", "Only a counted pick can be undone.")
     if order.status == OrderStatus.shipped:
         raise EventError("order_shipped", "This order has already shipped.")
+    if tally:
+        _ensure_open(order)
     if db.scalar(select(ScanEvent.id).where(ScanEvent.voids_scan_id == target.id)):
         raise EventError("void_already", "That scan was already undone.")
-    line = lines_by_id.get(str(target.line_item_id))
-    if line is None:
+    line = lines_by_id.get(str(target.line_item_id)) if target.line_item_id else None
+    if line is None and target.result != ScanResult.extra:
         raise EventError("void_target_missing", "That scan can't be undone.")
-    line.scanned_quantity = max(0, line.scanned_quantity - 1)
+    if line is not None:
+        line.scanned_quantity = max(0, line.scanned_quantity - 1)
     db.add(
         ScanEvent(
             id=ev.id,
             warehouse_id=wh.id,
             order_id=order.id,
-            line_item_id=line.id,
+            line_item_id=line.id if line is not None else None,
             worker_id=sess.worker_id,
             device_id=device.id,
             worker_session_id=sess.id,
             scanned_barcode=target.scanned_barcode,
             normalized_barcode=target.normalized_barcode,
-            result=ScanResult.void,
+            result=ScanResult.uncounted if tally else ScanResult.void,
             is_match=False,
             voids_scan_id=target.id,
             was_offline=ev.offline,
@@ -366,7 +398,36 @@ def _apply_void(
         )
     )
     db.flush()
-    return EventOutcome(str(ev.id), "void", "applied", result="void", line_item_id=str(line.id))
+    return EventOutcome(
+        str(ev.id),
+        "void",
+        "applied",
+        result="uncounted" if tally else "void",
+        line_item_id=str(line.id) if line is not None else None,
+    )
+
+
+def _apply_finish(db: Session, wh: Warehouse, order: Order, sess: WorkerSession, ev: SyncEvent) -> EventOutcome:
+    """The worker says the delivery / return / location is done. What was
+    counted against what was expected is the result; nothing is "short"."""
+    if order.kind not in TALLY_KINDS:
+        raise EventError("not_for_task", "Picking orders finish by themselves when every item is scanned.")
+    _ensure_open(order)
+    order.completed_at = min(ev.client_scanned_at, utcnow())
+    order.finished_by_worker_id = sess.worker_id
+    _mark_started(order, ev.client_scanned_at)
+    audit.record(
+        db,
+        Actor("worker", str(sess.worker_id), None, None),
+        "task.finished",
+        warehouse_id=wh.id,
+        target_type="order",
+        target_id=order.id,
+        kind=order.kind.value,
+    )
+    order_svc.bump(order)
+    db.flush()
+    return EventOutcome(str(ev.id), "finish", "applied", result="finished")
 
 
 def _apply_flag(

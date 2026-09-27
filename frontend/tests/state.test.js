@@ -169,3 +169,38 @@ test("short and ship events keep their wire fields", () => {
   });
   assert.deepEqual(Object.keys(w).sort(), ["id", "kind", "line_item_id", "quantity", "short_reason", "tracking_number"]);
 });
+
+// ---------------------------------------------------------------------------
+// Receiving, returns, counts
+// ---------------------------------------------------------------------------
+
+test("tally jobs count past expected and record unknown items as extras", async () => {
+  const { isTally, tallySummary, extrasFor } = await import("../w/js/state.js");
+  const o = order({ kind: "receive" });
+  assert.equal(isTally(o), true);
+  assert.equal(isTally(order()), false);
+  const full = o.lines.map((l) => ({ ...l, scanned_quantity: l.expected_quantity }));
+  assert.deepEqual(classify(o, full, "025300000208"), { result: "counted", lineId: "a", tier: 0 });
+  assert.equal(classify(o, full, "999999999993").result, "extra");
+  // The same scans on a pick are an over-pick and a mismatch.
+  assert.equal(classify(order(), full, "025300000208").result, "over_pick");
+  assert.equal(classify(order(), full, "999999999993").result, "mismatch");
+
+  const pending = [
+    { id: "s1", kind: "scan", order_id: "o1", client_seq: 1, local: { result: "counted", lineId: "a" } },
+    { id: "s2", kind: "scan", order_id: "o1", client_seq: 2, local: { result: "counted", lineId: "a" } },
+    { id: "s3", kind: "scan", order_id: "o1", client_seq: 3, local: { result: "counted", lineId: "a" } },
+    { id: "s4", kind: "scan", order_id: "o1", client_seq: 4, local: { result: "extra", lineId: null } },
+  ];
+  const lines = displayLines(o, pending);
+  assert.equal(lines.find((l) => l.id === "a").scanned_quantity, 3);
+
+  const history = [
+    { id: "s3", orderId: "o1", kind: "scan", result: "counted", lineId: "a" },
+    { id: "s4", orderId: "o1", kind: "scan", result: "extra", lineId: null },
+  ];
+  assert.equal(lastUndoable(history, "o1").id, "s4");
+  assert.equal(extrasFor(history, "o1"), 1);
+  assert.equal(extrasFor([...history, { id: "v", kind: "void", target: "s4" }], "o1"), 0);
+  assert.deepEqual(tallySummary(lines, 1), { counted: 3, over: 1, short: 1, extras: 1, matches: false });
+});

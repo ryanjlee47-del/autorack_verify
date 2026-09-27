@@ -32,11 +32,13 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import (
+    PICK_RESULTS,
     MagicLinkToken,
     Membership,
     NotificationSent,
     Order,
     OrderFlag,
+    OrderKind,
     OrderLineItem,
     OrderStatus,
     OwnerSession,
@@ -169,6 +171,7 @@ def daily_numbers(db: Session, wh: Warehouse, day: Any = None) -> dict[str, Any]
             .select_from(Order)
             .where(
                 Order.warehouse_id == wh.id,
+                Order.kind == OrderKind.pick,
                 Order.status.in_([OrderStatus.completed, OrderStatus.shipped]),
                 Order.completed_at >= start,
                 Order.completed_at < end,
@@ -393,7 +396,7 @@ def run_error_spikes(db: Session, now: datetime) -> int:
                 ScanEvent.warehouse_id == wh.id,
                 ScanEvent.client_scanned_at >= now - timedelta(days=7),
                 ScanEvent.client_scanned_at < since,  # the normal rate, not the spike itself
-                ScanEvent.result != ScanResult.void,
+                ScanEvent.result.in_(PICK_RESULTS),
             )
         ).one()
         baseline = (base_err / base_total) if base_total else 0.0
@@ -410,7 +413,7 @@ def run_error_spikes(db: Session, now: datetime) -> int:
             .where(
                 ScanEvent.warehouse_id == wh.id,
                 ScanEvent.client_scanned_at >= since,
-                ScanEvent.result != ScanResult.void,
+                ScanEvent.result.in_(PICK_RESULTS),
             )
             .group_by(ScanEvent.worker_id, Worker.name)
         ):
