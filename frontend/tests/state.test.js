@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  applyServerState, checkLabel, classify, classifyBatch, corrections, displayLines, isOrderCode, lastUndoable, nextLine,
+  applyServerState, boxesLabelled, checkLabel, classify, classifyBatch, corrections, insertFor, insertsDone, displayLines, isOrderCode, lastUndoable, nextLine,
   orderIdFromCode, progress, remaining, shippedTracking, sortForWalking, toWire,
 } from "../w/js/state.js";
 
@@ -278,4 +278,21 @@ test("classifyBatch: the scan goes to the first tote that still needs it", () =>
   // Everyone has it: over-pick, not a mismatch.
   const full = entries.map((e) => ({ ...e, lines: e.lines.map((l) => (l.id === "b" ? { ...l, scanned_quantity: 1 } : l)) }));
   assert.equal(classifyBatch(full, "VND-1", "o1").c.result, "over_pick");
+});
+
+test("multi-box: only the final label ships the order", () => {
+  const o = order({ boxes: 1, box_trackings: ["1Z999AA10123456784"] });
+  const pending = [{ id: "s1", kind: "ship", order_id: "o1", tracking_number: "9400 1118 9922 3197 4284 90", final: false }];
+  assert.equal(shippedTracking(o, pending), null);
+  assert.deepEqual(boxesLabelled(o, pending), { count: 2, list: ["1Z999AA10123456784", "9400111899223197428490"] });
+  assert.equal(shippedTracking(o, [...pending, { id: "s2", kind: "ship", order_id: "o1", final: true }]), "9400 1118 9922 3197 4284 90");
+  assert.equal(shippedTracking(o, [{ id: "s3", kind: "ship", order_id: "o1", tracking_number: "1ZX" }]), "1ZX");
+});
+
+test("inserts: a scanned insert barcode is recognised until it's in", () => {
+  const o = order({ inserts: [{ id: "i1", name: "Flyer", barcode: "FLY-1" }, { id: "i2", name: "Card" }], inserts_done: [] });
+  assert.equal(insertFor(o, [], " fly-1 ").id, "i1");
+  const pending = [{ kind: "insert", order_id: "o1", insert_id: "i1" }];
+  assert.equal(insertFor(o, pending, "FLY-1"), null);
+  assert.deepEqual([...insertsDone(o, pending)], ["i1"]);
 });

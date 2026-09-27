@@ -108,8 +108,20 @@ async function proof(id, token, me) {
             s.quantity > 1 ? ` × ${s.quantity}` : "", s.substitution ? " (approved substitute)" : ""),
           p.picks.some(traced) ? h("td", { class: "mono" }, traceText(s)) : null);
       }))),
+    p.packages && p.packages.length > 1 ? [
+      h("h2", { class: "doc-h2" }, `Shipped in ${p.packages.length} boxes`),
+      h("table", { class: "sheet-table doc-small" },
+        h("thead", null, h("tr", null, ...["Box", "Tracking", "Label scanned"].map((t) => h("th", null, t)))),
+        h("tbody", null, ...p.packages.map((b) => h("tr", null,
+          h("td", null, String(b.box)), h("td", { class: "mono" }, `${b.carrier ? `${b.carrier} ` : ""}${b.tracking_number}`),
+          h("td", null, `${fmtDateTime(b.at, zone)}${b.worker ? ` by ${b.worker}` : ""}`))))),
+    ] : null,
+    p.inserts && p.inserts.length ? [
+      h("h2", { class: "doc-h2" }, "Inserts"),
+      h("ul", { class: "doc-list" }, ...p.inserts.map((i) => h("li", null, `${i.done ? "✓" : "✗"} ${i.name}`))),
+    ] : null,
     packEls.some(Boolean) ? [
-      h("h2", { class: "doc-h2" }, "The packed box"),
+      h("h2", { class: "doc-h2" }, p.packages && p.packages.length > 1 ? "The packed boxes" : "The packed box"),
       h("div", { class: "doc-photos" }, ...packEls.filter(Boolean)),
     ] : null,
     p.flags.length ? [

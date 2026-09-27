@@ -39,6 +39,7 @@ from ..models import (
     AgreementSignature,
     AuditLog,
     BarcodeAlias,
+    Client,
     Device,
     FeatureUsage,
     ImportBatch,
@@ -49,15 +50,20 @@ from ..models import (
     NotificationSent,
     Order,
     OrderFlag,
+    OrderInsertCheck,
     OrderLineItem,
     OwnerSession,
+    Package,
+    PackInsert,
     Photo,
     PickBatch,
     Product,
     ProductBarcode,
     ProductImage,
     ProductSubstitute,
+    RestockTask,
     ScanEvent,
+    Shift,
     StripeEvent,
     SubscriptionStatus,
     User,
@@ -341,6 +347,42 @@ def export_zip(db: Session, wh: Warehouse) -> IO[bytes]:
                 for k in db.scalars(select(KitComponent).where(KitComponent.warehouse_id == wid))
             ),
         )
+        counts["boxes"] = _csv(
+            zf,
+            "shipment_boxes.csv",
+            ["order_id", "box", "tracking_number", "carrier", "worker_id", "labelled_at"],
+            (
+                [b.order_id, b.box_no, b.tracking_number, b.carrier, b.worker_id, b.created_at]
+                for b in db.scalars(select(Package).where(Package.warehouse_id == wid).order_by(Package.created_at))
+            ),
+        )
+        counts["shifts"] = _csv(
+            zf,
+            "time_clock.csv",
+            ["worker_id", "clock_in", "clock_out", "closed_by", "edited_by_user_id"],
+            (
+                [t.worker_id, t.clock_in, t.clock_out, t.closed_by, t.edited_by_user_id]
+                for t in db.scalars(select(Shift).where(Shift.warehouse_id == wid).order_by(Shift.clock_in))
+            ),
+        )
+        counts["restock"] = _csv(
+            zf,
+            "restock_tasks.csv",
+            ["location", "barcode", "sku", "description", "source", "status", "reported_at", "done_at"],
+            (
+                [t.location, t.barcode, t.sku, t.description, t.source, t.status, t.created_at, t.done_at]
+                for t in db.scalars(select(RestockTask).where(RestockTask.warehouse_id == wid))
+            ),
+        )
+        counts["clients"] = _csv(
+            zf,
+            "clients.csv",
+            ["client_id", "name", "code", "contact_email", "active"],
+            (
+                [c.id, c.name, c.code, c.contact_email, c.active]
+                for c in db.scalars(select(Client).where(Client.warehouse_id == wid))
+            ),
+        )
         counts["imports"] = _csv(
             zf,
             "imports.csv",
@@ -426,6 +468,11 @@ def _readme(wh: Warehouse, counts: dict[str, int]) -> str:
         f"  phones.csv          {counts['phones']} linked phones",
         f"  team.csv            {counts['team']} dashboard users",
         f"  barcode_aliases.csv {counts['barcode_aliases']} taught barcodes",
+        f"  products.csv        {counts.get('products', 0)} catalog products (plus product_barcodes, kit_components)",
+        f"  shipment_boxes.csv  {counts.get('boxes', 0)} labelled boxes (tracking numbers)",
+        f"  time_clock.csv      {counts.get('shifts', 0)} shifts on the time clock",
+        f"  restock_tasks.csv   {counts.get('restock', 0)} restock tasks",
+        f"  clients.csv         {counts.get('clients', 0)} 3PL clients",
         f"  imports.csv         {counts['imports']} CSV imports",
         f"  activity_log.csv    {counts['activity_log']} activity log entries",
         f"  license-agreement/  {counts['signed_agreements']} signed agreement(s)",
@@ -598,6 +645,9 @@ def purge(db: Session, wh: Warehouse, actor: Actor) -> dict[str, int]:
         counts[name] = int(db.execute(stmt).rowcount or 0)  # type: ignore[attr-defined]
 
     gone("photos", delete(Photo).where(Photo.warehouse_id == wid))
+    gone("insert_checks", delete(OrderInsertCheck).where(OrderInsertCheck.warehouse_id == wid))
+    gone("boxes", delete(Package).where(Package.warehouse_id == wid))
+    gone("restock_tasks", delete(RestockTask).where(RestockTask.warehouse_id == wid))
     gone("problems", delete(OrderFlag).where(OrderFlag.warehouse_id == wid))
     gone("scans", delete(ScanEvent).where(ScanEvent.warehouse_id == wid))
     gone("order_lines", delete(OrderLineItem).where(OrderLineItem.warehouse_id == wid))
@@ -607,10 +657,13 @@ def purge(db: Session, wh: Warehouse, actor: Actor) -> dict[str, int]:
     gone("kit_components", delete(KitComponent).where(KitComponent.warehouse_id == wid))
     gone("product_barcodes", delete(ProductBarcode).where(ProductBarcode.warehouse_id == wid))
     gone("product_images", delete(ProductImage).where(ProductImage.warehouse_id == wid))
+    gone("pack_inserts", delete(PackInsert).where(PackInsert.warehouse_id == wid))
     gone("products", delete(Product).where(Product.warehouse_id == wid))
+    gone("clients", delete(Client).where(Client.warehouse_id == wid))
     gone("imports", delete(ImportBatch).where(ImportBatch.warehouse_id == wid))
     gone("connections", delete(Integration).where(Integration.warehouse_id == wid))
     gone("barcode_aliases", delete(BarcodeAlias).where(BarcodeAlias.warehouse_id == wid))
+    gone("shifts", delete(Shift).where(Shift.warehouse_id == wid))
     gone("worker_sessions", delete(WorkerSession).where(WorkerSession.warehouse_id == wid))
     gone("workers", delete(Worker).where(Worker.warehouse_id == wid))
     gone("phones", delete(Device).where(Device.warehouse_id == wid))

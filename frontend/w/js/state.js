@@ -110,11 +110,39 @@ export function progress(lines) {
   return { done, total, short, complete: total > 0 && done >= total };
 }
 
-/** Has this order's label been scanned (queued or confirmed)? */
+/** Has this order shipped (its last label queued, or confirmed)? The first box's tracking. */
 export function shippedTracking(order, pending) {
-  const queued = pending.find((e) => e.order_id === order.id && e.kind === "ship");
-  if (queued) return queued.tracking_number;
+  const ships = pending.filter((e) => e.order_id === order.id && e.kind === "ship");
+  if (ships.some((e) => e.final !== false)) {
+    const first = ships.find((e) => e.tracking_number);
+    return (first && first.tracking_number) || order.tracking_number || "";
+  }
   return order.status === "shipped" ? order.tracking_number || "" : null;
+}
+
+/** Boxes labelled so far: how many the server knows of, plus labels still queued. */
+export function boxesLabelled(order, pending) {
+  const known = order.box_trackings || [];
+  const queued = pending
+    .filter((e) => e.order_id === order.id && e.kind === "ship" && e.tracking_number)
+    .map((e) => String(e.tracking_number).replace(/[\s-]/g, "").toUpperCase());
+  const list = known.concat(queued);
+  return { count: Math.max(order.boxes || 0, known.length) + queued.length, list };
+}
+
+/** Inserts already in the box (confirmed by the server or queued). */
+export function insertsDone(order, pending) {
+  const done = new Set(order.inserts_done || []);
+  for (const e of pending) if (e.order_id === order.id && e.kind === "insert") done.add(e.insert_id);
+  return done;
+}
+
+/** The first insert still to go in, whose barcode this is. */
+export function insertFor(order, pending, raw) {
+  const key = normalizedKey(String(raw || ""));
+  if (!key) return null;
+  const done = insertsDone(order, pending);
+  return (order.inserts || []).find((i) => !done.has(i.id) && i.barcode && normalizedKey(i.barcode) === key) || null;
 }
 
 /**
@@ -281,7 +309,7 @@ export function lastUndoable(history, orderId) {
 export const WIRE_FIELDS = [
   "id", "kind", "order_id", "session_id", "client_scanned_at", "client_seq", "scanned_barcode",
   "intended_line_item_id", "client_result", "offline", "target_scan_id", "line_item_id", "scan_event_id",
-  "reason", "note", "quantity", "short_reason", "tracking_number", "lot", "serial", "expiry",
+  "reason", "note", "quantity", "short_reason", "tracking_number", "lot", "serial", "expiry", "insert_id", "final",
 ];
 
 export function toWire(ev) {

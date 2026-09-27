@@ -202,6 +202,10 @@ class Warehouse(Base):
     # A photo of the packed box before the label goes on (proof for claims).
     require_pack_photo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     onboarding_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # Daily ship cutoff ("15:00", warehouse time): orders in by then go out today.
+    ship_cutoff: Mapped[str | None] = mapped_column(String(5))
+    # Workers clock in and out on the phone; units per hour use hours on the clock.
+    time_clock_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     # Closing an account (owner or operator): scanning stops at once and the
     # data is deleted after a grace period (license agreement, Section 9.1),
@@ -408,7 +412,7 @@ class Product(Base):
     track_expiry: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     image_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     # Which 3PL client owns it (None for a warehouse's own stock).
-    client_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    client_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clients.id"), index=True)
     source: Mapped[str] = mapped_column(String(32), default="manual", server_default="manual")
     external_id: Mapped[str | None] = mapped_column(String(100))
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
@@ -498,6 +502,118 @@ class ProductSubstitute(Base):
         UniqueConstraint("product_id", "substitute_id", name="uq_product_substitutes_pair"),
         CheckConstraint("product_id <> substitute_id", name="ck_product_substitutes_not_self"),
     )
+
+
+class Client(Base):
+    """A 3PL's customer: a brand whose stock the warehouse holds and ships."""
+
+    __tablename__ = "clients"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    code: Mapped[str | None] = mapped_column(String(40))
+    contact_email: Mapped[str | None] = mapped_column(String(320))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (Index("uq_clients_name", "warehouse_id", text("lower(name)"), unique=True),)
+
+
+class PackInsert(Base):
+    """Something that goes in the box besides the order: a flyer, a thank-you
+    card, a sample. Applies to every order, one client's orders, or orders
+    containing one product; the packer checks it off (or scans it)."""
+
+    __tablename__ = "pack_inserts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    barcode: Mapped[str | None] = mapped_column(String(200))
+    normalized_barcode: Mapped[str | None] = mapped_column(String(200))
+    # True: the packer must scan it; False: a tap is enough.
+    scan_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    client_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clients.id"))
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OrderInsertCheck(Base):
+    __tablename__ = "order_insert_checks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)  # phone-generated event id
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), index=True)
+    insert_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pack_inserts.id"))
+    worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
+    scanned: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (UniqueConstraint("order_id", "insert_id", name="uq_order_insert_checks"),)
+
+
+class Package(Base):
+    """One box of a shipment, with its own label. Most orders have one."""
+
+    __tablename__ = "packages"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"))
+    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), index=True)
+    box_no: Mapped[int] = mapped_column(Integer)
+    tracking_number: Mapped[str] = mapped_column(String(100))
+    carrier: Mapped[str | None] = mapped_column(String(32))
+    worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("ix_packages_warehouse_tracking", "warehouse_id", "tracking_number"),
+        UniqueConstraint("order_id", "box_no", name="uq_packages_order_box"),
+    )
+
+
+class RestockTask(Base):
+    """A bin that ran empty (or short) on the floor: someone should refill it."""
+
+    __tablename__ = "restock_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    location: Mapped[str | None] = mapped_column(String(100))
+    barcode: Mapped[str | None] = mapped_column(String(200))
+    normalized_barcode: Mapped[str | None] = mapped_column(String(200))
+    sku: Mapped[str | None] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(String(500))
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"))
+    order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id"))
+    source: Mapped[str] = mapped_column(String(16), default="worker")  # worker | short_pick | flag
+    reported_by_worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
+    note: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)  # open | done | cancelled
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    done_by_worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
+    done_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Shift(Base):
+    """Time on the clock: clock in at the start of a shift, out at the end."""
+
+    __tablename__ = "shifts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    worker_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workers.id"), index=True)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("devices.id"))
+    clock_in: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    clock_out: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # worker | auto (left open too long) | manager (edited)
+    closed_by: Mapped[str | None] = mapped_column(String(16))
+    edited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+
+    __table_args__ = (Index("uq_shifts_open", "worker_id", unique=True, postgresql_where=text("clock_out IS NULL")),)
 
 
 class PickBatch(Base):
@@ -601,6 +717,11 @@ class Order(Base):
     # Batch picking: picked together with other orders, into this tote.
     batch_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("pick_batches.id"), index=True)
     tote: Mapped[str | None] = mapped_column(String(20))
+    # Rush orders go to the top of every list; ship_by is the promised date.
+    rush: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    ship_by: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 3PLs: the brand this order ships for.
+    client_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clients.id"), index=True)
     # Orders pulled from a store: where they came from, so tracking can go back.
     integration_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("integrations.id"))
     store_order_id: Mapped[str | None] = mapped_column(String(100))
@@ -781,6 +902,8 @@ class Photo(Base):
     # A problem photo hangs on its flag; a packing photo only on its order.
     flag_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("order_flags.id"), index=True)
     kind: Mapped[str] = mapped_column(String(16), default="problem", server_default="problem")
+    # Packing photos: which box of a multi-box shipment (1, 2, ...).
+    box: Mapped[int | None] = mapped_column(Integer)
     order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), index=True)
     worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
     content_type: Mapped[str] = mapped_column(String(32))

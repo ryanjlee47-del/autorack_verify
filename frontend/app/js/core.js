@@ -94,21 +94,26 @@ export async function switchWarehouse(id) {
 // Layout
 // ---------------------------------------------------------------------------
 
-function nav() {
+/** The sidebar, grouped by what you're doing. */
+function navGroups() {
   const wh = ctx.me.warehouse;
   return [
-    ["#/", "Dashboard"],
-    ["#/orders", "Orders"],
-    ["#/products", "Products"],
-    ["#/reports", "Reports"],
-    wh.leaderboard_enabled ? ["#/board", "Floor board"] : null,
-    ["#/workers", "Workers"],
-    ["#/devices", "Phones"],
-    ["#/insights", "Insights"],
-    ["#/connections", "Connections"],
-    isOwner() ? ["#/billing", "Billing"] : null,
-    ["#/settings", "Settings"],
-  ].filter(Boolean);
+    [null, [["#/", "Dashboard"]]],
+    ["Work", [
+      ["#/orders", "Orders"],
+      ["#/restock", "Restock"],
+      wh.leaderboard_enabled ? ["#/board", "Floor board"] : null,
+    ]],
+    ["Products", [["#/products", "Catalog"], ["#/inserts", "Pack inserts"]]],
+    ["Team", [["#/workers", "Workers"], ["#/time", "Time clock"], ["#/devices", "Phones"]]],
+    ["Results", [["#/reports", "Reports"], ["#/insights", "Insights"]]],
+    ["Setup", [
+      ["#/clients", "Clients"],
+      ["#/connections", "Connections"],
+      isOwner() ? ["#/billing", "Billing"] : null,
+      ["#/settings", "Settings"],
+    ]],
+  ].map(([title, links]) => [title, links.filter(Boolean)]);
 }
 
 function warehousePicker(me) {
@@ -150,8 +155,10 @@ export function accessBanner() {
 export function layout(active, content) {
   const root = document.getElementById("app");
   const me = ctx.me;
-  const navLinks = nav().map(([href, label]) =>
-    h("a", { href, class: ["nav-link", active === href && "active"], "aria-current": active === href ? "page" : null }, label));
+  const link = ([href, label]) =>
+    h("a", { href, class: ["nav-link", active === href && "active"], "aria-current": active === href ? "page" : null }, label);
+  const navLinks = navGroups().map(([title, links]) => h("div", { class: "nav-group" },
+    title ? h("div", { class: "nav-group-title" }, title) : null, ...links.map(link)));
   mount(root,
     h("div", { class: "shell" },
       h("aside", { class: "sidebar" },

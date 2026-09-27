@@ -12,7 +12,7 @@ previous worker on a shared phone, are still attributed to whoever made them.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -39,15 +39,17 @@ from ..models import (
     OrderKind,
     OrderStatus,
     Photo,
+    RestockTask,
     ScanEvent,
     ScanResult,
+    Shift,
     ShortReason,
     Warehouse,
     Worker,
     utcnow,
 )
 from ..security import is_valid_pin, normalize_join_code
-from ..services import audit, batches, scans, tasks, usage
+from ..services import audit, batches, floor, scans, tasks, usage
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
 from ..services import orders as order_svc
@@ -95,6 +97,7 @@ def device_info(dctx: DeviceContext = Depends(current_device)) -> dict[str, Any]
         "access": _access_dict(dctx),
         "require_ship_scan": dctx.warehouse.require_ship_scan,
         "require_pack_photo": dctx.warehouse.require_pack_photo,
+        "time_clock_enabled": dctx.warehouse.time_clock_enabled,
         "pin_length": get_settings().pin_length,
         "server_time": utcnow().isoformat(),
     }
@@ -172,9 +175,14 @@ def open_orders(ctx: WorkerContext = Depends(require_worker_access), db: Session
                 case((Order.status == OrderStatus.in_progress, 0), (Order.status == OrderStatus.flagged, 1), else_=2),
                 Order.created_at,
             )
-            .limit(200)
+            .limit(500)
         )
     )
+    # Rush first, then this worker's, then by when they have to ship.
+    far = datetime.max.replace(tzinfo=UTC)
+    due = {o.id: order_svc.due_at(o, ctx.warehouse) or far for o in orders}
+    orders.sort(key=lambda o: (not o.rush, o.assigned_worker_id != ctx.worker.id, due[o.id]))
+    orders = orders[:200]
     open_batches = batches.open_batches(db, ctx.warehouse, ctx.worker.id)
     batched = {b.id for b in open_batches}
     # A batched order is picked from its batch, not on its own.
@@ -210,9 +218,13 @@ def open_orders(ctx: WorkerContext = Depends(require_worker_access), db: Session
         d["assigned_to_me"] = b.assigned_worker_id == ctx.worker.id
         batch_rows.append(d)
     db.commit()
+    shift = floor.open_shift(db, ctx.worker.id)
     return {
         "orders": rows,
         "batches": batch_rows,
+        "restock_open": len(floor.open_restock(db, ctx.warehouse)),
+        "time_clock_enabled": ctx.warehouse.time_clock_enabled,
+        "shift": floor.shift_dict(shift) if shift else None,
         "to_ship": to_ship,
         "require_ship_scan": ctx.warehouse.require_ship_scan,
         "server_time": utcnow().isoformat(),
@@ -295,7 +307,7 @@ def batch_payload(
 
 class SyncEventIn(BaseModel):
     id: uuid.UUID
-    kind: Literal["scan", "void", "flag", "short", "ship", "finish", "confirm"] = "scan"
+    kind: Literal["scan", "void", "flag", "short", "ship", "finish", "confirm", "insert", "restock"] = "scan"
     order_id: uuid.UUID
     session_id: uuid.UUID
     client_scanned_at: datetime
@@ -315,6 +327,8 @@ class SyncEventIn(BaseModel):
     lot: str | None = Field(default=None, max_length=100)
     serial: str | None = Field(default=None, max_length=100)
     expiry: date | None = None
+    insert_id: uuid.UUID | None = None
+    final: bool = True
 
     @model_validator(mode="after")
     def check_kind(self) -> SyncEventIn:
@@ -328,8 +342,12 @@ class SyncEventIn(BaseModel):
             raise ValueError("short events need line_item_id and quantity")
         if self.kind == "confirm" and not self.line_item_id:
             raise ValueError("confirm events need line_item_id")
-        if self.kind == "ship" and not self.tracking_number:
+        if self.kind == "ship" and not self.tracking_number and not self.final:
             raise ValueError("ship events need tracking_number")
+        if self.kind == "insert" and not self.insert_id:
+            raise ValueError("insert events need insert_id")
+        if self.kind == "restock" and not self.line_item_id:
+            raise ValueError("restock events need line_item_id")
         return self
 
 
@@ -398,6 +416,34 @@ def shift_summary(ctx: WorkerContext = Depends(current_worker), db: Session = De
         "needs_review": counts["review"],
         "orders_completed": orders_done,
         "flags": flags,
+        **_clock_numbers(db, ctx),
+    }
+
+
+def _clock_numbers(db: Session, ctx: WorkerContext) -> dict[str, Any]:
+    """Hours on the clock this shift and units per hour, if the time clock is on."""
+    shift = floor.open_shift(db, ctx.worker.id)
+    if not shift:
+        return {}
+    hours = (utcnow() - shift.clock_in).total_seconds() / 3600
+    units = (
+        db.scalar(
+            select(
+                func.sum(
+                    case(
+                        (ScanEvent.result == ScanResult.match, ScanEvent.quantity),
+                        (ScanEvent.result == ScanResult.void, -ScanEvent.quantity),
+                        else_=0,
+                    )
+                )
+            ).where(ScanEvent.worker_id == ctx.worker.id, ScanEvent.client_scanned_at >= shift.clock_in)
+        )
+        or 0
+    )
+    return {
+        "clock_in": shift.clock_in.isoformat(),
+        "clock_hours": round(hours, 2),
+        "uph": round(units / hours, 1) if hours >= 0.25 else None,
     }
 
 
@@ -418,6 +464,7 @@ async def upload_photo(
     order_id: uuid.UUID | None = Query(None),
     kind: Literal["problem", "pack"] = Query("problem"),
     worker_id: uuid.UUID | None = Query(None),
+    box: int | None = Query(None, ge=1, le=99),
     dctx: DeviceContext = Depends(current_device),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -477,6 +524,7 @@ async def upload_photo(
             warehouse_id=dctx.warehouse.id,
             flag_id=flag.id if flag else None,
             kind=kind,
+            box=box if kind == "pack" else None,
             order_id=flag.order_id if flag else order.id,  # type: ignore[union-attr]
             worker_id=who,
             content_type=ctype,
@@ -494,3 +542,67 @@ async def upload_photo(
 def _works_here(db: Session, dctx: DeviceContext, worker_id: uuid.UUID) -> bool:
     w = db.get(Worker, worker_id)
     return w is not None and w.warehouse_id == dctx.warehouse.id
+
+
+# ---------------------------------------------------------------------------
+# Restocking
+# ---------------------------------------------------------------------------
+
+
+@router.get("/restock")
+def restock_list(ctx: WorkerContext = Depends(require_worker_access), db: Session = Depends(get_db)) -> dict[str, Any]:
+    workers = dash.worker_names(db, ctx.warehouse.id)
+    return {"tasks": [floor.restock_dict(t, workers) for t in floor.open_restock(db, ctx.warehouse)]}
+
+
+@router.post("/restock/{task_id}/done")
+def restock_done(
+    task_id: uuid.UUID, ctx: WorkerContext = Depends(require_worker_access), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    t = db.scalar(select(RestockTask).where(RestockTask.id == task_id, RestockTask.warehouse_id == ctx.warehouse.id))
+    if not t:
+        raise not_found("That restock task is gone.")
+    if t.status == "open":
+        t.status, t.done_at, t.done_by_worker_id = "done", utcnow(), ctx.worker.id
+        usage.track(db, ctx.warehouse.id, "floor.restocked")
+        db.commit()
+    return floor.restock_dict(t, dash.worker_names(db, ctx.warehouse.id))
+
+
+# ---------------------------------------------------------------------------
+# Time clock
+# ---------------------------------------------------------------------------
+
+
+def _shift_state(db: Session, ctx: WorkerContext) -> dict[str, Any]:
+    s = floor.open_shift(db, ctx.worker.id)
+    return {"enabled": ctx.warehouse.time_clock_enabled, "shift": floor.shift_dict(s) if s else None}
+
+
+@router.get("/shift")
+def shift_status(ctx: WorkerContext = Depends(current_worker), db: Session = Depends(get_db)) -> dict[str, Any]:
+    return _shift_state(db, ctx)
+
+
+@router.post("/clock-in")
+def clock_in(ctx: WorkerContext = Depends(require_worker_access), db: Session = Depends(get_db)) -> dict[str, Any]:
+    if not ctx.warehouse.time_clock_enabled:
+        raise bad_request("time_clock_off", "The time clock isn't turned on for this warehouse.")
+    if not floor.open_shift(db, ctx.worker.id):
+        wh, w = ctx.warehouse, ctx.worker
+        db.add(Shift(warehouse_id=wh.id, worker_id=w.id, device_id=ctx.device.id, clock_in=utcnow()))
+        audit.record(db, ctx.actor, "worker.clock_in", warehouse_id=wh.id, target_type="worker", target_id=w.id)
+        db.commit()
+    return _shift_state(db, ctx)
+
+
+@router.post("/clock-out")
+def clock_out(ctx: WorkerContext = Depends(current_worker), db: Session = Depends(get_db)) -> dict[str, Any]:
+    s = floor.open_shift(db, ctx.worker.id)
+    if s:
+        s.clock_out, s.closed_by = utcnow(), "worker"
+        wh, w = ctx.warehouse, ctx.worker
+        audit.record(db, ctx.actor, "worker.clock_out", warehouse_id=wh.id, target_type="worker", target_id=w.id)
+        db.commit()
+        return {"enabled": ctx.warehouse.time_clock_enabled, "shift": None, "last": floor.shift_dict(s)}
+    return _shift_state(db, ctx)

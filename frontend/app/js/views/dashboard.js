@@ -7,8 +7,8 @@ import { fmtAgo, fmtMoney, fmtNumber, fmtPercent, h, mount, toast } from "../../
 import { api, canManage, card, ctx, fail, layout, pageHeader, poll, statusBadge, table } from "../core.js";
 import { flagItem } from "./flags.js";
 
-function tile(label, value, { hero = false, tone = null, hint = null } = {}) {
-  return h("div", { class: ["tile", hero && "tile-hero", tone && `tile-${tone}`] },
+function tile(label, value, { hero = false, tone = null, hint = null, href = null } = {}) {
+  return h(href ? "a" : "div", { class: ["tile", hero && "tile-hero", tone && `tile-${tone}`, href && "tile-link"], href },
     h("div", { class: "tile-label" }, label),
     h("div", { class: "tile-value" }, value),
     hint ? h("div", { class: "tile-hint" }, hint) : null);
@@ -107,6 +107,11 @@ export async function dashboardView() {
         hero: true,
         hint: `${fmtMoney(summary.cost_per_error_cents)} per mis-ship avoided · ${fmtMoney(summary.all_time.money_saved_cents)} all time`,
       }),
+      tile("Due today", fmtNumber(o.due_today || 0), {
+        href: "#/orders?status=due:today",
+        tone: o.late ? "bad" : null,
+        hint: o.late ? `${fmtNumber(o.late)} late · ${fmtNumber(o.rush)} rush` : o.rush ? `${fmtNumber(o.rush)} rush` : "Rush and ship-by orders",
+      }),
       tile("In progress", fmtNumber(o.in_progress)),
       tile("Completed today", fmtNumber(o.completed_today)),
       tile("Shipped today", fmtNumber(o.shipped_today), { hint: o.ready_to_ship ? `${fmtNumber(o.ready_to_ship)} ready to ship` : "Label scanned on the box" }),
@@ -114,7 +119,8 @@ export async function dashboardView() {
       tile("Open problems", fmtNumber(o.open_problems), { tone: o.open_problems ? "warn" : null }),
       tile("Units picked today", fmtNumber(t.units_picked), { hint: `${t.active_workers} active worker${t.active_workers === 1 ? "" : "s"}` }),
       tile("First-scan accuracy", fmtPercent(t.accuracy), { hint: "Right item on the first try" }),
-      tile("Needs review", fmtNumber(t.reviews), { tone: t.reviews ? "warn" : null }));
+      tile("Needs review", fmtNumber(t.reviews), { tone: t.reviews ? "warn" : null }),
+      summary.restock_open ? tile("Bins to refill", fmtNumber(summary.restock_open), { href: "#/restock", tone: "warn", hint: "Reported empty on the floor" }) : null);
 
     // Rebuilding the queue would reload its photos every 5 seconds.
     const flagKey = live.flags.map((f) => f.id).join(",");

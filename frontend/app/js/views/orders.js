@@ -8,6 +8,9 @@ import { problemLabel } from "./dashboard.js";
 import { flagItem } from "./flags.js";
 
 const TABS = [
+  ["due:today", "Due today"],
+  ["due:late", "Late"],
+  ["due:rush", "Rush"],
   ["open", "Open"],
   ["in_progress", "In progress"],
   ["flagged", "Flagged"],
@@ -80,6 +83,7 @@ export async function ordersView(params) {
   const tally = kind !== "pick";
   const status = params.get("status") ?? "open";
   const q = params.get("q") || "";
+  const clientId = params.get("client") || "";
   const selected = new Set();
   const listHost = h("div", null, h("div", { class: "skeleton" }));
   const moreHost = h("div", { class: "row center-row" });
@@ -91,6 +95,7 @@ export async function ordersView(params) {
   const go = (next) => {
     const p = new URLSearchParams({ status: next.status ?? status, q: next.q ?? search.value });
     if (tally) p.set("kind", kind);
+    if (clientId) p.set("client", clientId);
     location.hash = `#/orders?${p}`;
   };
   search.addEventListener("keydown", (e) => {
@@ -143,14 +148,23 @@ export async function ordersView(params) {
       },
       {
         label: K.col,
-        render: (o) => h("span", null, h("span", { class: "mono strong" }, o.external_order_number || o.id.slice(0, 8)),
-          o.tote && o.batch_id ? h("span", { class: "tote-chip", title: "In a batch: this order's tote" }, o.tote) : null),
+        render: (o) => h("span", null,
+          o.rush ? h("span", { class: "badge badge-rush" }, "Rush") : null,
+          h("span", { class: "mono strong" }, o.external_order_number || o.id.slice(0, 8)),
+          o.tote && o.batch_id ? h("span", { class: "tote-chip", title: "In a batch: this order's tote" }, o.tote) : null,
+          o.client ? h("div", { class: "muted small" }, o.client) : null),
       },
       kind === "count" ? null : { label: kind === "receive" ? "Supplier" : "Customer", render: (o) => o.customer || h("span", { class: "muted" }, "–") },
       { label: "Status", render: (o) => statusBadge(tally && o.status === "completed" ? "finished" : o.status) },
       { label: "Lines", align: "right", render: (o) => String(o.line_count) },
       { label: tally ? "Counted" : "Units", align: "right", render: (o) => `${o.units_scanned}/${o.units_expected}${o.blind ? " (blind)" : ""}` },
       tally ? null : { label: "Caught", align: "right", render: (o) => (o.errors_caught ? h("span", { class: "bad-text" }, String(o.errors_caught)) : "0") },
+      tally ? null : {
+        label: "Ship by",
+        render: (o) => (o.due_at
+          ? h("span", { class: o.late ? "bad-text strong" : "" }, o.late ? "Late · " : "", fmtDateTime(o.due_at, tz()))
+          : h("span", { class: "muted" }, "–")),
+      },
       { label: "Assigned", render: (o) => o.assigned_worker || h("span", { class: "muted" }, "Anyone") },
       { label: "Created", render: (o) => h("span", { class: "muted" }, fmtDateTime(o.created_at, tz())) },
     ].filter(Boolean);
@@ -164,7 +178,9 @@ export async function ordersView(params) {
 
   const load = async () => {
     const p = new URLSearchParams({ limit: "100", offset: String(offset), kind });
-    if (status) p.set("status", status);
+    if (status.startsWith("due:")) p.set("due", status.slice(4));
+    else if (status) p.set("status", status);
+    if (clientId) p.set("client_id", clientId);
     if (q) p.set("q", q);
     const r = await api(`/api/orders?${p}`);
     rows = rows.concat(r.orders);
@@ -257,6 +273,7 @@ export async function orderDetailView(id) {
   ...workers.workers.filter((w) => w.active).map((w) =>
     h("option", { value: w.worker_id, selected: w.worker_id === order.assigned_worker_id }, w.name)));
 
+  const shipping = order.kind === "pick" ? await shippingCard(order, editable, reload) : null;
   const openFlags = order.flags.filter((f) => !f.resolved_at);
   const closedFlags = order.flags.filter((f) => f.resolved_at);
   const flagLine = (f) => (f.line_item_id && linesById.get(f.line_item_id) ? lineName(linesById.get(f.line_item_id)) : "Whole order");
@@ -341,9 +358,22 @@ export async function orderDetailView(id) {
           h("div", { class: "qr-box" }, svg(order.qr_svg, "qr")),
           h("p", { class: "muted small" }, `Workers scan this (on the printed sheet) to open the ${tally ? K.col.toLowerCase() : "order"} on their phone.`)),
         card("Assignment", assign, h("p", { class: "muted small" }, `Assigned ${tally ? "jobs" : "orders"} show first on that worker's phone and are hidden from others.`)),
+        tally ? null : shipping,
         card("Notes", notesEditor(order, editable)))),
 
-    order.pack_photos && order.pack_photos.length
+    order.packages && order.packages.length > 1
+      ? card(`Shipped in ${order.packages.length} boxes`, table([
+        { label: "Box", render: (b) => `Box ${b.box}` },
+        { label: "Tracking", render: (b) => h("span", { class: "mono" }, `${b.carrier ? `${b.carrier} ` : ""}${b.tracking_number}`) },
+        { label: "Labelled", render: (b) => `${fmtDateTime(b.at, tz())}${b.worker ? ` · ${b.worker}` : ""}` },
+        { label: "Photos", render: (b) => photoStrip(b.photos) || h("span", { class: "muted" }, "–") },
+      ], order.packages))
+      : null,
+    order.inserts && order.inserts.length
+      ? card("Inserts", h("ul", { class: "plain-list" }, ...order.inserts.map((i) =>
+        h("li", null, i.done ? "✓ " : "☐ ", i.name, i.done ? "" : h("span", { class: "muted" }, " (not yet)")))))
+      : null,
+    order.pack_photos && order.pack_photos.length && !(order.packages && order.packages.length > 1)
       ? card(`The packed box (${order.pack_photos.length})`, photoStrip(order.pack_photos),
         h("p", { class: "muted small" }, "Taken at the packing bench before the label went on. Shown on the shipment proof and the shared link."))
       : null,
@@ -353,6 +383,31 @@ export async function orderDetailView(id) {
 
     card("Scan history", scanHistory(order, scans, linesById, reload, editable)),
   ]);
+}
+
+/** Rush, ship-by date and client: when and for whom it ships. */
+async function shippingCard(order, editable, reload) {
+  const clients = await api("/api/clients").catch(() => []);
+  const rush = h("input", { type: "checkbox", disabled: !editable });
+  rush.checked = Boolean(order.rush);
+  const shipBy = h("input", { class: "input", type: "date", disabled: !editable, value: order.ship_by ? order.ship_by.slice(0, 10) : "" });
+  const client = h("select", { class: "input", disabled: !editable }, h("option", { value: "" }, "None"),
+    ...clients.map((c) => h("option", { value: c.id, selected: c.id === order.client_id }, c.name)));
+  const save = () => api(`/api/orders/${order.id}`, {
+    method: "PATCH",
+    body: {
+      rush: rush.checked,
+      ...(shipBy.value ? { ship_by: shipBy.value } : { clear_ship_by: true }),
+      ...(client.value ? { client_id: client.value } : { clear_client: true }),
+    },
+  }).then(() => { toast("Saved", "ok"); reload(); }, fail);
+  return card("Shipping",
+    order.late ? h("div", { class: "banner banner-bad" }, "Late: it should have shipped by ", fmtDateTime(order.due_at, tz()), ".") : null,
+    h("label", { class: "row check" }, rush, "Rush (top of every worker's list)"),
+    h("label", null, "Ship by", shipBy),
+    order.due_at && !order.ship_by ? h("p", { class: "muted small" }, `Due ${fmtDateTime(order.due_at, tz())} by the daily cutoff.`) : null,
+    clients.length ? h("label", null, "Client", client) : null,
+    editable ? h("button", { class: "btn", onclick: save }, "Save") : null);
 }
 
 async function shareProof(order, reload) {
@@ -639,8 +694,12 @@ export async function newOrderView(params = new URLSearchParams()) {
   const kind = kindOf(params) === "return" ? "pick" : kindOf(params);
   const K = KINDS[kind];
   const minQty = kind === "count" ? "0" : "1";
-  const workers = await api("/api/workers");
+  const [workers, clients] = await Promise.all([api("/api/workers"), api("/api/clients")]);
   const number = h("input", { class: "input mono", placeholder: K.numberPh });
+  const rush = h("input", { type: "checkbox" });
+  const shipBy = h("input", { class: "input", type: "date" });
+  const client = h("select", { class: "input" }, h("option", { value: "" }, "None"),
+    ...clients.filter((c) => c.active).map((c) => h("option", { value: c.id }, c.name)));
   const customer = h("input", { class: "input", placeholder: kind === "receive" ? "Optional" : "Optional, for per-customer reports" });
   const blind = h("input", { type: "checkbox" });
   const notes = h("input", { class: "input", placeholder: "Optional" });
@@ -676,6 +735,8 @@ export async function newOrderView(params = new URLSearchParams()) {
           external_order_number: number.value.trim() || null, customer: customer.value.trim() || null,
           notes: notes.value || null, assigned_worker_id: assign.value || null, lines,
           kind, blind: kind === "count" && blind.checked,
+          ...(kind === "pick" ? { rush: rush.checked, ship_by: shipBy.value || null } : {}),
+          client_id: client.value || null,
         },
       });
       toast(K.created, "ok");
@@ -698,6 +759,9 @@ export async function newOrderView(params = new URLSearchParams()) {
           h("label", null, K.numberLabel, number),
           kind === "count" ? null : h("label", null, kind === "receive" ? "Supplier" : "Customer", customer),
           h("label", null, "Assign to", assign), h("label", null, "Notes", notes),
+          kind === "pick" ? h("label", null, "Ship by", shipBy) : null,
+          clients.length ? h("label", null, "Client", client) : null,
+          kind === "pick" ? h("label", { class: "check span-2" }, rush, " Rush: put it at the top of every worker's list") : null,
           kind === "count" ? h("label", { class: "check span-2" }, blind, " Blind count: don't show the expected quantity on the phone") : null)),
       card("Lines",
         h("div", { class: "table-wrap" },

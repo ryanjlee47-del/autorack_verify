@@ -6,9 +6,10 @@ import dataclasses
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .. import matching
@@ -22,6 +23,7 @@ from ..models import (
     OrderLineItem,
     OrderSource,
     OrderStatus,
+    Package,
     Photo,
     ScanEvent,
     Warehouse,
@@ -152,6 +154,9 @@ def create_order(
     kind: OrderKind = OrderKind.pick,
     blind: bool = False,
     return_of_order_id: uuid.UUID | None = None,
+    rush: bool = False,
+    ship_by: datetime | None = None,
+    client_id: uuid.UUID | None = None,
 ) -> Order:
     number = clean(external_order_number, 100)
     if not lines:
@@ -178,6 +183,9 @@ def create_order(
         kind=kind,
         blind=blind and kind == OrderKind.count,
         return_of_order_id=return_of_order_id,
+        rush=rush,
+        ship_by=ship_by,
+        client_id=client_id,
     )
     db.add(order)
     db.flush()
@@ -463,13 +471,127 @@ def guess_carrier(tracking: str) -> str | None:
 
 
 def tracking_in_use(db: Session, warehouse_id: uuid.UUID, tracking: str, exclude: uuid.UUID) -> Order | None:
+    """Another order already shipped under this label (any of its boxes)."""
+    in_box = select(Package.order_id).where(Package.warehouse_id == warehouse_id, Package.tracking_number == tracking)
     return db.scalar(
-        select(Order).where(
+        select(Order)
+        .where(
             Order.warehouse_id == warehouse_id,
-            Order.tracking_number == tracking,
+            or_(Order.tracking_number == tracking, Order.id.in_(in_box)),
             Order.id != exclude,
         )
+        .limit(1)
     )
+
+
+def packages_of(db: Session, order_id: uuid.UUID) -> list[Package]:
+    return list(db.scalars(select(Package).where(Package.order_id == order_id).order_by(Package.box_no)))
+
+
+def package_dicts(db: Session, order: Order, workers: dict[uuid.UUID, str] | None = None) -> list[dict[str, Any]]:
+    photos: dict[int, list[str]] = {}
+    for pid, box in db.execute(
+        select(Photo.id, Photo.box).where(Photo.order_id == order.id, Photo.kind == "pack").order_by(Photo.created_at)
+    ):
+        photos.setdefault(box or 1, []).append(str(pid))
+    return [
+        {
+            "box": p.box_no,
+            "tracking_number": p.tracking_number,
+            "carrier": p.carrier,
+            "worker": workers.get(p.worker_id) if workers and p.worker_id else None,
+            "at": p.created_at.isoformat(),
+            "photos": photos.get(p.box_no, []),
+        }
+        for p in packages_of(db, order.id)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Rush orders and ship-by dates
+# ---------------------------------------------------------------------------
+
+
+def parse_cutoff(value: str | None) -> time | None:
+    if not value:
+        return None
+    try:
+        hh, mm = value.split(":")
+        return time(int(hh), int(mm))
+    except (ValueError, TypeError):
+        return None
+
+
+def due_at(order: Order, wh: Warehouse) -> datetime | None:
+    """When this order has to be out the door: its ship-by date, else the
+    warehouse's daily cutoff (orders in before it go the same day)."""
+    if order.ship_by:
+        return order.ship_by
+    cutoff = parse_cutoff(wh.ship_cutoff)
+    if cutoff is None or order.kind != OrderKind.pick:
+        return None
+    from .dashboard import tz_of
+
+    tz = tz_of(wh)
+    created = order.created_at.astimezone(tz)
+    due = datetime.combine(created.date(), cutoff, tzinfo=tz)
+    if created >= due:
+        due = datetime.combine(created.date() + timedelta(days=1), cutoff, tzinfo=tz)
+    return due
+
+
+def ship_by_from(wh: Warehouse, value: date | datetime | None) -> datetime | None:
+    """A ship-by date means that day's cutoff (or end of day), warehouse time."""
+    from .dashboard import tz_of
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=tz_of(wh))
+
+    cutoff = parse_cutoff(wh.ship_cutoff) or time(23, 59)
+    return datetime.combine(value, cutoff, tzinfo=tz_of(wh))
+
+
+TRUTHY = {"1", "y", "yes", "true", "x", "rush", "urgent", "high", "priority", "expedite", "expedited", "next day"}
+
+
+def parse_rush(value: str | None) -> bool:
+    return (value or "").strip().lower() in TRUTHY
+
+
+def parse_date(value: str | None) -> date | None:
+    v = (value or "").strip()
+    if not v:
+        return None
+    v = v.split("T")[0].split(" ")[0]
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%d.%m.%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(v, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def is_done_for_due(order: Order, wh: Warehouse) -> bool:
+    """Out the door, as far as a ship-by date is concerned."""
+    if order.status in (OrderStatus.shipped, OrderStatus.cancelled):
+        return True
+    return order.status == OrderStatus.completed and not wh.require_ship_scan
+
+
+def due_info(order: Order, wh: Warehouse, now: datetime | None = None) -> dict[str, Any]:
+    due = due_at(order, wh)
+    late = bool(due and not is_done_for_due(order, wh) and due < (now or utcnow()))
+    from .dashboard import tz_of
+
+    tz = tz_of(wh)
+    return {
+        "rush": order.rush,
+        "ship_by": order.ship_by.astimezone(tz).isoformat() if order.ship_by else None,
+        "due_at": due.astimezone(tz).isoformat() if due else None,
+        "late": late,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -577,6 +699,9 @@ def order_summary(order: Order, lines: list[OrderLineItem]) -> dict[str, Any]:
         "assigned_worker_id": str(order.assigned_worker_id) if order.assigned_worker_id else None,
         "batch_id": str(order.batch_id) if order.batch_id else None,
         "tote": order.tote,
+        "rush": order.rush,
+        "ship_by": order.ship_by.isoformat() if order.ship_by else None,
+        "client_id": str(order.client_id) if order.client_id else None,
         "created_at": order.created_at.isoformat(),
         "started_at": order.started_at.isoformat() if order.started_at else None,
         "completed_at": order.completed_at.isoformat() if order.completed_at else None,
@@ -612,9 +737,17 @@ def offline_payload(db: Session, wh: Warehouse, order: Order) -> dict[str, Any]:
         summary["units_expected"] = 0
         for row in line_rows:
             row["expected_quantity"] = 0
+    from . import floor
+
+    inserts = floor.inserts_for(db, order, lines)
     return {
         **summary,
+        **due_info(order, wh),
         "lines": line_rows,
+        "inserts": [floor.insert_dict(i) for i in inserts],
+        "inserts_done": [str(i) for i in floor.insert_checks(db, order.id)] if inserts else [],
+        "boxes": len(boxes := packages_of(db, order.id)),
+        "box_trackings": [b.tracking_number for b in boxes],
         "match": {
             "loose_match_enabled": wh.loose_match_enabled,
             "suffix_len": wh.suffix_len,

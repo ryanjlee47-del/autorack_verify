@@ -47,6 +47,8 @@ class WarehouseUpdate(BaseModel):
     leaderboard_enabled: bool | None = None
     require_ship_scan: bool | None = None
     require_pack_photo: bool | None = None
+    ship_cutoff: str | None = Field(default=None, pattern=r"^(|([01]\d|2[0-3]):[0-5]\d)$")
+    time_clock_enabled: bool | None = None
     onboarding_dismissed: bool | None = None
     monthly_report_enabled: bool | None = None
 
@@ -60,6 +62,8 @@ SETTING_FIELDS = (
     "leaderboard_enabled",
     "require_ship_scan",
     "require_pack_photo",
+    "ship_cutoff",
+    "time_clock_enabled",
     "onboarding_dismissed",
     "monthly_report_enabled",
 )
@@ -98,6 +102,8 @@ def update_warehouse(
             raise bad_request("name_required", "Warehouse name can't be blank.")
     if "owner_email" in changes:
         changes["owner_email"] = auth_svc.normalize_email(str(changes["owner_email"]))
+    if "ship_cutoff" in changes:
+        changes["ship_cutoff"] = changes["ship_cutoff"] or None
     for k, v in changes.items():
         setattr(wh, k, v)
     if {"loose_match_enabled", "suffix_len"} & changes.keys():

@@ -333,7 +333,7 @@ function barcodesCard(p, manage, reload) {
 }
 
 /** Search the catalog; resolves with the chosen product or null. */
-function pickProduct(title, excludeId) {
+export function pickProduct(title, excludeId) {
   return dialog(title, (close) => {
     const q = h("input", { class: "input", type: "search", placeholder: "Search name, SKU or barcode", autofocus: true });
     const results = h("div", { class: "pick-list" });

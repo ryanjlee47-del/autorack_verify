@@ -17,7 +17,7 @@ import io
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..errors import bad_request, conflict
@@ -27,6 +27,7 @@ from ..models import (
     OrderKind,
     OrderSource,
     OrderStatus,
+    Package,
     ScanEvent,
     ScanResult,
     Warehouse,
@@ -138,7 +139,10 @@ def find_returnable(db: Session, wh: Warehouse, code: str) -> Order | None:
     if hit:
         return hit
     tracking = order_svc.normalize_tracking(code)
-    return db.scalar(base.where(Order.tracking_number == tracking)) if len(tracking) >= 8 else None
+    if len(tracking) < 8:
+        return None
+    in_box = select(Package.order_id).where(Package.warehouse_id == wh.id, Package.tracking_number == tracking)
+    return db.scalar(base.where(or_(Order.tracking_number == tracking, Order.id.in_(in_box))).limit(1))
 
 
 def create_return(db: Session, wh: Warehouse, original: Order, actor: Actor, user_id: uuid.UUID | None = None) -> Order:

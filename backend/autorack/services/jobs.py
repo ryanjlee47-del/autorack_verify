@@ -52,7 +52,7 @@ from ..models import (
     Worker,
     utcnow,
 )
-from . import email, google_auth, integrations, monitoring, monthly, ratelimit
+from . import email, floor, google_auth, integrations, monitoring, monthly, ratelimit
 from .audit import Actor
 from .dashboard import day_bounds, tz_of
 
@@ -616,6 +616,12 @@ def run_account_deletions(db: Session, now: datetime) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _close_stale_shifts(db: Session, now: datetime) -> int:
+    n = floor.close_stale_shifts(db)
+    db.commit()
+    return n
+
+
 def prune(db: Session, now: datetime) -> int:
     n = db.execute(delete(MagicLinkToken).where(MagicLinkToken.expires_at < now - timedelta(days=1))).rowcount  # type: ignore[attr-defined]
     n += db.execute(delete(OwnerSession).where(OwnerSession.expires_at < now - timedelta(days=30))).rowcount  # type: ignore[attr-defined]
@@ -650,6 +656,7 @@ def run_all(db: Session, now: datetime | None = None) -> dict[str, Any]:
                 ("store_sync", integrations.run_store_sync),
                 ("tracking_push", integrations.run_tracking_push),
                 ("monthly_reports", monthly.run_monthly_reports),
+                ("stale_shifts", _close_stale_shifts),
             ):
                 try:
                     out[name] = job(db, now)

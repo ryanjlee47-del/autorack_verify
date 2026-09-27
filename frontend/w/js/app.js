@@ -13,6 +13,7 @@ import { brandLockup, dialog, h, mount, toast, uuid4 } from "../../shared/dom.js
 import * as FX from "./feedback.js";
 import { LANGUAGES, T, getLang, setLang } from "./i18n.js";
 import { takePhoto } from "./photo.js";
+import { DEFAULTS as PREF_DEFAULTS, cleanScan, keyGapMs, loadPrefs, savePrefs, usesHardwareScanner } from "./prefs.js";
 import { Scanner } from "./scanner.js";
 import * as S from "./state.js";
 import { requestPersistence, store } from "./store.js";
@@ -50,6 +51,11 @@ const app = {
   sync: null,
   wedgeBuffer: "",
   wedgeAt: 0,
+  wedgeTimer: null,
+  prefs: loadPrefs(),
+  multiBox: {}, // order id -> true when the worker said it ships in several boxes
+  shift: null, // open time-clock shift, if any
+  timeClock: false,
 };
 
 function readJson(key) {
@@ -172,7 +178,7 @@ function topbar(...right) {
 function rerender() {
   const screens = {
     link: showLink, pin: showPin, orders: showOrders, pick: showPick, complete: showComplete, locked: showLocked,
-    batch: showPick,
+    batch: showPick, restock: showRestock, clock: showClockIn,
     notice: () => showNotice(app.noticeVersion || "1"),
   };
   (screens[app.screen] || showPin)();
@@ -274,7 +280,7 @@ function showPin(message) {
       app.locked = null;
       app.noticeVersion = r.notice_version;
       if (r.notice_required) showNotice(r.notice_version);
-      else showOrders();
+      else afterLogin();
     } catch (ex) {
       if (ex.status === 402) return;
       pin = "";
@@ -350,7 +356,7 @@ function showNotice(version) {
           err.textContent = "";
           try {
             await api("/api/worker/notice", { method: "POST", body: { version } });
-            showOrders();
+            afterLogin();
           } catch (e) {
             err.textContent = e.isNetwork ? T("pinNeedsNetwork") : e.message;
           } finally {
@@ -375,16 +381,22 @@ async function showOrders() {
   app.batch = null;
   const listEl = h("div", { class: "order-list" }, h("div", { class: "skeleton" }));
   const note = h("p", { class: "muted small" });
+  const clockLine = h("div");
+  const restockHost = h("div");
   setScreen("orders",
     topbar(),
     h("main", { class: "screen" },
       h("div", { class: "row-between" },
         h("h1", null, T("ordersGreeting", { name: app.session.workerName })),
-        h("div", { class: "row" }, langToggle(), h("button", { class: "btn btn-sm", onclick: endShift }, T("endShift")))),
+        h("div", { class: "row" }, langToggle(),
+          h("button", { class: "btn btn-sm", "aria-label": T("settingsTitle"), onclick: showSettings }, "⚙"),
+          h("button", { class: "btn btn-sm", onclick: endShift }, T("endShift")))),
+      clockLine,
       h("div", { class: "grid-2" },
         h("button", { class: "btn btn-primary btn-xl", onclick: () => scanOnce(openFromCode) }, T("ordersScanSheet")),
         h("button", { class: "btn btn-xl", onclick: typeOrderNumber }, T("ordersTypeNumber"))),
       h("button", { class: "btn btn-lg btn-block", onclick: startReturn }, T("returnStart")),
+      restockHost,
       note,
       listEl));
 
@@ -397,6 +409,14 @@ async function showOrders() {
     orders = r.orders;
     toShip = r.to_ship || [];
     batches = r.batches || [];
+    app.shift = r.shift || null;
+    app.timeClock = Boolean(r.time_clock_enabled);
+    mount(clockLine, app.shift
+      ? h("p", { class: "muted small clock-line" }, "⏱ ", T("clockedIn", { time: fmtTime(app.shift.clock_in) }))
+      : null);
+    mount(restockHost, r.restock_open
+      ? h("button", { class: "btn btn-lg btn-block restock-btn", onclick: showRestock }, "📦 ", T("restockCount", { n: r.restock_open }))
+      : null);
     await store.metaSet("orderList", orders);
     await store.metaSet("batchList", batches);
   } catch (e) {
@@ -413,6 +433,22 @@ async function showOrders() {
     if (app.screen !== "orders") return;
     renderOrderList(listEl, orders, new Map((await store.allOrders()).map((o) => [o.id, o])), toShip, batches);
   });
+}
+
+function fmtTime(iso) {
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+/** "3:00 PM" today, else "Tue 3:00 PM". */
+function fmtDue(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? fmtTime(iso) : `${d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} ${fmtTime(iso)}`;
 }
 
 function batchRows(batches) {
@@ -459,10 +495,13 @@ function renderOrderList(listEl, orders, cached, toShip = [], batches = []) {
     const pct = o.units_expected ? Math.min(100, Math.round((100 * o.units_scanned) / o.units_expected)) : 0;
     return h("button", { class: ["order-row", tally && `order-row-${o.kind}`], onclick: () => openOrder(o.id) },
       h("div", { class: "order-row-main" },
+        o.rush ? h("span", { class: "badge badge-rush" }, T("rushTag")) : null,
         tally ? h("span", { class: `badge badge-kind badge-kind-${o.kind}` }, T(`kind_${o.kind}`)) : null,
         h("span", { class: "order-number" }, o.external_order_number || o.id.slice(0, 8)),
         h("span", { class: `badge badge-${o.status}` }, T(`status_${o.status}`)),
         o.assigned_to_me ? h("span", { class: "badge badge-assigned" }, T("ordersAssigned")) : null),
+      o.due_at ? h("div", { class: ["order-row-due", o.late && "late"] },
+        o.late ? `⚠ ${T("lateTag")} · ` : "", T("dueAt", { time: fmtDue(o.due_at) })) : null,
       h("div", { class: "order-row-sub" },
         h("span", null, tally && !o.units_expected
           ? T("tallyCounted", { n: o.units_scanned })
@@ -634,11 +673,12 @@ function renderBatchBody() {
     targetCard,
     target
       ? h("div", { class: "actions" },
-        h("button", { class: "btn btn-primary btn-xl action-scan", onclick: startCamera }, T("pickCamera")),
+        scanButton(),
         h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
         h("button", { class: "btn btn-lg", onclick: withTarget(shortPick) }, T("pickShort")),
         h("button", { class: "btn btn-lg", onclick: withTarget(flagProblem) }, T("pickFlag")),
-        h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo")))
+        h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo")),
+        h("button", { class: "btn btn-lg", onclick: () => reportEmptyBin(target) }, T("pickBinEmpty")))
       : h("div", { class: "actions" },
         h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo"))),
     h("h2", { class: "section-title" }, T("pickAllLines")),
@@ -751,6 +791,9 @@ function renderPickBody() {
         h("span", { class: "muted" }, T("progressUnits", { done: prog.done, total: prog.total })))),
     h("div", { class: "bar bar-lg" }, h("span", { style: { width: `${pct}%` } })),
     order.status === "flagged" || order.open_flags ? h("div", { class: "banner banner-warn" }, T("orderFlagged")) : null,
+    order.rush || order.late ? h("div", { class: ["banner", order.late ? "banner-bad" : "banner-warn"] },
+      order.rush ? `${T("rushTag")} · ` : "", order.due_at ? T("dueAt", { time: fmtDue(order.due_at) }) : "") : null,
+    order.notes ? h("div", { class: "banner banner-note" }, h("strong", null, T("orderNote"), ": "), order.notes) : null,
     app.locked ? h("div", { class: "banner banner-bad" }, app.locked) : null);
 
   const targetCard = target
@@ -777,11 +820,12 @@ function renderPickBody() {
     targetCard,
     target
       ? h("div", { class: "actions" },
-        h("button", { class: "btn btn-primary btn-xl action-scan", onclick: startCamera }, T("pickCamera")),
+        scanButton(),
         h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
         h("button", { class: "btn btn-lg", onclick: shortPick }, T("pickShort")),
         h("button", { class: "btn btn-lg", onclick: () => flagProblem(null) }, T("pickFlag")),
-        h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo")))
+        h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo")),
+        h("button", { class: "btn btn-lg", onclick: () => reportEmptyBin(target) }, T("pickBinEmpty")))
       : h("div", { class: "actions" },
         h("button", { class: "btn btn-lg", onclick: () => flagProblem(null) }, T("pickFlag")),
         h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo"))),
@@ -889,7 +933,7 @@ function renderTallyBody() {
         extras ? h("span", { class: "short-tag" }, T("tallyExtras", { n: extras })) : null),
       order.kind === "return" && order.customer ? h("div", { class: "muted" }, order.customer) : null),
     h("div", { class: "actions" },
-      h("button", { class: "btn btn-primary btn-xl action-scan", onclick: startCamera }, T("pickCamera")),
+      scanButton(),
       h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
       h("button", { class: "btn btn-lg", onclick: () => flagProblem(null) }, T("pickFlag")),
       h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo"))),
@@ -1112,7 +1156,7 @@ async function handleScan(rawText) {
     if (!app.overlay.timer) return;
     app.overlay.close();
   }
-  const raw = String(rawText);
+  const raw = cleanScan(rawText);
   if (!raw.trim()) return;
   if (S.isOrderCode(raw)) {
     showResult({ result: "order_code" });
@@ -1297,6 +1341,69 @@ function showComplete() {
 // Pack and ship: the shipping label, scanned onto the order
 // ---------------------------------------------------------------------------
 
+/** Order note and product packer notes, shown where the box is packed. */
+function packingNotes(order) {
+  const seen = new Set();
+  const notes = [];
+  for (const l of order.lines || []) {
+    const p = productOf(l);
+    if (p && p.packer_note && !seen.has(p.packer_note)) {
+      seen.add(p.packer_note);
+      notes.push(h("li", null, h("strong", null, lineLabel(l)), ": ", p.packer_note));
+    }
+  }
+  if (!order.notes && !notes.length) return null;
+  return h("section", { class: "pack-notes" },
+    h("div", { class: "target-label" }, T("packNotes")),
+    order.notes ? h("p", { class: "pack-note-order" }, order.notes) : null,
+    notes.length ? h("ul", null, ...notes) : null);
+}
+
+/** Flyers, cards, samples: each ticked off (or scanned) before the label. */
+function insertChecklist(order) {
+  const inserts = order.inserts || [];
+  if (!inserts.length) return null;
+  const done = S.insertsDone(order, pendingFor(order.id));
+  return h("section", { class: "inserts" },
+    h("div", { class: "target-label" }, T("insertsTitle")),
+    h("ul", { class: "insert-list" }, ...inserts.map((i) => {
+      const ok = done.has(i.id);
+      return h("li", { class: ["insert", ok && "insert-done"] },
+        h("span", { class: "insert-name" }, ok ? "✓ " : "☐ ", i.name),
+        ok ? null : i.scan_required
+          ? h("button", { class: "btn btn-sm", onclick: () => scanOnce((code) => handleLabel(code)) }, T("insertScan"))
+          : h("button", { class: "btn btn-sm btn-primary", onclick: () => checkInsert(i, null) }, T("insertTap")));
+    })));
+}
+
+async function checkInsert(insert, scanned) {
+  const order = app.order;
+  const ev = {
+    id: uuid4(),
+    kind: "insert",
+    order_id: order.id,
+    session_id: app.session.id,
+    client_scanned_at: new Date().toISOString(),
+    client_seq: await store.nextSeq().catch(() => Date.now()),
+    insert_id: insert.id,
+    scanned_barcode: scanned ? String(scanned).slice(0, 500) : null,
+    offline: !app.status.online,
+    local: {},
+  };
+  try {
+    await store.outboxAdd(ev);
+  } catch {
+    toast(T("storageFailed"), "bad");
+    return;
+  }
+  app.pending.push(ev);
+  FX.play("ok");
+  toast(T("insertChecked", { name: insert.name }), "ok", 2500);
+  if (app.sync) app.sync.kick();
+  if (app.screen === "complete") showComplete();
+  else renderPickBody();
+}
+
 function shipControls({ big = false } = {}) {
   const order = app.order;
   const tracking = S.shippedTracking(order, pendingFor(order.id));
@@ -1318,15 +1425,67 @@ function shipControls({ big = false } = {}) {
   }
   const shots = packShotCount(order);
   const needPhoto = Boolean(order.require_pack_photo) && shots === 0;
+  const inserts = order.inserts || [];
+  const done = S.insertsDone(order, pendingFor(order.id));
+  const needInserts = inserts.some((i) => !done.has(i.id));
+  const boxes = S.boxesLabelled(order, pendingFor(order.id));
+  const multi = Boolean(app.multiBox[order.id]) || boxes.count > 0;
+  const blockedLabel = needPhoto || needInserts;
+  const multiToggle = h("input", {
+    type: "checkbox",
+    onchange: (e) => {
+      app.multiBox[order.id] = e.target.checked;
+      if (app.screen === "complete") showComplete();
+      else renderPickBody();
+    },
+  });
+  multiToggle.checked = multi;
+  multiToggle.disabled = boxes.count > 0;
   return [
+    packingNotes(order),
+    insertChecklist(order),
     required ? h("p", { class: "muted" }, T("shipRequired")) : h("p", { class: "muted" }, T("shipHelp")),
     h("button", { class: ["btn", needPhoto && "btn-primary", size], onclick: takePackPhoto },
       "📷 ", shots ? T("packPhotoMore", { n: shots }) : T("packPhoto")),
     needPhoto ? h("p", { class: "banner banner-warn" }, T("packPhotoRequired")) : null,
-    h("button", { class: ["btn", required && !needPhoto ? "btn-primary" : "", size], disabled: needPhoto, onclick: () => scanOnce(handleLabel) }, T("shipScan")),
-    h("button", { class: ["btn", size], disabled: needPhoto, onclick: typeTracking }, T("shipType")),
-    required || needPhoto ? null : h("button", { class: ["btn btn-primary", size], onclick: showOrders }, T("orderCompleteNext")),
+    needInserts ? h("p", { class: "banner banner-warn" }, T("insertsMissing")) : null,
+    h("label", { class: "row check multi-box" }, multiToggle, T("boxesMore")),
+    boxes.count ? h("ul", { class: "box-list" }, ...Array.from({ length: boxes.count }, (_, i) =>
+      h("li", null, "✓ ", T("boxLabelled", { n: i + 1, tracking: boxes.list[i] || "" })))) : null,
+    h("button", { class: ["btn", required && !blockedLabel ? "btn-primary" : "", size], disabled: blockedLabel, onclick: () => scanOnce(handleLabel) },
+      multi ? T("boxScan", { n: boxes.count + 1 }) : T("shipScan")),
+    h("button", { class: ["btn", size], disabled: blockedLabel, onclick: typeTracking }, T("shipType")),
+    multi && boxes.count ? h("button", { class: ["btn btn-primary", size], onclick: finishBoxes }, T("boxesDone", { n: boxes.count })) : null,
+    required || blockedLabel || boxes.count ? null : h("button", { class: ["btn btn-primary", size], onclick: showOrders }, T("orderCompleteNext")),
   ];
+}
+
+/** Multi-box: every box has its label; the order has shipped. */
+async function finishBoxes() {
+  const order = app.order;
+  const ev = {
+    id: uuid4(),
+    kind: "ship",
+    order_id: order.id,
+    session_id: app.session.id,
+    client_scanned_at: new Date().toISOString(),
+    client_seq: await store.nextSeq().catch(() => Date.now()),
+    final: true,
+    offline: !app.status.online,
+    local: {},
+  };
+  try {
+    await store.outboxAdd(ev);
+  } catch {
+    toast(T("storageFailed"), "bad");
+    return;
+  }
+  app.pending.push(ev);
+  delete app.multiBox[order.id];
+  FX.play("ok");
+  toast(T("shipDone"), "ok", 4000);
+  if (app.sync) app.sync.kick();
+  showOrders();
 }
 
 function packShotCount(order) {
@@ -1339,7 +1498,7 @@ async function takePackPhoto() {
   if (!order) return;
   const blob = await takePhoto();
   if (!blob) return;
-  await savePackPhotos([blob], order.id);
+  await savePackPhotos([blob], order.id, S.boxesLabelled(order, pendingFor(order.id)).count + 1);
   FX.play("ok");
   toast(T("packPhotoSaved"), "ok");
   if (app.sync) app.sync.kick();
@@ -1347,11 +1506,11 @@ async function takePackPhoto() {
   else renderPickBody();
 }
 
-async function savePackPhotos(photos, orderId) {
+async function savePackPhotos(photos, orderId, box = null) {
   for (const blob of photos) {
     try {
       await store.photoAdd({
-        id: uuid4(), kind: "pack", order_id: orderId, worker_id: app.session && app.session.workerId, blob, created: Date.now(),
+        id: uuid4(), kind: "pack", order_id: orderId, worker_id: app.session && app.session.workerId, box, blob, created: Date.now(),
       });
       app.packShots[orderId] = (app.packShots[orderId] || 0) + 1;
     } catch {
@@ -1377,9 +1536,20 @@ function typeTracking() {
   }).then((v) => v && handleLabel(v));
 }
 
-async function handleLabel(raw) {
+async function handleLabel(rawText) {
   const order = app.order;
   if (!order) return;
+  const raw = cleanScan(rawText);
+  // An insert's barcode, not a label: tick it off.
+  const insert = S.insertFor(order, pendingFor(order.id), raw);
+  if (insert) return checkInsert(insert, raw);
+  const pendingInserts = (order.inserts || []).filter((i) => !S.insertsDone(order, pendingFor(order.id)).has(i.id));
+  if (pendingInserts.length) {
+    FX.play("bad");
+    const scanRequired = pendingInserts.find((i) => i.scan_required);
+    toast(scanRequired && raw.length < 8 ? T("insertWrong", { name: scanRequired.name }) : T("insertsMissing"), "bad", 6000);
+    return;
+  }
   if (order.require_pack_photo && packShotCount(order) === 0) {
     FX.play("bad");
     toast(T("packPhotoRequired"), "bad", 6000);
@@ -1399,9 +1569,16 @@ async function handleLabel(raw) {
     client_scanned_at: new Date().toISOString(),
     client_seq: await store.nextSeq().catch(() => Date.now()),
     tracking_number: String(raw).trim().slice(0, 200),
+    final: !app.multiBox[order.id],
     offline: !app.status.online,
     local: {},
   };
+  const boxes = S.boxesLabelled(order, pendingFor(order.id));
+  if (boxes.list.includes(check.tracking)) {
+    FX.play("bad");
+    toast(T("syncRefused", { message: "That label is already on this order." }), "bad", 6000);
+    return;
+  }
   try {
     await store.outboxAdd(ev);
   } catch {
@@ -1410,8 +1587,14 @@ async function handleLabel(raw) {
   }
   app.pending.push(ev);
   FX.play("ok");
-  toast(`${T("shipDone")} · ${T("shipDoneDetail", { tracking: check.tracking })}`, "ok", 5000);
   if (app.sync) app.sync.kick();
+  if (!ev.final) {
+    toast(T("boxAdded", { n: boxes.count + 1 }), "ok", 5000);
+    if (app.screen === "complete") showComplete();
+    else renderPickBody();
+    return;
+  }
+  toast(`${T("shipDone")} · ${T("shipDoneDetail", { tracking: check.tracking })}`, "ok", 5000);
   showOrders();
 }
 
@@ -1663,6 +1846,190 @@ async function shortPick() {
 }
 
 // ---------------------------------------------------------------------------
+// Empty bins and restocking
+// ---------------------------------------------------------------------------
+
+async function reportEmptyBin(line) {
+  if (!line) return;
+  if (app.batch && line.orderId) app.order = batchOrder(line.orderId);
+  const item = [line.location, lineLabel(line)].filter(Boolean).join(" · ");
+  const ok = await dialog(T("pickBinEmpty"), (close) => [
+    h("p", null, T("binEmptyConfirm", { item })),
+    h("div", { class: "dialog-actions" },
+      h("button", { class: "btn", onclick: () => close(false) }, T("cancel")),
+      h("button", { class: "btn btn-primary", onclick: () => close(true) }, T("binEmptyReport"))),
+  ]);
+  if (!ok) return;
+  const ev = {
+    id: uuid4(),
+    kind: "restock",
+    order_id: app.order.id,
+    session_id: app.session.id,
+    client_scanned_at: new Date().toISOString(),
+    client_seq: await store.nextSeq().catch(() => Date.now()),
+    line_item_id: line.id,
+    offline: !app.status.online,
+    local: {},
+  };
+  try {
+    await store.outboxAdd(ev);
+  } catch {
+    toast(T("storageFailed"), "bad");
+    return;
+  }
+  app.pending.push(ev);
+  toast(T("binEmptySent"), "ok", 4000);
+  if (app.sync) app.sync.kick();
+}
+
+async function showRestock() {
+  if (!app.session) return showPin();
+  stopCamera();
+  const listEl = h("div", { class: "order-list" }, h("div", { class: "skeleton" }));
+  setScreen("restock",
+    topbar(),
+    h("main", { class: "screen" },
+      h("div", { class: "pick-head" },
+        h("button", { class: "btn btn-sm", onclick: showOrders }, "← ", T("back")),
+        h("h1", null, T("restockTitle"))),
+      listEl));
+  let tasks;
+  try {
+    tasks = (await api("/api/worker/restock")).tasks;
+  } catch (e) {
+    mount(listEl, h("p", { class: "banner banner-warn" }, e.isNetwork ? T("restockNeedsNetwork") : e.message));
+    return;
+  }
+  if (app.screen !== "restock") return;
+  if (!tasks.length) {
+    mount(listEl, h("p", { class: "empty" }, T("restockEmpty")));
+    return;
+  }
+  mount(listEl, ...tasks.map((t) => h("div", { class: "order-row restock-row" },
+    h("div", { class: "order-row-main" },
+      h("span", { class: "target-location restock-loc" }, t.location || "–"),
+      h("span", { class: "order-number" }, t.description || t.sku || t.barcode)),
+    h("div", { class: "order-row-sub" },
+      h("span", { class: "mono" }, t.barcode || ""),
+      t.reported_by ? h("span", null, T("restockReportedBy", { name: t.reported_by })) : null),
+    h("button", {
+      class: "btn btn-primary btn-lg",
+      onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        try {
+          await api(`/api/worker/restock/${t.id}/done`, { method: "POST" });
+          FX.play("ok");
+          toast(T("restockMarked"), "ok");
+          showRestock();
+        } catch (err) {
+          toast(err.isNetwork ? T("restockNeedsNetwork") : err.message, "bad");
+          e.currentTarget.disabled = false;
+        }
+      },
+    }, "✓ ", T("restockDone")))));
+}
+
+// ---------------------------------------------------------------------------
+// Time clock
+// ---------------------------------------------------------------------------
+
+/** After the PIN (and the privacy notice): clock in first, if the warehouse uses the time clock. */
+async function afterLogin() {
+  try {
+    const r = await api("/api/worker/shift");
+    app.timeClock = Boolean(r.enabled);
+    app.shift = r.shift;
+    if (r.enabled && !r.shift) return showClockIn();
+  } catch {
+    /* offline: straight to work */
+  }
+  showOrders();
+}
+
+function showClockIn() {
+  setScreen("clock",
+    topbar(),
+    h("main", { class: "screen narrow center" },
+      h("div", { class: "complete-check clock-icon" }, "⏱"),
+      h("h1", null, T("clockTitle")),
+      h("p", { class: "muted" }, T("clockHelp")),
+      h("div", { class: "stack" },
+        h("button", {
+          class: "btn btn-primary btn-xl",
+          onclick: async () => {
+            try {
+              const r = await api("/api/worker/clock-in", { method: "POST" });
+              app.shift = r.shift;
+              FX.play("ok");
+              toast(T("clockedIn", { time: fmtTime(r.shift.clock_in) }), "ok");
+            } catch (e) {
+              toast(e.isNetwork ? T("pinNeedsNetwork") : e.message, "bad");
+              return;
+            }
+            showOrders();
+          },
+        }, T("clockIn")),
+        h("button", { class: "btn btn-lg", onclick: showOrders }, T("clockSkip")))));
+}
+
+// ---------------------------------------------------------------------------
+// Scanner and sound settings (per phone)
+// ---------------------------------------------------------------------------
+
+/** The big scan control: the camera, or a "scanner ready" sign when a hardware scanner is set up. */
+function scanButton() {
+  if (!usesHardwareScanner(app.prefs)) {
+    return h("button", { class: "btn btn-primary btn-xl action-scan", onclick: startCamera }, T("pickCamera"));
+  }
+  return h("div", { class: "scanner-ready action-scan" },
+    h("span", { class: "scanner-dot" }), T("scannerReady"),
+    h("button", { class: "btn btn-sm", "aria-label": T("pickCamera"), onclick: startCamera }, "📷"));
+}
+
+function showSettings() {
+  const draft = { ...PREF_DEFAULTS, ...app.prefs };
+  dialog(T("settingsTitle"), (close) => {
+    const types = [["camera", "scannerCamera"], ["wedge", "scannerWedge"], ["ring", "scannerRing"], ["rugged", "scannerRugged"]];
+    const got = h("p", { class: "muted small scanner-got" }, T("scannerTest"));
+    const test = h("input", {
+      class: "input mono", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: T("scannerTest"),
+      onkeydown: (e) => {
+        if (e.key !== "Enter" && e.key !== "Tab") return;
+        e.preventDefault();
+        got.textContent = T("scannerGot", { code: cleanScan(test.value) || "–" });
+        test.value = "";
+        FX.play("ok");
+      },
+    });
+    const check = (key, label) => {
+      const box = h("input", { type: "checkbox", onchange: (e) => { draft[key] = e.target.checked; FX.configure(draft); } });
+      box.checked = Boolean(draft[key]);
+      return h("label", { class: "row check" }, box, T(label));
+    };
+    return h("div", { class: "stack settings" },
+      h("label", null, T("scannerType")),
+      h("div", { class: "scanner-types" }, ...types.map(([value, label]) => {
+        const radio = h("input", { type: "radio", name: "scanner", value, onchange: () => { draft.scanner = value; } });
+        radio.checked = draft.scanner === value;
+        return h("label", { class: "row check" }, radio, T(label));
+      })),
+      h("p", { class: "muted small" }, T("scannerHelp")),
+      test, got,
+      check("sound", "soundOn"), check("loud", "soundLoud"), check("vibrate", "vibrateOn"), check("strongVibrate", "vibrateStrong"),
+      h("div", { class: "grid-2" },
+        h("button", { class: "btn", type: "button", onclick: () => { FX.unlockAudio(); FX.play("ok"); } }, T("testRight")),
+        h("button", { class: "btn", type: "button", onclick: () => { FX.unlockAudio(); FX.play("bad"); } }, T("testWrong"))),
+      h("div", { class: "dialog-actions" },
+        h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("cancel")),
+        h("button", { class: "btn btn-primary", type: "button", onclick: () => close(draft) }, T("settingsSave"))));
+  }).then((saved) => {
+    app.prefs = saved ? savePrefs(saved) : app.prefs;
+    FX.configure(app.prefs);
+    if (saved) toast(T("settingsSaved"), "ok");
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Camera
 // ---------------------------------------------------------------------------
 
@@ -1767,21 +2134,40 @@ function onKeydown(e) {
     return;
   }
   const now = Date.now();
+  const gap = keyGapMs(app.prefs);
   if (e.key === "Enter" || e.key === "Tab") {
+    clearTimeout(app.wedgeTimer);
     const code = app.wedgeBuffer;
     app.wedgeBuffer = "";
     if (code.length >= 3) {
       e.preventDefault();
-      if (app.screen === "pick") handleScan(code);
-      else if (app.screen === "complete") handleLabel(code);
-      else if (app.screen === "orders") openFromCode(code);
+      routeWedgeScan(code);
     }
     return;
   }
   if (e.key.length !== 1) return;
-  if (now - app.wedgeAt > 150) app.wedgeBuffer = "";
+  if (now - app.wedgeAt > gap) app.wedgeBuffer = "";
   app.wedgeBuffer += e.key;
   app.wedgeAt = now;
+  // Some scanners are set up with no Enter at the end: a fast burst of 6+
+  // keys followed by silence is a scan too.
+  clearTimeout(app.wedgeTimer);
+  if (usesHardwareScanner(app.prefs)) {
+    app.wedgeTimer = setTimeout(() => {
+      const code = app.wedgeBuffer;
+      if (code.length >= 6 && Date.now() - app.wedgeAt >= gap) {
+        app.wedgeBuffer = "";
+        routeWedgeScan(code);
+      }
+    }, gap + 80);
+  }
+}
+
+function routeWedgeScan(code) {
+  FX.unlockAudio();
+  if (app.screen === "pick") handleScan(code);
+  else if (app.screen === "complete") handleLabel(code);
+  else if (app.screen === "orders") openFromCode(cleanScan(code));
 }
 
 // ---------------------------------------------------------------------------
@@ -1866,15 +2252,29 @@ function startSync() {
 
 async function endShift() {
   stopCamera();
+  let clockOut = false;
+  if (app.shift) {
+    const choice = await dialog(T("clockOutAsk"), (close) => [
+      h("p", { class: "muted" }, T("clockOutHelp")),
+      h("div", { class: "stack" },
+        h("button", { class: "btn btn-primary btn-lg", onclick: () => close("out") }, T("clockOutYes")),
+        h("button", { class: "btn btn-lg", onclick: () => close("stay") }, T("clockOutNo")),
+        h("button", { class: "btn", onclick: () => close(null) }, T("cancel"))),
+    ]);
+    if (!choice) return;
+    clockOut = choice === "out";
+  }
   const left = app.sync ? await app.sync.flush() : await store.outboxCount().catch(() => 0);
   let summary = null;
   try {
     summary = await api("/api/worker/summary");
+    if (clockOut) await api("/api/worker/clock-out", { method: "POST" });
     await api("/api/worker/logout", { method: "POST" });
   } catch {
     summary = null;
   }
   const name = app.session ? app.session.workerName : "";
+  app.shift = null;
   endSessionLocally();
   const stat = (n, label) => h("div", { class: "stat" }, h("div", { class: "stat-n" }, String(n)), h("div", { class: "stat-l" }, label));
   setScreen("summary",
@@ -1887,7 +2287,9 @@ async function endShift() {
           stat(summary.units_picked, T("summaryPicked")),
           stat(summary.errors_caught, T("summaryCaught")),
           stat(summary.needs_review, T("summaryReview")),
-          stat(summary.orders_completed, T("summaryOrders")))
+          stat(summary.orders_completed, T("summaryOrders")),
+          summary.clock_hours != null ? stat(summary.clock_hours.toFixed(1), T("summaryHours")) : null,
+          summary.uph != null ? stat(summary.uph, T("summaryUph")) : null)
         : h("p", { class: "banner banner-warn" }, T("summaryOffline")),
       left > 0 ? h("p", { class: "banner banner-warn" }, T("summaryUnsynced", { n: left })) : null,
       h("button", { class: "btn btn-primary btn-xl", onclick: () => showPin() }, T("summaryDone"))));
@@ -1929,6 +2331,7 @@ async function boot() {
   // First run: the phone's own language, if we have it.
   const phoneLang = (navigator.language || "").toLowerCase().slice(0, 2);
   setLang(saved || (LANGUAGES.some(([code]) => code === phoneLang) ? phoneLang : "en"));
+  FX.configure(app.prefs);
   document.addEventListener("keydown", onKeydown);
   requestPersistence();
   if ("serviceWorker" in navigator) {

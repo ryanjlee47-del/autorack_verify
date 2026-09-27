@@ -512,3 +512,11 @@ label {
   font-weight: 800;
   vertical-align: middle;
 }
+
+.badge-rush {
+  margin-right: 6px;
+  background: var(--bad);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}

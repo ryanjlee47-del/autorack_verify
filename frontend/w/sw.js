@@ -5,7 +5,7 @@
 // and the scan queue live in IndexedDB, never here, and API calls are never
 // intercepted: a cached API response could show stale data as if it were live.
 
-const CACHE = "autorack-shell-v10";
+const CACHE = "autorack-shell-v11";
 const SHELL = [
   "/w/",
   "/w/index.html",
@@ -18,6 +18,7 @@ const SHELL = [
   "/w/js/feedback.js",
   "/w/js/i18n.js",
   "/w/js/photo.js",
+  "/w/js/prefs.js",
   "/w/vendor/zxing.min.js",
   "/shared/api.js",
   "/shared/dom.js",

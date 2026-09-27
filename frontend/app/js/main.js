@@ -5,6 +5,7 @@ import { agreementGate, loadAgreement } from "./agreement.js";
 import { api, ctx, fail, getToken, loadMe, logout, stopPolling, switchWarehouse, toLogin } from "./core.js";
 import { connectionsView } from "./views/connections.js";
 import { dashboardView } from "./views/dashboard.js";
+import { clientsView, insertsView, restockView, timeView } from "./views/floor.js";
 import { productView, productsView } from "./views/products.js";
 import { billingView, insightsView, settingsView } from "./views/more.js";
 import { boardView, reportsView } from "./views/reports.js";
@@ -30,6 +31,10 @@ const ROUTES = [
   [/^\/products$/, (m, p) => productsView(p)],
   [/^\/products\/([0-9a-f-]{36})$/, (m) => productView(m[1])],
   [/^\/settings$/, () => settingsView()],
+  [/^\/restock$/, (m, p) => restockView(p)],
+  [/^\/time$/, (m, p) => timeView(p)],
+  [/^\/inserts$/, () => insertsView()],
+  [/^\/clients$/, () => clientsView()],
 ];
 
 async function route() {

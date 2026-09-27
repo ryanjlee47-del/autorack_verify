@@ -21,6 +21,7 @@ from ..errors import bad_request, conflict, not_found
 from ..models import (
     TALLY_KINDS,
     BarcodeAlias,
+    Client,
     ImportBatch,
     Order,
     OrderFlag,
@@ -34,7 +35,7 @@ from ..models import (
     Worker,
     utcnow,
 )
-from ..services import audit, csv_import, tasks, usage
+from ..services import audit, csv_import, floor, tasks, usage
 from ..services import dashboard as dash
 from ..services import orders as order_svc
 from ..services.ratelimit import memory_limiter
@@ -78,6 +79,9 @@ class OrderCreate(BaseModel):
     # pick (default) | receive | count. Returns are made from a shipped order.
     kind: Literal["pick", "receive", "count"] = "pick"
     blind: bool = False
+    rush: bool = False
+    ship_by: date | datetime | None = None
+    client_id: uuid.UUID | None = None
 
 
 class OrderUpdate(BaseModel):
@@ -86,6 +90,11 @@ class OrderUpdate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     assigned_worker_id: uuid.UUID | None = None
     clear_assignment: bool = False
+    rush: bool | None = None
+    ship_by: date | datetime | None = None
+    clear_ship_by: bool = False
+    client_id: uuid.UUID | None = None
+    clear_client: bool = False
 
 
 class LineUpdate(BaseModel):
@@ -107,6 +116,13 @@ class FlagResolve(BaseModel):
     action: Literal["resolve", "accept", "reopen"] = "resolve"
 
 
+def _check_client(db: Session, ctx: OwnerContext, client_id: uuid.UUID | None) -> None:
+    if client_id and not db.scalar(
+        select(Client.id).where(Client.id == client_id, Client.warehouse_id == ctx.warehouse.id)
+    ):
+        raise bad_request("client_invalid", "That client isn't at this warehouse.")
+
+
 def _check_worker(db: Session, ctx: OwnerContext, worker_id: uuid.UUID | None) -> None:
     if worker_id and not db.scalar(
         select(Worker.id).where(Worker.id == worker_id, Worker.warehouse_id == ctx.warehouse.id)
@@ -123,10 +139,16 @@ def list_orders(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     kind: str = Query("pick", description="pick | receive | return | count | all"),
+    due: str | None = Query(None, description="rush | late | today: open orders by urgency"),
+    client_id: uuid.UUID | None = None,
     ctx: OwnerContext = Depends(current_owner),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     stmt = select(Order).where(Order.warehouse_id == ctx.warehouse.id)
+    if client_id:
+        stmt = stmt.where(Order.client_id == client_id)
+    if due:
+        return _orders_by_due(db, ctx, stmt, due, limit, offset)
     if kind != "all":
         if kind not in {k.value for k in OrderKind}:
             raise bad_request("kind_invalid", "kind must be pick, receive, return, count or all.")
@@ -176,6 +198,33 @@ def list_orders(
     return {"orders": rows, "has_more": has_more, "offset": offset, "limit": limit}
 
 
+def _orders_by_due(db: Session, ctx: OwnerContext, stmt: Any, due: str, limit: int, offset: int) -> dict[str, Any]:
+    """Open picking orders by urgency: rush, late, or due by today's end."""
+    if due not in ("rush", "late", "today"):
+        raise bad_request("due_invalid", "due must be rush, late or today.")
+    wh = ctx.warehouse
+    open_ = [OrderStatus.pending, OrderStatus.in_progress, OrderStatus.flagged]
+    if wh.require_ship_scan:
+        open_.append(OrderStatus.completed)
+    stmt = stmt.where(Order.kind == OrderKind.pick, Order.status.in_(open_))
+    if due == "rush":
+        stmt = stmt.where(Order.rush.is_(True))
+    now = utcnow()
+    _, day_end, _ = dash.day_bounds(wh)
+    picked = []
+    for o in db.scalars(stmt.order_by(Order.created_at).limit(5000)):
+        d = order_svc.due_at(o, wh)
+        if due == "late" and not (d and d < now):
+            continue
+        if due == "today" and not (o.rush or (d and d < day_end)):
+            continue
+        picked.append((not o.rush, d or datetime.max.replace(tzinfo=now.tzinfo), o.created_at, o))
+    picked.sort(key=lambda t: t[:3])
+    page = [t[3] for t in picked[offset : offset + limit]]
+    rows = dash.order_rows(db, wh, page)
+    return {"orders": rows, "has_more": len(picked) > offset + limit, "offset": offset, "limit": limit}
+
+
 def _local_date(value: str) -> date:
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
@@ -188,6 +237,7 @@ def create_order(
     body: OrderCreate, ctx: OwnerContext = Depends(require_owner_access), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     _check_worker(db, ctx, body.assigned_worker_id)
+    _check_client(db, ctx, body.client_id)
     order = order_svc.create_order(
         db,
         ctx.warehouse,
@@ -200,6 +250,9 @@ def create_order(
         actor=ctx.actor,
         kind=OrderKind(body.kind),
         blind=body.blind,
+        rush=body.rush,
+        ship_by=order_svc.ship_by_from(ctx.warehouse, body.ship_by),
+        client_id=body.client_id,
     )
     usage.track(db, ctx.warehouse.id, "orders.manual" if body.kind == "pick" else f"tasks.{body.kind}")
     db.commit()
@@ -341,6 +394,10 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
             errors_by_line[lid] = errors_by_line.get(lid, 0) + 1
     return {
         **order_svc.order_summary(order, lines),
+        **order_svc.due_info(order, ctx.warehouse),
+        "client": _client_of(db, order),
+        "packages": order_svc.package_dicts(db, order, workers),
+        "inserts": _inserts_of(db, order, lines),
         "assigned_worker": workers.get(order.assigned_worker_id) if order.assigned_worker_id else None,
         "shipped_by": workers.get(order.shipped_by_worker_id) if order.shipped_by_worker_id else None,
         "cancelled_at": order.cancelled_at.isoformat() if order.cancelled_at else None,
@@ -357,6 +414,16 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
         if order.share_token
         else None,
     }
+
+
+def _client_of(db: Session, order: Order) -> dict[str, Any] | None:
+    c = db.get(Client, order.client_id) if order.client_id else None
+    return {"id": str(c.id), "name": c.name} if c else None
+
+
+def _inserts_of(db: Session, order: Order, lines: list[OrderLineItem]) -> list[dict[str, Any]]:
+    done = floor.insert_checks(db, order.id)
+    return [{**floor.insert_dict(i), "done": i.id in done} for i in floor.inserts_for(db, order, lines)]
 
 
 def _batch_of(db: Session, order: Order) -> dict[str, Any] | None:
@@ -436,6 +503,22 @@ def update_order(
         _check_worker(db, ctx, body.assigned_worker_id)
         order.assigned_worker_id = body.assigned_worker_id
         changes["assigned_worker_id"] = body.assigned_worker_id
+    if body.rush is not None:
+        order.rush = body.rush
+        changes["rush"] = body.rush
+    if body.clear_ship_by:
+        order.ship_by = None
+        changes["ship_by"] = None
+    elif body.ship_by is not None:
+        order.ship_by = order_svc.ship_by_from(ctx.warehouse, body.ship_by)
+        changes["ship_by"] = order.ship_by.isoformat() if order.ship_by else None
+    if body.clear_client:
+        order.client_id = None
+        changes["client_id"] = None
+    elif body.client_id:
+        _check_client(db, ctx, body.client_id)
+        order.client_id = body.client_id
+        changes["client_id"] = body.client_id
     order_svc.bump(order)
     audit.record(
         db,

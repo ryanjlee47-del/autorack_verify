@@ -162,5 +162,9 @@ def public_proof(token: str, request: Request, db: Session = Depends(get_db)) ->
             for s in scans
         ],
         "pack_photos": [str(pid) for pid in order_svc.pack_photo_ids(db, order.id)],
+        "boxes": [
+            {k: b[k] for k in ("box", "tracking_number", "carrier", "photos")}
+            for b in order_svc.package_dicts(db, order)
+        ],
         "generated_at": utcnow().isoformat(),
     }

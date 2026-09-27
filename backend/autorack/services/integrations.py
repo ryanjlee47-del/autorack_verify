@@ -354,6 +354,8 @@ def _import_store_orders(
             customer=so.customer,
             source=SOURCE[integ.kind],
             import_batch_id=batch.id,
+            rush=so.rush,
+            ship_by=order_svc.ship_by_from(wh, so.ship_by),
         )
         order.integration_id = integ.id
         order.store_order_id = so.store_order_id[:100]

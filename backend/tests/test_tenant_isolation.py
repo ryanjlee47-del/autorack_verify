@@ -32,6 +32,9 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/products/{product_id}/barcodes"): {"barcode": "A-NEW-CODE", "pack_qty": 6},
     ("PUT", "/api/products/{product_id}/components"): {"components": []},
     ("POST", "/api/products/{product_id}/substitutes"): {"substitute_id": "00000000-0000-0000-0000-000000000000"},
+    ("PATCH", "/api/clients/{client_id}"): {"name": "x"},
+    ("PATCH", "/api/inserts/{insert_id}"): {"name": "x"},
+    ("PATCH", "/api/shifts/{shift_id}"): {},
 }
 NO_BODY = {
     ("GET", "/api/orders/{order_id}"),
@@ -64,6 +67,10 @@ NO_BODY = {
     ("GET", "/api/batches/{batch_id}"),
     ("DELETE", "/api/batches/{batch_id}"),
     ("GET", "/api/worker/batches/{batch_id}"),
+    ("DELETE", "/api/inserts/{insert_id}"),
+    ("POST", "/api/restock/{task_id}/done"),
+    ("POST", "/api/restock/{task_id}/cancel"),
+    ("POST", "/api/worker/restock/{task_id}/done"),
 }
 
 
@@ -95,6 +102,17 @@ def _catalog_for(client, owner) -> dict[str, str]:
     r = client.post(f"/api/products/{p['id']}/barcodes", json={"barcode": "B-CASE", "pack_qty": 12}, headers=owner.h)
     client.post(f"/api/products/{p['id']}/substitutes", json={"substitute_id": sub["id"]}, headers=owner.h)
     return {"product_id": p["id"], "barcode_id": r.json()["barcodes"][0]["id"], "substitute_id": sub["id"]}
+
+
+def _floor_for(client, owner, phone, order) -> dict[str, str]:
+    c = client.post("/api/clients", json={"name": "B-SECRET-CLIENT"}, headers=owner.h).json()
+    i = client.post("/api/inserts", json={"name": "B-SECRET-INSERT"}, headers=owner.h).json()
+    client.patch("/api/warehouse", json={"time_clock_enabled": True}, headers=owner.h)
+    shift = client.post("/api/worker/clock-in", headers=phone.h).json()["shift"]["id"]
+    restock = {**scan_event(phone, order["id"], ""), "kind": "restock", "scanned_barcode": None}
+    restock["line_item_id"] = order["lines"][0]["id"]
+    sync(client, phone, restock)
+    return {"client_id": c["id"], "insert_id": i["id"], "shift_id": shift, "task_id": restock["id"]}
 
 
 def _batch_for(client, owner) -> str:
@@ -137,6 +155,7 @@ def two_tenants(client):
         "integration_id": _connection_for(client, b),
         **_catalog_for(client, b),
         "batch_id": _batch_for(client, b),
+        **_floor_for(client, b, b_phone, b_order),
     }
     return a, a_phone, b, ids
 
@@ -177,6 +196,11 @@ def test_lists_and_reports_never_include_other_tenants(client, two_tenants):
         "/api/products",
         "/api/products?q=SECRET",
         "/api/batches",
+        "/api/clients",
+        "/api/inserts",
+        "/api/restock?status=all",
+        "/api/shifts",
+        "/api/exports/timesheet.csv",
         "/api/dashboard/summary",
         "/api/dashboard/live",
         "/api/dashboard/workers",
@@ -194,6 +218,7 @@ def test_lists_and_reports_never_include_other_tenants(client, two_tenants):
             assert secret not in r.text, (url, secret)
     r = client.get("/api/worker/orders", headers=a_phone.h)
     assert "B-SECRET" not in r.text
+    assert client.get("/api/worker/restock", headers=a_phone.h).json()["tasks"] == []
     r = client.get("/api/worker/orders/lookup", params={"code": "B-SECRET-ORDER"}, headers=a_phone.h)
     assert r.status_code == 404
     r = client.get("/api/worker/orders/lookup", params={"code": f"AUTORACK:ORDER:{ids['order_id']}"}, headers=a_phone.h)

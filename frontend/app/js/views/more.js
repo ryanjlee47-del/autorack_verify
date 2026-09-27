@@ -197,6 +197,8 @@ export async function settingsView() {
   const board = checkbox(wh.leaderboard_enabled);
   const shipScan = checkbox(wh.require_ship_scan);
   const packPhoto = checkbox(wh.require_pack_photo);
+  const timeClock = checkbox(wh.time_clock_enabled);
+  const cutoff = h("input", { class: "input input-inline", type: "time", value: wh.ship_cutoff || "", disabled: !owner });
   const mine = ctx.me.membership;
   const myName = h("input", { class: "input", value: ctx.me.user.name || "", placeholder: "Your name" });
   const mySummary = checkbox(mine.email_daily_summary, false);
@@ -256,10 +258,16 @@ export async function settingsView() {
       h("div", { class: "settings-list" },
         h("label", { class: "row check" }, shipScan, h("span", null, h("strong", null, "Scan the shipping label on every order"), h("span", { class: "muted" }, " — after picking, the worker scans the box's shipping label, tying the order to its tracking number. Proof of what went in which parcel. Off: it's optional."))),
         h("label", { class: "row check" }, packPhoto, h("span", null, h("strong", null, "Photo of every packed box"), h("span", { class: "muted" }, " — before the label goes on, the worker photographs the open box. It shows on the order, the shipment proof and the shared proof link: your answer to “it wasn't in the box”. Off: a photo is optional."))),
+        h("label", { class: "row check" }, timeClock, h("span", null, h("strong", null, "Time clock"), h("span", { class: "muted" }, " — workers clock in when they sign in on a phone and out when they end their shift. Hours show on the Time clock page and give each worker's units per hour."))),
+        h("div", { class: "row" }, h("strong", null, "Daily ship cutoff"), cutoff,
+          h("span", { class: "muted" }, " — orders in before this time are due out the same day; later ones the next day. Orders past it show as late. Leave empty for none.")),
         h("label", { class: "row check" }, board, h("span", null, h("strong", null, "Floor board"), h("span", { class: "muted" }, " — a live shift leaderboard (units, orders, accuracy) for a TV on the floor. Some teams love it, some don't; it's off until you turn it on.")))),
       owner ? h("button", {
         class: "btn",
-        onclick: () => save({ require_ship_scan: shipScan.checked, require_pack_photo: packPhoto.checked, leaderboard_enabled: board.checked }, "Saved"),
+        onclick: () => save({
+          require_ship_scan: shipScan.checked, require_pack_photo: packPhoto.checked, leaderboard_enabled: board.checked,
+          time_clock_enabled: timeClock.checked, ship_cutoff: cutoff.value || "",
+        }, "Saved"),
       }, "Save") : null),
 
     card("Barcode matching",

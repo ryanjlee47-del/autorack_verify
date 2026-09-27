@@ -19,6 +19,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 from sqlalchemy import select, true
@@ -27,7 +28,7 @@ from sqlalchemy.orm import Session
 from .. import matching
 from ..config import get_settings
 from ..errors import bad_request
-from ..models import ImportBatch, Order, OrderKind, OrderSource, OrderStatus, Warehouse
+from ..models import Client, ImportBatch, Order, OrderKind, OrderSource, OrderStatus, Warehouse
 from . import audit
 from . import orders as order_svc
 from .audit import Actor
@@ -98,6 +99,9 @@ COLUMN_SYNONYMS: dict[str, list[str]] = {
     ],
 }
 COLUMN_SYNONYMS["track"] = ["capture", "trace", "traceability", "record"]
+COLUMN_SYNONYMS["rush"] = ["rush", "priority", "expedite", "expedited", "urgent", "service level"]
+COLUMN_SYNONYMS["ship_by"] = ["ship by", "ship by date", "ship date", "must ship by", "due", "due date", "deadline"]
+COLUMN_SYNONYMS["client"] = ["brand", "client code", "merchant", "seller", "3pl client", "owner code"]
 COLUMN_SYNONYMS["required_lot"] = ["lot", "lot number", "lot no", "batch", "batch number", "pick lot"]
 REQUIRED = ("order_number", "barcode")
 
@@ -120,6 +124,9 @@ class ParsedOrder:
     first_row: int = 0
     too_many_lines: bool = False
     customer: str | None = None
+    rush: bool = False
+    ship_by: date | None = None
+    client: str | None = None
 
 
 @dataclass
@@ -239,6 +246,12 @@ def parse(content: bytes, *, min_qty: int = 1) -> ParseResult:
             defaulted_qty += 1
         po = orders.setdefault(number, ParsedOrder(number=number, first_row=row_no))
         po.customer = po.customer or (cell(row, "customer")[:200] or None)
+        po.rush = po.rush or order_svc.parse_rush(cell(row, "rush"))
+        if cell(row, "ship_by") and not po.ship_by:
+            po.ship_by = order_svc.parse_date(cell(row, "ship_by"))
+            if po.ship_by is None:
+                warnings.append(f"Row {row_no}: ship-by date '{cell(row, 'ship_by')}' not understood; left blank.")
+        po.client = po.client or (cell(row, "client")[:200] or None)
         po.lines.append(
             order_svc.LineInput(
                 barcode=barcode,
@@ -379,6 +392,8 @@ def commit(
     db.add(batch)
     db.flush()
     created = lines = 0
+    rows = db.execute(select(Client.id, Client.name, Client.code).where(Client.warehouse_id == wh.id))
+    clients = {key.lower(): cid for cid, name, code in rows for key in (name, code) if key}
     for po in pr.orders:
         if po.number in existing or po.too_many_lines:
             continue
@@ -390,6 +405,9 @@ def commit(
             customer=po.customer,
             source=source,
             import_batch_id=batch.id,
+            rush=po.rush,
+            ship_by=order_svc.ship_by_from(wh, po.ship_by),
+            client_id=clients.get(po.client.lower()) if po.client else None,
             created_by_user_id=user_id,
             kind=kind,
             blind=blind,

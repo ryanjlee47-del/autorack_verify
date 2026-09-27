@@ -24,7 +24,7 @@ import re
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -70,6 +70,11 @@ class StoreOrder:
     customer: str | None
     lines: list[order_svc.LineInput]
     skipped_lines: list[str] = field(default_factory=list)
+    rush: bool = False
+    ship_by: date | None = None
+
+
+EXPEDITED = re.compile(r"overnight|next[ -]?day|express|priority overnight|same[ -]?day|1[ -]?day", re.I)
 
 
 def client(**kw: Any) -> httpx.Client:
@@ -416,6 +421,8 @@ class ShipStation:
                         number=str(o.get("orderNumber") or o["orderId"]),
                         customer=ship_to.get("company") or ship_to.get("name"),
                         lines=[],
+                        rush=bool(EXPEDITED.search(str(o.get("requestedShippingService") or ""))),
+                        ship_by=order_svc.parse_date(o.get("shipByDate")),
                     )
                     for it in o.get("items") or []:
                         if it.get("adjustment"):

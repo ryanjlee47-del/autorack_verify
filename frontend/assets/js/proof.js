@@ -33,12 +33,18 @@ function packPhotos(p, t) {
     h("div", { class: "proof-photos" }, ...figs));
 }
 
+function trackLink(carrier, number) {
+  const url = TRACK_URLS[carrier] ? TRACK_URLS[carrier](encodeURIComponent(number)) : null;
+  return url ? h("a", { href: url, rel: "noopener noreferrer", target: "_blank" }, number) : number;
+}
+
 function render(p, t) {
   const tz = p.timezone;
   const shipped = p.status === "shipped";
   const trackUrl = p.tracking_number && TRACK_URLS[p.carrier] ? TRACK_URLS[p.carrier](encodeURIComponent(p.tracking_number)) : null;
   const allVerified = p.lines.every((l) => l.verified + (l.short || 0) >= l.ordered);
   const traced = p.units.some((u) => u.lot || u.serial || u.expiry);
+  const boxes = p.boxes || [];
   document.title = `Order ${p.order_number || ""} · proof of shipment`;
   return [
     h("div", { class: "proof-head" },
@@ -48,8 +54,11 @@ function render(p, t) {
     h("div", { class: "proof-facts" },
       h("div", null, h("div", { class: "proof-label" }, shipped ? "Shipped" : "Packed"),
         h("div", { class: "proof-value" }, fmtDateTime(shipped ? p.shipped_at : p.completed_at, tz))),
-      p.tracking_number ? h("div", null, h("div", { class: "proof-label" }, p.carrier ? `${p.carrier} tracking` : "Tracking"),
-        h("div", { class: "proof-value mono" }, trackUrl ? h("a", { href: trackUrl, rel: "noopener noreferrer", target: "_blank" }, p.tracking_number) : p.tracking_number)) : null,
+      boxes.length > 1
+        ? h("div", null, h("div", { class: "proof-label" }, `${boxes.length} boxes`),
+          ...boxes.map((b) => h("div", { class: "proof-value mono" }, `${b.box}. `, trackLink(b.carrier, b.tracking_number))))
+        : p.tracking_number ? h("div", null, h("div", { class: "proof-label" }, p.carrier ? `${p.carrier} tracking` : "Tracking"),
+          h("div", { class: "proof-value mono" }, trackUrl ? h("a", { href: trackUrl, rel: "noopener noreferrer", target: "_blank" }, p.tracking_number) : p.tracking_number)) : null,
       h("div", null, h("div", { class: "proof-label" }, "Units verified"),
         h("div", { class: "proof-value" }, String(p.units.reduce((n, u) => n + (u.quantity || 1), 0))))),
     h("p", { class: "proof-summary" },

@@ -34,6 +34,7 @@ from .api import (
     admin,
     auth,
     batches,
+    floor,
     integrations,
     legal,
     orders,
@@ -233,7 +234,7 @@ def create_app() -> FastAPI:
             "version": __version__,
         }
 
-    routers = (auth, legal, account, warehouse, people, integrations, products, orders, batches)
+    routers = (auth, legal, account, warehouse, people, integrations, products, orders, batches, floor)
     routers += (reporting, worker, admin)
     for module in routers:
         api.include_router(module.router)

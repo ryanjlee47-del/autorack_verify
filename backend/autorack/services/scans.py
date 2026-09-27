@@ -40,9 +40,12 @@ from ..models import (
     FlagReason,
     Order,
     OrderFlag,
+    OrderInsertCheck,
     OrderKind,
     OrderLineItem,
     OrderStatus,
+    Package,
+    RestockTask,
     ScanEvent,
     ScanResult,
     ShortReason,
@@ -50,7 +53,7 @@ from ..models import (
     WorkerSession,
     utcnow,
 )
-from . import audit, integrations
+from . import audit, floor, integrations
 from . import orders as order_svc
 from .audit import Actor
 from .dashboard import tz_of
@@ -63,7 +66,7 @@ MAX_CLOCK_SKEW = timedelta(minutes=5)
 @dataclass
 class SyncEvent:
     id: uuid.UUID
-    kind: Literal["scan", "void", "flag", "short", "ship", "finish", "confirm"]
+    kind: Literal["scan", "void", "flag", "short", "ship", "finish", "confirm", "insert", "restock"]
     order_id: uuid.UUID
     session_id: uuid.UUID
     client_scanned_at: datetime
@@ -83,6 +86,9 @@ class SyncEvent:
     lot: str | None = None
     serial: str | None = None
     expiry: date | None = None
+    insert_id: uuid.UUID | None = None
+    # Multi-box shipments: False while more boxes are still to be labelled.
+    final: bool = True
 
 
 @dataclass
@@ -172,6 +178,8 @@ def _order_state(db: Session, order: Order) -> dict[str, Any]:
         "short": {str(li.id): li.short_quantity for li in lines if li.short_quantity},
         "open_flags": order_svc.open_flag_count(db, order.id),
         "tracking_number": order.tracking_number,
+        "boxes": len(order_svc.packages_of(db, order.id)),
+        "inserts_done": [str(i) for i in floor.insert_checks(db, order.id)],
     }
 
 
@@ -225,6 +233,11 @@ def _apply_order_group(
                     out[ev.id] = _apply_ship(db, wh, order, lines, sess, ev)
                 elif ev.kind == "finish":
                     out[ev.id] = _apply_finish(db, wh, order, sess, ev)
+                elif ev.kind == "insert":
+                    _pick_only(order)
+                    out[ev.id] = _apply_insert(db, wh, order, lines, sess, ev)
+                elif ev.kind == "restock":
+                    out[ev.id] = _apply_restock(db, wh, lines_by_id, sess, ev)
                 else:
                     out[ev.id] = _apply_flag(db, wh, order, lines_by_id, sess, ev)
             touched = True
@@ -244,11 +257,35 @@ def _existing_outcome(db: Session, wh: Warehouse, ev: SyncEvent) -> EventOutcome
         return None
     if ev.kind == "ship":
         order = db.get(Order, ev.order_id)
-        tracking = order_svc.normalize_tracking(ev.tracking_number or "")
-        shipped = order is not None and order.warehouse_id == wh.id and order.status == OrderStatus.shipped
-        if shipped and order is not None and order.tracking_number == tracking:
+        if order is None or order.warehouse_id != wh.id:
+            return None
+        box = db.get(Package, ev.id)
+        if box is not None:
+            if box.warehouse_id != wh.id:
+                return EventOutcome(
+                    str(ev.id), "ship", "error", error={"code": "id_conflict", "message": "Duplicate id."}
+                )
+            shipped = order.status == OrderStatus.shipped
+            return EventOutcome(str(ev.id), "ship", "duplicate", result="shipped" if shipped else "boxed")
+        if order.status == OrderStatus.shipped and (
+            not ev.tracking_number or order.tracking_number == (order_svc.normalize_tracking(ev.tracking_number))
+        ):
             return EventOutcome(str(ev.id), "ship", "duplicate", result="shipped")
         return None
+    if ev.kind == "insert":
+        check = db.get(OrderInsertCheck, ev.id)
+        if check is None:
+            return None
+        if check.warehouse_id != wh.id:
+            return EventOutcome(str(ev.id), ev.kind, "error", error={"code": "id_conflict", "message": "Duplicate id."})
+        return EventOutcome(str(ev.id), "insert", "duplicate", result="checked")
+    if ev.kind == "restock":
+        task = db.get(RestockTask, ev.id)
+        if task is None:
+            return None
+        if task.warehouse_id != wh.id:
+            return EventOutcome(str(ev.id), ev.kind, "error", error={"code": "id_conflict", "message": "Duplicate id."})
+        return EventOutcome(str(ev.id), "restock", "duplicate", result="reported")
     if ev.kind in ("scan", "void", "confirm"):
         prior = db.get(ScanEvent, ev.id)
         if prior is None:
@@ -615,6 +652,8 @@ def _apply_flag(
             created_at=min(ev.client_scanned_at, utcnow()),
         )
     )
+    if ev.reason == FlagReason.out_of_stock and line_id in lines_by_id:
+        floor.report_empty(db, wh, lines_by_id[line_id], source="flag", worker_id=sess.worker_id, note=ev.note)
     _mark_started(order, ev.client_scanned_at)
     db.flush()
     return EventOutcome(str(ev.id), "flag", "applied", result="flagged", line_item_id=line_id)
@@ -657,6 +696,8 @@ def _apply_short(
             created_at=min(ev.client_scanned_at, utcnow()),
         )
     )
+    if ev.short_reason in (ShortReason.out_of_stock, ShortReason.not_found):
+        floor.report_empty(db, wh, line, source="short_pick", worker_id=sess.worker_id, note=ev.note)
     _mark_started(order, ev.client_scanned_at)
     order_svc.bump(order)
     db.flush()
@@ -671,8 +712,13 @@ def _apply_ship(
     sess: WorkerSession,
     ev: SyncEvent,
 ) -> EventOutcome:
-    """The shipping label on the packed box: ties this order to a tracking
-    number, which is the proof of what went out in which parcel."""
+    """The shipping label on a packed box: ties the box to a tracking number,
+    which is the proof of what went out in which parcel.
+
+    An order can go out in several boxes: each label scanned with `final`
+    False adds a box and leaves the order open for the next; the last label
+    (or a label-less "that's all the boxes" event) ships it.
+    """
     if order.status == OrderStatus.cancelled:
         raise EventError("order_cancelled", "This order was cancelled. Don't ship it.")
     if order.status == OrderStatus.shipped:
@@ -681,22 +727,106 @@ def _apply_ship(
         raise EventError("order_flagged", "This order has an open problem. A manager must clear it first.")
     if order.status != OrderStatus.completed:
         raise EventError("order_incomplete", "Finish picking every item before scanning the label.")
-    tracking = order_svc.normalize_tracking(ev.tracking_number or "")
-    if len(tracking) < 8:
-        raise EventError("tracking_invalid", "That doesn't look like a shipping label. Scan the big tracking barcode.")
-    keys = {li.normalized_barcode for li in lines}
-    if matching.normalized_key(tracking) in keys or matching.normalized_key(ev.tracking_number or "") in keys:
-        raise EventError("tracking_is_product", "That's a product barcode. Scan the shipping label.")
-    other = order_svc.tracking_in_use(db, wh.id, tracking, order.id)
-    if other:
-        label = other.external_order_number or str(other.id)[:8]
-        raise EventError("tracking_used", f"That label is already on order {label}. Check the box.")
-    order.tracking_number = tracking
-    order.carrier = order_svc.guess_carrier(tracking)
-    order.shipped_at = min(ev.client_scanned_at, utcnow())
+    missing = floor.missing_inserts(db, order, lines)
+    if missing:
+        names = ", ".join(i.name for i in missing[:3])
+        raise EventError("inserts_missing", f"Put in the box first: {names}.")
+    boxes = order_svc.packages_of(db, order.id)
+    at = min(ev.client_scanned_at, utcnow())
+    if ev.tracking_number:
+        tracking = order_svc.normalize_tracking(ev.tracking_number)
+        if len(tracking) < 8:
+            raise EventError(
+                "tracking_invalid", "That doesn't look like a shipping label. Scan the big tracking barcode."
+            )
+        keys = {li.normalized_barcode for li in lines}
+        if matching.normalized_key(tracking) in keys or matching.normalized_key(ev.tracking_number) in keys:
+            raise EventError("tracking_is_product", "That's a product barcode. Scan the shipping label.")
+        if any(b.tracking_number == tracking for b in boxes):
+            raise EventError("tracking_same_box", "That label is already on this order. Scan the next box's label.")
+        other = order_svc.tracking_in_use(db, wh.id, tracking, order.id)
+        if other:
+            label = other.external_order_number or str(other.id)[:8]
+            raise EventError("tracking_used", f"That label is already on order {label}. Check the box.")
+        box = Package(
+            id=ev.id,
+            warehouse_id=wh.id,
+            order_id=order.id,
+            box_no=len(boxes) + 1,
+            tracking_number=tracking,
+            carrier=order_svc.guess_carrier(tracking),
+            worker_id=sess.worker_id,
+            created_at=at,
+        )
+        db.add(box)
+        boxes.append(box)
+        if order.tracking_number is None:
+            order.tracking_number, order.carrier = tracking, box.carrier
+    elif not boxes:
+        raise EventError("tracking_invalid", "Scan the shipping label.")
+    if not ev.final:
+        order_svc.bump(order)
+        db.flush()
+        return EventOutcome(str(ev.id), "ship", "applied", result="boxed")
+    order.shipped_at = at
     order.shipped_by_worker_id = sess.worker_id
     order.status = OrderStatus.shipped
     integrations.queue_tracking(order)
     order_svc.bump(order)
     db.flush()
     return EventOutcome(str(ev.id), "ship", "applied", result="shipped")
+
+
+def _apply_insert(
+    db: Session,
+    wh: Warehouse,
+    order: Order,
+    lines: list[OrderLineItem],
+    sess: WorkerSession,
+    ev: SyncEvent,
+) -> EventOutcome:
+    """The packer put an insert (flyer, card, sample) in the box."""
+    _ensure_open(order)
+    wanted = {i.id: i for i in floor.inserts_for(db, order, lines)}
+    ins = wanted.get(ev.insert_id) if ev.insert_id else None
+    if ins is None:
+        raise EventError("insert_unknown", "That insert isn't needed for this order any more.")
+    scanned = False
+    if ev.scanned_barcode:
+        if not ins.normalized_barcode or matching.normalized_key(ev.scanned_barcode) != ins.normalized_barcode:
+            raise EventError("insert_wrong", f"That's not {ins.name}. Scan the insert's barcode.")
+        scanned = True
+    elif ins.scan_required:
+        raise EventError("insert_scan_required", f"Scan {ins.name}'s barcode.")
+    if ins.id in floor.insert_checks(db, order.id):
+        return EventOutcome(str(ev.id), "insert", "duplicate", result="checked")
+    db.add(
+        OrderInsertCheck(
+            id=ev.id,
+            warehouse_id=wh.id,
+            order_id=order.id,
+            insert_id=ins.id,
+            worker_id=sess.worker_id,
+            scanned=scanned,
+            created_at=min(ev.client_scanned_at, utcnow()),
+        )
+    )
+    order_svc.bump(order)
+    db.flush()
+    return EventOutcome(str(ev.id), "insert", "applied", result="checked")
+
+
+def _apply_restock(
+    db: Session,
+    wh: Warehouse,
+    lines_by_id: dict[str, OrderLineItem],
+    sess: WorkerSession,
+    ev: SyncEvent,
+) -> EventOutcome:
+    """ "This bin is empty": a restock task for whoever refills bins."""
+    line = lines_by_id.get(str(ev.line_item_id)) if ev.line_item_id else None
+    if line is None:
+        raise EventError("line_missing", "That item isn't on this order any more.")
+    _, created = floor.report_empty(db, wh, line, task_id=ev.id, worker_id=sess.worker_id, note=ev.note)
+    result = "reported" if created else "already_reported"
+    return EventOutcome(str(ev.id), "restock", "applied", result=result, line_item_id=str(line.id))

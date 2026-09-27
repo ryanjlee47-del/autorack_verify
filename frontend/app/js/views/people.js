@@ -110,6 +110,10 @@ export async function workersView(params) {
         },
         { label: "Scans", align: "right", render: (w) => fmtNumber(w.scans) },
         { label: "Units picked", align: "right", render: (w) => fmtNumber(w.units_picked ?? 0) },
+        {
+          label: "Units / hour", align: "right",
+          render: (w) => (w.uph != null ? h("span", { title: `${w.hours} hours on the clock` }, String(w.uph)) : h("span", { class: "muted", title: "Needs the time clock (Settings → On the floor)" }, "–")),
+        },
         { label: "Mistakes caught", align: "right", render: (w) => fmtNumber((w.mismatches ?? 0) + (w.over_picks ?? 0)) },
         { label: "Mistake rate", align: "right", render: (w) => h("span", { class: w.needs_attention ? "warn-text" : null }, fmtPercent(w.error_rate)) },
         { label: "Undos", align: "right", render: (w) => fmtNumber(w.undos ?? 0) },

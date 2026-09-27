@@ -4,6 +4,17 @@
 
 var audioCtx = null;
 var unlocked = false;
+// Per-phone choices (see prefs.js): sound on/off and loud, vibration on/off and strong.
+var settings = { sound: true, loud: false, vibrate: true, strongVibrate: false };
+
+export function configure(prefs) {
+  settings = {
+    sound: prefs.sound !== false,
+    loud: Boolean(prefs.loud),
+    vibrate: prefs.vibrate !== false,
+    strongVibrate: Boolean(prefs.strongVibrate),
+  };
+}
 
 function ensureAudioContext() {
   if (!audioCtx) {
@@ -37,7 +48,8 @@ function tone(freq, durationMs, delayMs, volume) {
   osc.type = "square";
   osc.frequency.setValueAtTime(freq, startAt);
   gain.gain.setValueAtTime(0, startAt);
-  gain.gain.linearRampToValueAtTime(volume || 0.2, startAt + 0.01);
+  var level = Math.min(1, (volume || 0.2) * (settings.loud ? 3 : 1));
+  gain.gain.linearRampToValueAtTime(level, startAt + 0.01);
   gain.gain.linearRampToValueAtTime(0, startAt + durationMs / 1000);
   osc.connect(gain);
   gain.connect(ctx.destination);
@@ -91,6 +103,8 @@ export function play(kind) {
   var signal = Object.prototype.hasOwnProperty.call(SIGNALS, kind)
     ? SIGNALS[kind]
     : SIGNALS.warn;
-  signal.sound();
-  vibrate(signal.vibrate);
+  if (settings.sound) signal.sound();
+  if (settings.vibrate) {
+    vibrate(settings.strongVibrate ? signal.vibrate.map(function (ms) { return ms * 2; }) : signal.vibrate);
+  }
 }

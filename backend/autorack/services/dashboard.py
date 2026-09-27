@@ -24,18 +24,21 @@ from ..models import (
     PICK_RESULTS,
     TALLY_KINDS,
     UNIT_RESULTS,
+    Client,
     Order,
     OrderFlag,
     OrderKind,
     OrderLineItem,
     OrderStatus,
     Photo,
+    RestockTask,
     ScanEvent,
     ScanResult,
     Warehouse,
     Worker,
     utcnow,
 )
+from . import orders as order_svc
 
 ERROR_RESULTS = (ScanResult.mismatch, ScanResult.over_pick)
 OUTLIER_MIN_SCANS = 30
@@ -143,10 +146,22 @@ def summary(db: Session, wh: Warehouse, day: date | None = None) -> dict[str, An
         or 0
     )
 
+    urgency = due_counts(db, wh, end)
+    restock_open = (
+        db.scalar(
+            select(func.count())
+            .select_from(RestockTask)
+            .where(RestockTask.warehouse_id == wh.id, RestockTask.status == "open")
+        )
+        or 0
+    )
+
     return {
         "date": day.isoformat(),
         "timezone": wh.timezone,
+        "restock_open": restock_open,
         "orders": {
+            **urgency,
             "pending": status_counts["pending"],
             "in_progress": status_counts["in_progress"],
             "flagged": status_counts["flagged"],
@@ -280,6 +295,11 @@ def order_rows(db: Session, wh: Warehouse, orders: list[Order]) -> list[dict[str
         )
     }
     names = worker_names(db, wh.id)
+    client_ids = {o.client_id for o in orders if o.client_id}
+    clients = (
+        dict(db.execute(select(Client.id, Client.name).where(Client.id.in_(client_ids))).all()) if client_ids else {}
+    )
+    now = utcnow()
     out = []
     for o in orders:
         n, exp, got, raw = progress.get(o.id, (0, 0, 0, 0))
@@ -305,6 +325,9 @@ def order_rows(db: Session, wh: Warehouse, orders: list[Order]) -> list[dict[str
                 "assigned_worker_id": str(o.assigned_worker_id) if o.assigned_worker_id else None,
                 "batch_id": str(o.batch_id) if o.batch_id else None,
                 "tote": o.tote,
+                **order_svc.due_info(o, wh, now),
+                "client_id": str(o.client_id) if o.client_id else None,
+                "client": clients.get(o.client_id) if o.client_id else None,
                 "last_scan_at": last.isoformat() if last else None,
                 "created_at": o.created_at.isoformat(),
                 "completed_at": o.completed_at.isoformat() if o.completed_at else None,
@@ -356,8 +379,30 @@ def recent_problems(
     ]
 
 
+def due_counts(db: Session, wh: Warehouse, day_end: datetime) -> dict[str, int]:
+    """Open picking orders that are rush, late, or due by the end of today."""
+    statuses = [OrderStatus.pending, OrderStatus.in_progress, OrderStatus.flagged]
+    if wh.require_ship_scan:
+        statuses.append(OrderStatus.completed)
+    now = utcnow()
+    rush = late = due_today = 0
+    for o in db.scalars(
+        select(Order)
+        .where(Order.warehouse_id == wh.id, Order.kind == OrderKind.pick, Order.status.in_(statuses))
+        .limit(5000)
+    ):
+        d = order_svc.due_at(o, wh)
+        rush += o.rush
+        late += bool(d and d < now)
+        due_today += bool(o.rush or (d and d < day_end))
+    return {"rush": rush, "late": late, "due_today": due_today}
+
+
 def worker_stats(db: Session, wh: Warehouse, days: int = 7) -> dict[str, Any]:
     since = utcnow() - timedelta(days=days)
+    from .floor import hours_between
+
+    hours = hours_between(db, wh.id, since, utcnow())
     agg = {
         wid: dict(scans=scans, matches=m, mismatches=mm, over_picks=op, reviews=rv, voids=vd, orders=orders, last=last)
         for wid, scans, m, mm, op, rv, vd, orders, last in db.execute(
@@ -405,7 +450,10 @@ def worker_stats(db: Session, wh: Warehouse, days: int = 7) -> dict[str, Any]:
                 "name": w.name,
                 "active": w.active,
                 "scans": scans,
-                "units_picked": (int(a["matches"] or 0) - int(a["voids"] or 0)) if a else 0,
+                "units_picked": (units := (int(a["matches"] or 0) - int(a["voids"] or 0)) if a else 0),
+                "hours": round(hours[w.id], 2) if w.id in hours else None,
+                # Units per hour on the clock; needs the time clock and 15+ minutes.
+                "uph": round(units / hours[w.id], 1) if hours.get(w.id, 0) >= 0.25 else None,
                 "mismatches": int(a["mismatches"] or 0) if a else 0,
                 "over_picks": int(a["over_picks"] or 0) if a else 0,
                 "reviews": int(a["reviews"] or 0) if a else 0,
