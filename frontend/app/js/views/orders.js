@@ -237,6 +237,9 @@ export async function orderDetailView(id) {
           ? h("button", { class: shipped ? "btn btn-primary" : "btn", onclick: () => openProof(id) }, "Shipment proof")
           : null,
         !tally && (shipped || order.status === "completed") && canManage()
+          ? h("button", { class: "btn", onclick: () => shareProof(order, reload) }, order.share_url ? "Shared link" : "Share proof")
+          : null,
+        !tally && (shipped || order.status === "completed") && canManage()
           ? h("button", {
             class: "btn",
             onclick: async () => {
@@ -286,6 +289,34 @@ export async function orderDetailView(id) {
 
     card("Scan history", scanHistory(order, scans, linesById, reload, editable)),
   ]);
+}
+
+async function shareProof(order, reload) {
+  let url = order.share_url;
+  if (!url) {
+    try {
+      url = (await api(`/api/orders/${order.id}/share`, { method: "POST" })).url;
+    } catch (e) {
+      fail(e);
+      return;
+    }
+  }
+  const off = await dialog("Share proof of shipment", (close) => {
+    const input = h("input", { class: "input mono", readonly: true, value: url, onclick: (e) => e.target.select() });
+    return [
+      h("p", null, "Anyone with this link sees what was ordered, every unit's scan with its time (and lot/serial numbers), the tracking number and how many wrong items were caught. It doesn't show who picked it, notes or problem reports."),
+      h("div", { class: "row nowrap copy-row" }, input,
+        h("button", { class: "btn btn-primary", onclick: () => navigator.clipboard.writeText(url).then(() => toast("Link copied", "ok"), fail) }, "Copy")),
+      h("p", null, h("a", { href: url, target: "_blank", rel: "noopener" }, "Open the page →")),
+      h("div", { class: "dialog-actions" },
+        h("button", { class: "btn btn-ghost danger-text", onclick: () => close(true) }, "Turn off link"),
+        h("button", { class: "btn", onclick: () => close(false) }, "Done")),
+    ];
+  });
+  if (off) {
+    await api(`/api/orders/${order.id}/share`, { method: "DELETE" }).then(() => toast("Link turned off", "ok"), fail);
+  }
+  reload();
 }
 
 function varianceCard(order) {

@@ -3,7 +3,7 @@
 
 import { fmtAgo, fmtMoney, fmtNumber, fmtPercent, h, mount } from "../../../shared/dom.js";
 import { columnChart } from "../chart.js";
-import { api, card, ctx, isOwner, layout, pageHeader, poll, table, tz } from "../core.js";
+import { api, card, ctx, download, isOwner, layout, pageHeader, poll, table, tz } from "../core.js";
 
 function isoDay(d) {
   return d.toISOString().slice(0, 10);
@@ -93,9 +93,23 @@ export async function reportsView(params) {
   const fromInput = h("input", { class: "input input-inline", type: "date", value: r.from, max: today });
   const toInput = h("input", { class: "input input-inline", type: "date", value: r.to, max: today });
   const go = (f, t) => { location.hash = `#/reports?from=${f}&to=${t}`; };
+  // The last 12 months, for the "here's what Autorack saved you" PDF.
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(`${today.slice(0, 7)}-01T12:00:00Z`);
+    d.setUTCMonth(d.getUTCMonth() - i);
+    months.push([d.toISOString().slice(0, 7), d.toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" })]);
+  }
+  const monthPick = h("select", { class: "input input-inline", "aria-label": "Month" },
+    ...months.map(([v, label], i) => h("option", { value: v, selected: i === 1 }, label)));
 
   layout("#/reports", [
     pageHeader("Reports", `${r.from === r.to ? r.from : `${r.from} to ${r.to}`} · ${r.timezone}`,
+      monthPick,
+      h("button", {
+        class: "btn",
+        onclick: () => download(`/api/reports/monthly.pdf?month=${monthPick.value}`, `autorack-${monthPick.value}.pdf`),
+      }, "Monthly report"),
       h("button", {
         class: "btn btn-primary",
         onclick: () => window.open(`/app/print.html?report=1&from=${r.from}&to=${r.to}`, "_blank", "noopener"),

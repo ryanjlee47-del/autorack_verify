@@ -178,6 +178,8 @@ class Warehouse(Base):
     join_code: Mapped[str] = mapped_column(String(16), unique=True)
     # Secret in this warehouse's import email address and CSV drop URL.
     import_token: Mapped[str | None] = mapped_column(String(40), unique=True)
+    # "Here's what Autorack saved you" PDF to the owners on the 1st.
+    monthly_report_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
     # Matching engine settings (see matching.py). Tier 6 is opt-in.
     loose_match_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -447,6 +449,9 @@ class Order(Base):
     tracking_push_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     tracking_push_error: Mapped[str | None] = mapped_column(String(500))
     tracking_pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Public proof-of-shipment link (/proof.html#t=...): revocable, unguessable.
+    share_token: Mapped[str | None] = mapped_column(String(64), unique=True)
+    shared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     warehouse: Mapped[Warehouse] = relationship(back_populates="orders")
     line_items: Mapped[list[OrderLineItem]] = relationship(back_populates="order", order_by="OrderLineItem.line_no")

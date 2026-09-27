@@ -45,6 +45,8 @@ NO_BODY = {
     ("POST", "/api/orders/{order_id}/return"),
     ("POST", "/api/orders/{order_id}/reopen"),
     ("GET", "/api/orders/{order_id}/variance.csv"),
+    ("POST", "/api/orders/{order_id}/share"),
+    ("DELETE", "/api/orders/{order_id}/share"),
 }
 
 
@@ -110,8 +112,8 @@ def test_every_id_route_hides_other_tenants(app, client, two_tenants):
     for path, operations in app.openapi()["paths"].items():
         if "{" not in path or path.startswith("/api/admin/"):
             continue  # admin routes cross tenants by design; see test_admin_routes_need_operator
-        if path.startswith("/api/inbound/"):
-            continue  # authenticated by the secret in the URL itself; see test_integrations
+        if path.startswith(("/api/inbound/", "/api/public/")):
+            continue  # authenticated by the secret in the URL itself; see test_integrations, test_share_monthly
         for method in operations:
             key = (method.upper(), path)
             assert key in BODIES or key in NO_BODY, f"New id route {key}: add it to this test"

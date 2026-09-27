@@ -642,3 +642,138 @@ body {
   color: var(--warn);
   font-weight: 600;
 }
+
+/* Public proof of shipment */
+.proof-main {
+  max-width: 900px;
+  padding-top: 32px;
+  padding-bottom: 24px;
+}
+
+.proof-head h1 {
+  margin: 10px 0 4px;
+}
+
+.proof-seal {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--ok-bg);
+  color: var(--ok);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.proof-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 20px 0 12px;
+}
+
+.proof-facts > div {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.proof-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.proof-value {
+  margin-top: 4px;
+  font-size: 17px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.proof-summary {
+  margin: 8px 0 20px;
+  font-size: 16px;
+}
+
+.proof-main .card {
+  margin-bottom: 16px;
+}
+
+.proof-foot {
+  max-width: 900px;
+  padding-bottom: 40px;
+}
+
+@media print {
+  .proof-page .site-nav .nav-actions {
+    display: none;
+  }
+}
+
+.proof-page .nav-actions {
+  margin-left: auto;
+}
+
+.proof-main .card {
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.proof-main .card-title {
+  margin: 0 0 12px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.proof-main .table-wrap {
+  overflow-x: auto;
+}
+
+.proof-main .table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.proof-main .table th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.proof-main .table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.proof-main .table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.proof-main .t-right {
+  text-align: right;
+}
+
+.proof-main .mono {
+  font-family: var(--mono);
+}
+
+.proof-main .ok-text {
+  color: var(--ok);
+  font-weight: 700;
+}

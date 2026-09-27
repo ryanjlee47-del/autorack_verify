@@ -19,6 +19,7 @@ from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.orm import Session
 
 from ..models import (
+    PICK_RESULTS,
     Order,
     OrderFlag,
     OrderKind,
@@ -112,7 +113,7 @@ def build(db: Session, wh: Warehouse, start_day: date, end_day: date) -> dict[st
     for name, units, voids, errors, orders in db.execute(
         select(cust, _sum(is_match), _sum(is_void), _sum(is_error), func.count(func.distinct(ScanEvent.order_id)))
         .join(Order, Order.id == ScanEvent.order_id)
-        .where(*scan_window)
+        .where(*scan_window, ScanEvent.result.in_([*PICK_RESULTS, ScanResult.void]))
         .group_by(cust)
     ):
         by_customer[name] = {
@@ -199,7 +200,7 @@ def build(db: Session, wh: Warehouse, start_day: date, end_day: date) -> dict[st
             _sum(ScanEvent.result == ScanResult.review),
             func.count(func.distinct(ScanEvent.order_id)),
         )
-        .where(*scan_window)
+        .where(*scan_window, ScanEvent.result.in_([*PICK_RESULTS, ScanResult.void]))
         .group_by(ScanEvent.worker_id)
     ):
         workers.append(

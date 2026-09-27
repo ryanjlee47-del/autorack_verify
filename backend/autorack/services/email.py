@@ -9,11 +9,12 @@ Backends:
 
 from __future__ import annotations
 
+import base64
 import html
 import logging
 import smtplib
 import ssl
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.message import EmailMessage
 
 import httpx
@@ -24,11 +25,19 @@ log = logging.getLogger("autorack.email")
 
 
 @dataclass
+class Attachment:
+    filename: str
+    content: bytes
+    mimetype: str = "application/pdf"
+
+
+@dataclass
 class Email:
     to: str
     subject: str
     text: str
     html: str
+    attachments: list[Attachment] = field(default_factory=list)
 
 
 outbox: list[Email] = []
@@ -43,7 +52,13 @@ def send(msg: Email) -> None:
     if s.email_backend == "memory":
         outbox.append(msg)
     elif s.email_backend == "console":
-        log.warning("EMAIL to=%s subject=%r\n%s", msg.to, msg.subject, msg.text)
+        log.warning(
+            "EMAIL to=%s subject=%r%s\n%s",
+            msg.to,
+            msg.subject,
+            "".join(f" [attached {a.filename}, {len(a.content)} bytes]" for a in msg.attachments),
+            msg.text,
+        )
     elif s.email_backend == "smtp":
         _send_smtp(msg)
     elif s.email_backend == "resend":
@@ -60,6 +75,9 @@ def _send_smtp(msg: Email) -> None:
     em["Subject"] = msg.subject
     em.set_content(msg.text)
     em.add_alternative(msg.html, subtype="html")
+    for a in msg.attachments:
+        maintype, _, subtype = a.mimetype.partition("/")
+        em.add_attachment(a.content, maintype=maintype, subtype=subtype or "octet-stream", filename=a.filename)
     try:
         with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as smtp:
             if s.smtp_starttls:
@@ -77,8 +95,24 @@ def _send_resend(msg: Email) -> None:
         r = httpx.post(
             "https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {s.resend_api_key}"},
-            json={"from": s.email_from, "to": [msg.to], "subject": msg.subject, "text": msg.text, "html": msg.html},
-            timeout=15,
+            json={
+                "from": s.email_from,
+                "to": [msg.to],
+                "subject": msg.subject,
+                "text": msg.text,
+                "html": msg.html,
+                **(
+                    {
+                        "attachments": [
+                            {"filename": a.filename, "content": base64.b64encode(a.content).decode()}
+                            for a in msg.attachments
+                        ]
+                    }
+                    if msg.attachments
+                    else {}
+                ),
+            },
+            timeout=30,
         )
         r.raise_for_status()
     except httpx.HTTPError as e:

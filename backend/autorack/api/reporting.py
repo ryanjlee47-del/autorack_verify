@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
@@ -17,7 +17,7 @@ from ..db import get_db
 from ..deps import OwnerContext, current_owner, require_owner_role
 from ..errors import ApiError, bad_request
 from ..models import Order, OrderLineItem, ScanEvent, Worker, utcnow
-from ..services import billing, reports, usage
+from ..services import billing, monthly, reports, usage
 from ..services import dashboard as dash
 
 router = APIRouter(tags=["reporting"])
@@ -99,6 +99,30 @@ def report(
     usage.track(db, ctx.warehouse.id, "reports.view")
     db.commit()
     return reports.build(db, ctx.warehouse, start, end)
+
+
+@router.get("/reports/monthly.pdf", response_class=Response)
+def monthly_pdf(
+    month: str | None = Query(None, description="YYYY-MM; default: last month"),
+    ctx: OwnerContext = Depends(current_owner),
+    db: Session = Depends(get_db),
+) -> Response:
+    today = utcnow().astimezone(dash.tz_of(ctx.warehouse)).date()
+    try:
+        year, mon = monthly.parse_month(month, today)
+    except ValueError:
+        raise bad_request("month_invalid", "month must be YYYY-MM.") from None
+    if date(year, mon, 1) > today:
+        raise bad_request("month_future", "That month hasn't started yet.")
+    d = monthly.data(db, ctx.warehouse, year, mon)
+    pdf = monthly.render_pdf(d)
+    usage.track(db, ctx.warehouse.id, "reports.monthly_pdf")
+    db.commit()
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{monthly.filename(d)}"'},
+    )
 
 
 # ---------------------------------------------------------------------------

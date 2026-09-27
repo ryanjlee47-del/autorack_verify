@@ -349,6 +349,9 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
         "variance": tasks.variance(db, order) if order.kind in TALLY_KINDS else None,
         "returns": tasks.returns_of(db, order) if order.kind == OrderKind.pick else [],
         "return_of": _return_of(db, order),
+        "share_url": f"{get_settings().frontend_url.rstrip('/')}/proof.html#t={order.share_token}"
+        if order.share_token
+        else None,
     }
 
 

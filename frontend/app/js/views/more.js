@@ -193,6 +193,7 @@ export async function settingsView() {
       new Date(Date.UTC(2020, 0, 1, hr)).toLocaleTimeString([], { hour: "numeric", timeZone: "UTC" }))));
   const alertFlag = checkbox(wh.alert_on_flag);
   const alertRate = checkbox(wh.alert_error_rate);
+  const monthlyOn = checkbox(wh.monthly_report_enabled);
   const board = checkbox(wh.leaderboard_enabled);
   const shipScan = checkbox(wh.require_ship_scan);
   const mine = ctx.me.membership;
@@ -227,12 +228,13 @@ export async function settingsView() {
       h("div", { class: "settings-list" },
         h("label", { class: "row check" }, summaryOn, h("span", null, h("strong", null, "Daily summary"), h("span", { class: "muted" }, " — orders shipped, mistakes caught and money saved, sent at "), summaryHour, h("span", { class: "muted" }, " warehouse time. Skipped on days with no picking."))),
         h("label", { class: "row check" }, alertFlag, h("span", null, h("strong", null, "Problem alerts"), h("span", { class: "muted" }, " — an email within a minute when a worker flags a problem or reports a short pick."))),
-        h("label", { class: "row check" }, alertRate, h("span", null, h("strong", null, "Error-rate alerts"), h("span", { class: "muted" }, " — when someone's mistake rate over the last hour jumps well above normal (at most once a day per worker).")))),
+        h("label", { class: "row check" }, alertRate, h("span", null, h("strong", null, "Error-rate alerts"), h("span", { class: "muted" }, " — when someone's mistake rate over the last hour jumps well above normal (at most once a day per worker)."))),
+        h("label", { class: "row check" }, monthlyOn, h("span", null, h("strong", null, "Monthly report"), h("span", { class: "muted" }, " — a PDF to the owners on the 1st: what Autorack caught and saved last month, the items most often picked wrong, and the team's numbers.")))),
       owner ? h("button", {
         class: "btn",
         onclick: () => save({
           daily_summary_enabled: summaryOn.checked, daily_summary_hour: Number(summaryHour.value),
-          alert_on_flag: alertFlag.checked, alert_error_rate: alertRate.checked,
+          alert_on_flag: alertFlag.checked, alert_error_rate: alertRate.checked, monthly_report_enabled: monthlyOn.checked,
         }, "Email settings saved"),
       }, "Save") : h("p", { class: "muted small" }, "An owner decides which emails this warehouse sends. You choose which you get, below.")),
 

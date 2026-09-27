@@ -47,6 +47,7 @@ class WarehouseUpdate(BaseModel):
     leaderboard_enabled: bool | None = None
     require_ship_scan: bool | None = None
     onboarding_dismissed: bool | None = None
+    monthly_report_enabled: bool | None = None
 
 
 SETTING_FIELDS = (
@@ -58,6 +59,7 @@ SETTING_FIELDS = (
     "leaderboard_enabled",
     "require_ship_scan",
     "onboarding_dismissed",
+    "monthly_report_enabled",
 )
 
 
