@@ -44,6 +44,7 @@ from .api import (
     public,
     reporting,
     search,
+    support,
     warehouse,
     worker,
 )
@@ -228,8 +229,11 @@ def create_app() -> FastAPI:
     def public_config() -> dict[str, Any]:
         return {
             "price_cents": s.plan_price_cents,
+            "annual_price_cents": s.plan_annual_price_cents,
             "currency": "usd",
             "interval": "month",
+            "founding_offer_open": s.founding_offer_open,
+            "support_email": s.support_email,
             "trial_days": s.trial_days,
             "signup_enabled": s.signup_enabled,
             "pin_length": s.pin_length,
@@ -237,7 +241,7 @@ def create_app() -> FastAPI:
         }
 
     routers = (auth, legal, account, warehouse, people, integrations, products, orders, batches, floor)
-    routers += (reporting, worker, admin, portal, search)
+    routers += (reporting, worker, admin, portal, search, support)
     for module in routers:
         api.include_router(module.router)
     api.include_router(integrations.inbound_router)

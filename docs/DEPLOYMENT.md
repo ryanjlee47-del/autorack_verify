@@ -57,8 +57,10 @@ dashboard at `/app/`.
 
 ## 4. Stripe (when pilots end)
 
-1. Create a Product "Autorack" with a **recurring monthly price of $29**.
-   Copy the price id into `STRIPE_PRICE_ID`.
+1. Create a Product "Autorack" with two recurring prices: **$29 monthly** and
+   **$290 yearly**. Copy the monthly price id into `STRIPE_PRICE_ID` and the
+   yearly one into `STRIPE_ANNUAL_PRICE_ID`. (If you leave the yearly id empty,
+   checkout builds the yearly price on the same product itself.)
 2. Set `STRIPE_SECRET_KEY`.
 3. Add a webhook endpoint `https://api.yourdomain.com/api/webhooks/stripe` with
    events: `checkout.session.completed`, `customer.subscription.created`,
@@ -67,10 +69,31 @@ dashboard at `/app/`.
    `invoice.paid`, `invoice.payment_failed`. Copy its signing secret into
    `STRIPE_WEBHOOK_SECRET`.
 4. In Stripe's Customer Portal settings, allow updating payment methods,
-   viewing invoices and cancelling.
+   viewing invoices and cancelling. Under **Subscriptions → Customers can
+   switch plans**, add both prices, so owners can move between monthly and
+   yearly (the dashboard points them to "Update plan").
 
-If you change the price, also change `PLAN_PRICE_CENTS` and the landing page.
-A test fails if the landing page and the constant disagree.
+The yearly plan is what the landing page and billing page show first; owners
+can switch the view to monthly.
+
+**Founding customers.** While `FOUNDING_OFFER_OPEN=true` (the default), every
+new warehouse records today's prices, and checkout charges those for as long
+as it stays subscribed, even after you raise `PLAN_PRICE_CENTS` /
+`PLAN_ANNUAL_PRICE_CENTS`. A subscription that is cancelled and runs out loses
+the lock. Warehouses that already existed when this shipped are founding
+customers at $29 / $290. To end the offer, set `FOUNDING_OFFER_OPEN=false`
+and remove the "Founding price" wording from `index.html`, the signup page
+and `help.html`. Existing founders keep their price.
+
+To raise prices: create new Stripe prices, update `STRIPE_PRICE_ID` /
+`STRIPE_ANNUAL_PRICE_ID` and the two `PLAN_*_CENTS` values, and the landing
+page. Existing Stripe subscriptions stay on the price they started with.
+A test fails if the landing page and the constants disagree.
+
+**Support messages.** "Help & support" in the dashboard emails
+`SUPPORT_EMAIL` (or `OPERATOR_EMAILS` if that's empty), with Reply-To set to
+the customer, so you answer by replying. The public help center is
+`/help.html`.
 
 ## 5. Email
 

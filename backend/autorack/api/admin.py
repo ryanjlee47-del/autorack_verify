@@ -42,7 +42,7 @@ from ..models import (
 )
 from ..services import account as account_svc
 from ..services import agreement as agreement_svc
-from ..services import audit, email, jobs, onboarding, usage
+from ..services import audit, billing, email, jobs, onboarding, usage
 from ..services import dashboard as dash
 from ..services.access import evaluate
 from ..services.audit import Actor
@@ -222,7 +222,9 @@ def overview(uctx: UserContext = Depends(require_operator), db: Session = Depend
             "signups_30d": sum(1 for w in whs if w.created_at >= now - 30 * day),
             "active_7d": sum(1 for r in rows if r["scans_7d"] > 0),
             "paying": by_status.get("active", 0),
-            "mrr_cents": by_status.get("active", 0) * get_settings().plan_price_cents,
+            "mrr_cents": sum(
+                billing.monthly_cost_cents(w) for w in whs if w.subscription_status == SubscriptionStatus.active
+            ),
             "trials_ending_7d": len(trials_ending),
             "scans_7d": int(scans_7d),
             "errors_caught_7d": int(errors_7d),

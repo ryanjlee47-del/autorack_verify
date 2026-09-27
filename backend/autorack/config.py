@@ -86,14 +86,21 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     resend_api_key: str = ""
 
-    # Billing: flat monthly price per warehouse
-    plan_price_cents: int = 2900
+    # Billing: one flat price per warehouse, paid monthly or yearly
+    plan_price_cents: int = 2900  # monthly
+    plan_annual_price_cents: int = 29000  # yearly (two months free)
+    # While open, every new warehouse becomes a founding customer: its prices
+    # are locked at today's for as long as it stays subscribed.
+    founding_offer_open: bool = True
     plan_name: str = "Autorack — per warehouse"
     trial_days: int = 14
     past_due_grace_days: int = 7
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
-    stripe_price_id: str = ""
+    stripe_price_id: str = ""  # the monthly price
+    stripe_annual_price_id: str = ""  # optional; built from the monthly price's product if empty
+    # Where "Contact support" messages go (falls back to OPERATOR_EMAILS).
+    support_email: str = ""
 
     # Limits
     max_import_bytes: int = 5 * 1024 * 1024

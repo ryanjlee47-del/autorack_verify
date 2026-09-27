@@ -185,6 +185,7 @@ export function layout(active, content) {
           me.is_operator ? h("a", { class: "small", href: "/admin/" }, T("Operator console →")) : null,
           h("div", { class: "small muted", title: me.user.email }, me.user.email,
             role() && role() !== "owner" ? ` · ${role()}` : ""),
+          h("a", { class: ["small", "help-link", active === "#/help" && "active"], href: "#/help" }, T("Help & support")),
           h("button", { class: "link-btn small", onclick: logout }, T("Sign out")),
           languagePicker())),
       h("main", { class: "main", id: "main" }, topBar(), accessBanner(), content)));
@@ -226,7 +227,8 @@ function topBar() {
 
 /** Every page, for jumping around from the palette. */
 function pageItems() {
-  return navGroups().flatMap(([group, links]) => links.map(([href, label]) => [`Go to ${label}`, href, group || ""]));
+  return [...navGroups(), [null, [["#/help", T("Help & support")]]]]
+    .flatMap(([group, links]) => links.map(([href, label]) => [`Go to ${label}`, href, group || ""]));
 }
 
 let paletteOpen = false;

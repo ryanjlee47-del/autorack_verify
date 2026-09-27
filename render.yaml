@@ -34,6 +34,10 @@ services:
         sync: false
       - key: STRIPE_PRICE_ID
         sync: false
+      - key: STRIPE_ANNUAL_PRICE_ID
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false
       - key: OPERATOR_EMAILS
         sync: false
       - key: CRON_SECRET

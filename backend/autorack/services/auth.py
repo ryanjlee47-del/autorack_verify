@@ -34,7 +34,7 @@ from ..security import (
     pin_fingerprint,
     verify_pin,
 )
-from . import audit, ratelimit
+from . import audit, billing, ratelimit
 from .audit import Actor
 
 log = logging.getLogger("autorack.auth")
@@ -76,6 +76,7 @@ def create_warehouse(
         trial_ends_at=utcnow() + timedelta(days=s.trial_days) if status == SubscriptionStatus.trialing else None,
         join_code=_unique_join_code(db),
     )
+    billing.lock_founding_price(wh)
     db.add(wh)
     db.flush()
     if user is None:

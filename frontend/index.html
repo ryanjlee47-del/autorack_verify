@@ -5,7 +5,7 @@
   <meta name="theme-color" content="#ffffff">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Autorack · Pick Verification</title>
-  <meta name="description" content="Catch the wrong item before it ships. Barcode pick verification for small and mid-sized warehouses: phones, no WMS integration, $29/month flat.">
+  <meta name="description" content="Catch the wrong item before it ships. Barcode pick verification for small and mid-sized warehouses: phones, no WMS integration, $290/year or $29/month flat.">
   <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/assets/icons/favicon-32.png" sizes="32x32">
   <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
@@ -25,6 +25,7 @@
         <a href="#features">Features</a>
         <a href="#pricing">Pricing</a>
         <a href="#faq">FAQ</a>
+        <a href="/help.html">Help</a>
       </nav>
       <div class="nav-actions">
         <a class="nav-signin" href="/app/login.html">Sign in</a>
@@ -43,7 +44,7 @@
           <a class="btn btn-primary btn-lg" href="/app/signup.html">Start 14-day free trial</a>
           <a class="btn btn-lg" href="#how">See how it works</a>
         </div>
-        <p class="hero-note">$29/month per warehouse, flat. No card to start.</p>
+        <p class="hero-note">$290/year or $29/month per warehouse, flat. No card to start.</p>
       </div>
       <div class="container">
         <figure class="shot shot-wide">
@@ -147,11 +148,27 @@
         </div>
         <div class="pricing">
           <div class="price-card">
-            <div class="price-plan">Autorack</div>
-            <div class="price">$29<span>/month</span></div>
-            <div class="price-per">per warehouse</div>
+            <div class="price-top">
+              <div class="price-plan">Autorack</div>
+              <span class="founding-pill">Founding price</span>
+            </div>
+            <input class="period-radio" type="radio" name="period" id="period-year" checked>
+            <input class="period-radio" type="radio" name="period" id="period-month">
+            <div class="period-toggle">
+              <label for="period-year">Yearly <em>2 months free</em></label>
+              <label for="period-month">Monthly</label>
+            </div>
+            <div class="price-yearly">
+              <div class="price">$290<span>/year</span></div>
+              <div class="price-per">per warehouse · just $24.17 a month</div>
+            </div>
+            <div class="price-monthly">
+              <div class="price">$29<span>/month</span></div>
+              <div class="price-per">per warehouse · billed monthly</div>
+            </div>
             <a class="btn btn-primary btn-lg" href="/app/signup.html">Start 14-day free trial</a>
             <p class="price-note">No card to start. Cancel any time.</p>
+            <p class="founding-note"><strong>Founding customers keep this price.</strong> Sign up now and your price is locked in for as long as you stay subscribed, even when it goes up for everyone else.</p>
             <ul class="checklist">
               <li>Unlimited workers, phones and scans</li>
               <li>Offline scanning with automatic sync</li>
@@ -165,7 +182,7 @@
             <table class="compare">
               <thead><tr><th></th><th>Enterprise WMS verification</th><th>Typical small-warehouse tools</th><th>Autorack</th></tr></thead>
               <tbody>
-                <tr><th>Price</th><td>$20,000+/month</td><td>From ~$300/month</td><td>$29/month flat</td></tr>
+                <tr><th>Price</th><td>$20,000+/month</td><td>From ~$300/month</td><td>$290/year or $29/month flat</td></tr>
                 <tr><th>Integration</th><td>Custom project</td><td>Varies</td><td>None. CSV in</td></tr>
                 <tr><th>Hardware</th><td>Dedicated scanners</td><td>Often required</td><td>Phones you already have</td></tr>
                 <tr><th>Bill changes with volume</th><td>Often</td><td>Often</td><td>Never</td></tr>
@@ -188,6 +205,7 @@
           <div><dt>What phones work?</dt><dd>Any recent iPhone or Android with a browser. Nothing to install from an app store: it adds itself to the home screen. Bluetooth "keyboard" barcode scanners work too.</dd></div>
           <div><dt>Our barcodes don't match our pick list exactly.</dt><dd>Common format differences are handled automatically. For vendor labels that are truly different codes, teach Autorack once from the dashboard and that barcode counts as the item from then on.</dd></div>
           <div><dt>How do workers sign in?</dt><dd>Each worker gets a 4-digit PIN. Phones are linked to your warehouse once by scanning a setup QR code. You can unlink a lost phone from the dashboard.</dd></div>
+          <div><dt>What's the founding customer price?</dt><dd>Sign up now and your price is locked in for as long as you stay subscribed, even when it goes up for new customers. Yearly is two months free: $290 a year instead of $348.</dd></div>
           <div><dt>What happens if we stop paying?</dt><dd>Scanning pauses; your data stays available to view and export. Scans already made on phones still sync.</dd></div>
         </dl>
       </div>
@@ -222,6 +240,7 @@
         <a href="#features">Features</a>
         <a href="#pricing">Pricing</a>
         <a href="#faq">FAQ</a>
+        <a href="/help.html">Help center</a>
       </div>
       <div class="foot-col">
         <h4>Get started</h4>

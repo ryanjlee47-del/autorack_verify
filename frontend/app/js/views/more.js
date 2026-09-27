@@ -1,7 +1,7 @@
 // Insights, billing, settings.
 
 import {
-  confirmDialog, dialog, fmtAgo, fmtDate, fmtDateTime, fmtMoney, fmtNumber, fmtPercent, h, toast,
+  confirmDialog, dialog, fmtAgo, fmtCents, fmtDate, fmtDateTime, fmtMoney, fmtNumber, fmtPercent, h, mount, toast,
 } from "../../../shared/dom.js";
 import { columnChart } from "../chart.js";
 import {
@@ -96,10 +96,15 @@ export async function billingView(params) {
   }[a.state] || a.state;
   const tone = a.allowed ? (a.state === "grace" ? "warn" : "ok") : "bad";
 
+  const plans = b.plans;
+  const founding = b.founding;
+  const yearSaving = plans.month.price_cents * 12 - plans.year.price_cents;
+  let chosen = b.recommended_interval || "year";
+
   const subscribe = async (e) => {
     e.target.disabled = true;
     try {
-      const r = await api("/api/billing/checkout", { method: "POST" });
+      const r = await api("/api/billing/checkout", { method: "POST", body: { interval: chosen } });
       location.href = r.url;
     } catch (err) {
       e.target.disabled = false;
@@ -115,33 +120,96 @@ export async function billingView(params) {
   };
 
   const owner = isOwner();
+  const subscribed = b.has_subscription && b.status !== "canceled";
+  const perLabel = (i) => (i === "year" ? T("/ year") : T("/ month"));
+  const was = (i) => plans[i].list_price_cents > plans[i].price_cents
+    ? h("s", { class: "plan-was" }, fmtMoney(plans[i].list_price_cents)) : null;
+
+  // Not subscribed yet: pick yearly (promoted) or monthly.
+  const priceBox = h("div", { class: "plan-price-box" });
+  const subscribeBtn = h("button", { class: "btn btn-primary btn-lg", onclick: subscribe });
+  const toggle = h("div", { class: "period-switch", role: "radiogroup", "aria-label": T("Billing period") });
+  const choose = (interval) => {
+    chosen = interval;
+    for (const btn of toggle.children) {
+      const on = btn.dataset.interval === interval;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-checked", String(on));
+    }
+    const p = plans[interval];
+    mount(priceBox,
+      h("div", { class: "plan-price" }, was(interval), fmtMoney(p.price_cents), h("span", null, " " + perLabel(interval))),
+      h("div", { class: "plan-name" }, interval === "year"
+        ? T("Per warehouse · {p0} a month, 2 months free", { p0: fmtCents(Math.round(p.price_cents / 12)) })
+        : T("Per warehouse · billed monthly")));
+    subscribeBtn.textContent = interval === "year"
+      ? T("Subscribe yearly · {p0}/year", { p0: fmtMoney(p.price_cents) })
+      : T("Subscribe monthly · {p0}/month", { p0: fmtMoney(p.price_cents) });
+  };
+  for (const [interval, label, note] of [["year", T("Yearly"), yearSaving > 0 ? T("Save {p0}", { p0: fmtMoney(yearSaving) }) : ""], ["month", T("Monthly"), ""]]) {
+    toggle.append(h("button", {
+      type: "button", role: "radio", class: "period-option", "data-interval": interval, onclick: () => choose(interval),
+    }, label, note ? h("em", null, note) : null));
+  }
+  choose(chosen);
+
+  let planTop;
   let action = null;
+  if (subscribed) {
+    const i = b.interval;
+    planTop = h("div", null,
+      h("div", { class: "plan-price" }, was(i), fmtMoney(plans[i].price_cents), h("span", null, " " + perLabel(i))),
+      h("div", { class: "plan-name" }, i === "year" ? T("Per warehouse, billed yearly") : T("Per warehouse, billed monthly")));
+    action = owner ? h("button", { class: "btn btn-primary", onclick: manage }, T("Manage billing")) : null;
+  } else {
+    planTop = h("div", null, toggle, priceBox);
+    if (b.stripe_enabled && owner) {
+      action = h("div", { class: "row" }, subscribeBtn,
+        b.can_manage ? h("button", { class: "btn", onclick: manage }, T("Billing history")) : null);
+    }
+  }
   if (!owner) action = h("p", { class: "muted" }, T("Only an owner can change billing."));
-  else if (!b.stripe_enabled) action = h("p", { class: "muted" }, T("Online billing isn't set up yet. Contact us to subscribe."));
-  else if (b.has_subscription && b.status !== "canceled") action = h("button", { class: "btn btn-primary", onclick: manage }, T("Manage billing"));
-  else action = h("div", { class: "row" },
-    h("button", { class: "btn btn-primary", onclick: subscribe }, T("Subscribe · {price_cents}/month", { price_cents: fmtMoney(b.price_cents) })),
-    b.can_manage ? h("button", { class: "btn", onclick: manage }, T("Billing history")) : null);
+  else if (!b.stripe_enabled && !subscribed) action = h("p", { class: "muted" }, T("Online billing isn't set up yet. Contact us to subscribe."));
+
+  const foundingBox = founding.member
+    ? h("div", { class: "founding-box" },
+      h("div", { class: "founding-badge" }, "★ " + T("Founding customer")),
+      h("p", null, T("Your price is locked at {p0}/year or {p1}/month for as long as you stay subscribed, even when prices go up for everyone else.", {
+        p0: fmtMoney(plans.year.price_cents), p1: fmtMoney(plans.month.price_cents),
+      })),
+      founding.since ? h("p", { class: "muted small" }, T("Founding member since {p0}.", { p0: fmtDate(founding.since, tz()) })) : null)
+    : null;
+
+  const monthlyTip = subscribed && b.interval === "month" && yearSaving > 0
+    ? h("p", { class: "banner banner-info" }, T("Switch to yearly and save {p0} a year. Open “Manage billing” and choose “Update plan”.", { p0: fmtMoney(yearSaving) }))
+    : null;
 
   layout("#/billing", [
     pageHeader(T("Billing"), T("One flat price per warehouse. No per-scan or per-seat charges.")),
     h("div", { class: "grid-main" },
       card(null,
         h("div", { class: "plan" },
-          h("div", { class: "plan-price" }, fmtMoney(b.price_cents), h("span", null, " " + T("/ month"))),
-          h("div", { class: "plan-name" }, T("Per warehouse, everything included")),
+          planTop,
           h("ul", { class: "checklist" },
             ...[T("Unlimited workers, phones and scans"), T("Offline scanning with automatic sync"), T("CSV import, pick sheets, live dashboard"),
               T("Full scan history and exports"), T("Worker app in English, Spanish, Chinese and Vietnamese")].map((t) => h("li", null, t)))),
         h("div", { class: `banner banner-${tone}` }, h("strong", null, stateText), a.message && a.state !== "active" ? ` — ${a.message}` : ""),
         b.current_period_end ? h("p", { class: "muted" }, b.cancel_at_period_end ? T("Ends") + " " : T("Renews") + " ", fmtDate(b.current_period_end, tz())) : null,
+        founding.member && b.cancel_at_period_end
+          ? h("p", { class: "banner banner-warn" }, T("Your subscription is set to end. When it does, your founding price is gone for good. Keep it by resuming in “Manage billing”."))
+          : null,
+        monthlyTip,
         action),
-      card(T("How billing works"),
-        h("ul", { class: "plain-list" },
-          h("li", null, T("Your trial doesn't need a card. Subscribing early keeps the rest of your trial free.")),
-          h("li", null, T("Cancel any time from “Manage billing”. Your data stays available to view and export.")),
-          h("li", null, T("If a payment fails, scanning keeps working for a grace period while you update your card.")),
-          h("li", null, T("If scanning is paused, scans already made on phones still sync. Nothing is lost."))))),
+      h("div", { class: "stack" },
+        foundingBox,
+        card(T("How billing works"),
+          h("ul", { class: "plain-list" },
+            h("li", null, T("Your trial doesn't need a card. Subscribing early keeps the rest of your trial free.")),
+            h("li", null, T("Yearly is two months free. You can switch between yearly and monthly any time from “Manage billing”.")),
+            h("li", null, T("Cancel any time from “Manage billing”. Your data stays available to view and export.")),
+            founding.member ? h("li", null, T("Cancelling ends your founding price. If you come back later, you'll pay the price at that time.")) : null,
+            h("li", null, T("If a payment fails, scanning keeps working for a grace period while you update your card.")),
+            h("li", null, T("If scanning is paused, scans already made on phones still sync. Nothing is lost.")))))),
   ]);
 }
 
@@ -338,7 +406,7 @@ export async function settingsView() {
     owner ? card(T("Your data"), dataCard()) : null,
 
     card(T("Warehouses"),
-      h("p", { class: "muted small" }, T("One sign-in can run several sites. Each warehouse has its own orders, workers, phones and team, and its own $29/month subscription.")),
+      h("p", { class: "muted small" }, T("One sign-in can run several sites. Each warehouse has its own orders, workers, phones and team, and its own subscription.")),
       table([
         { label: T("Warehouse"), render: (w) => h("strong", null, w.name) },
         { label: T("Your role"), key: "role" },

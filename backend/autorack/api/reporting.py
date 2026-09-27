@@ -6,10 +6,11 @@ import csv
 import io
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
 
@@ -295,9 +296,18 @@ def billing_info(ctx: OwnerContext = Depends(require_owner_role)) -> dict[str, A
     return billing.billing_info(ctx.warehouse)
 
 
+class CheckoutIn(BaseModel):
+    interval: Literal["year", "month"] = "year"
+
+
 @router.post("/billing/checkout")
-def checkout(ctx: OwnerContext = Depends(require_owner_role), db: Session = Depends(get_db)) -> dict[str, str]:
-    return {"url": billing.create_checkout(db, ctx.warehouse, ctx.user, ctx.actor)}
+def checkout(
+    body: CheckoutIn | None = None,
+    ctx: OwnerContext = Depends(require_owner_role),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    interval = body.interval if body else "year"
+    return {"url": billing.create_checkout(db, ctx.warehouse, ctx.user, ctx.actor, interval)}
 
 
 @router.post("/billing/portal")

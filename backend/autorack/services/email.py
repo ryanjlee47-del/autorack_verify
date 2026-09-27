@@ -38,6 +38,7 @@ class Email:
     text: str
     html: str
     attachments: list[Attachment] = field(default_factory=list)
+    reply_to: str | None = None
 
 
 outbox: list[Email] = []
@@ -73,6 +74,8 @@ def _send_smtp(msg: Email) -> None:
     em["From"] = s.email_from
     em["To"] = msg.to
     em["Subject"] = msg.subject
+    if msg.reply_to:
+        em["Reply-To"] = msg.reply_to
     em.set_content(msg.text)
     em.add_alternative(msg.html, subtype="html")
     for a in msg.attachments:
@@ -101,6 +104,7 @@ def _send_resend(msg: Email) -> None:
                 "subject": msg.subject,
                 "text": msg.text,
                 "html": msg.html,
+                **({"reply_to": msg.reply_to} if msg.reply_to else {}),
                 **(
                     {
                         "attachments": [

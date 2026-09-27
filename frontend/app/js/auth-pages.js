@@ -79,7 +79,9 @@ function signupForm(saved = {}) {
   frame(
     h("p", { class: "auth-step" }, T("Step 1 of 3")),
     h("h1", null, T("Start your free trial")),
-    h("p", { class: "muted" }, T("14 days free, no card needed. Then $29/month per warehouse, flat.")),
+    h("p", { class: "muted" }, T("14 days free, no card needed. Then $290/year or $29/month per warehouse, flat.")),
+    h("p", { class: "founding-callout small" }, h("strong", null, T("Founding customer price.")), " ",
+      T("Sign up now and your price is locked in for as long as you stay subscribed.")),
     h("form", {
       class: "stack",
       onsubmit: (e) => {

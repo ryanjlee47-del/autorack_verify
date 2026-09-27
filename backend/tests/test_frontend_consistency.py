@@ -12,12 +12,16 @@ FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 
 def test_landing_page_price_matches_billing_constant():
     dollars = get_settings().plan_price_cents // 100
+    yearly = get_settings().plan_annual_price_cents // 100
     html = (FRONTEND / "index.html").read_text()
     assert f'<div class="price">${dollars}<span>/month</span>' in html
-    assert f"${dollars}/month per warehouse, flat" in html
-    assert f"${dollars}/month flat" in html  # meta description and comparison table
+    assert f'<div class="price">${yearly}<span>/year</span>' in html
+    assert f"just ${yearly / 12:.2f} a month" in html
+    both = f"${yearly}/year or ${dollars}/month"
+    assert f"{both} per warehouse, flat" in html  # hero
+    assert f"{both} flat" in html  # meta description and comparison table
     signup = (FRONTEND / "app" / "js" / "auth-pages.js").read_text()
-    assert f"${dollars}/month" in signup
+    assert f"{both} per warehouse" in signup
 
 
 def _imports(path: Path) -> set[Path]:

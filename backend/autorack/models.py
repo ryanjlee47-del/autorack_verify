@@ -208,6 +208,15 @@ class Warehouse(Base):
     # Workers clock in and out on the phone; units per hour use hours on the clock.
     time_clock_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
+    # Plan. `billing_interval` follows the Stripe subscription ("month" or
+    # "year"). Founding customers keep the prices they signed up at for as
+    # long as they stay subscribed; cancelling forfeits the lock.
+    billing_interval: Mapped[str | None] = mapped_column(String(8))
+    founding_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    founding_month_cents: Mapped[int | None] = mapped_column(Integer)
+    founding_year_cents: Mapped[int | None] = mapped_column(Integer)
+    founding_forfeited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     # Closing an account (owner or operator): scanning stops at once and the
     # data is deleted after a grace period (license agreement, Section 9.1),
     # unless the account is reopened first. `purged_at` marks the tombstone

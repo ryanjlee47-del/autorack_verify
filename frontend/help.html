@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autorack · Help</title>
+  <meta name="description" content="Answers to common Autorack questions: linking phones, importing orders, scanning, billing and your data.">
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/icons/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/assets/css/tokens.css">
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+  <header class="site-nav">
+    <div class="container nav-inner">
+      <a class="lockup site-brand" href="/" aria-label="Autorack home">
+        <img class="lockup-mark" src="/assets/brand/mark.svg" alt="" width="30" height="30">
+        <span class="lockup-text"><span class="lockup-word">AUTORACK</span><span class="lockup-tag">VERIFIED LOGISTICS</span></span>
+      </a>
+      <nav class="nav-links" aria-label="Main">
+        <a href="/#how">How it works</a>
+        <a href="/#features">Features</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#faq">FAQ</a>
+      </nav>
+      <div class="nav-actions">
+        <a class="nav-signin" href="/app/login.html">Sign in</a>
+        <a class="btn btn-primary" href="/app/signup.html">Start free trial</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="section legal-page">
+      <div class="container legal-body help-body">
+        <p class="section-kicker">Help center</p>
+        <h1>How can we help?</h1>
+        <p class="lede-sm">Quick answers to the questions warehouses ask most. Can't find yours? Signed-in users can reach us from <strong>Help &amp; support</strong> at the bottom of the dashboard menu, and we reply by email.</p>
+        <nav class="help-toc" aria-label="Topics">
+          <a href="#start">Getting started</a>
+          <a href="#phones">Phones and scanning</a>
+          <a href="#orders">Orders and imports</a>
+          <a href="#billing">Billing</a>
+          <a href="#data">Your data</a>
+        </nav>
+        <section class="help-section" id="start">
+          <h2>Getting started</h2>
+          <details class="help-q" id="first-steps">
+            <summary>What should I do first?</summary>
+            <div class="help-a"><p>Sign in to the dashboard and follow the setup checklist on the home page. The quickest way to see Autorack work: click <strong>Load sample orders</strong>, print the sample barcode sheet, link a phone and scan a few items. It takes about five minutes. When you're ready, delete the samples and import your real orders.</p></div>
+          </details>
+          <details class="help-q" id="roles">
+            <summary>Who can do what?</summary>
+            <div class="help-a"><p><strong>Owners</strong> can do everything, including billing. <strong>Managers</strong> handle orders, workers and phones. <strong>Supervisors</strong> watch the floor and resolve problems, but can't change settings. Invite people from <em>Team → Workers</em>. They sign in with their Google account.</p><p>Warehouse workers don't need a Google account: they sign in on the phone with a 4-digit PIN.</p></div>
+          </details>
+          <details class="help-q" id="no-google">
+            <summary>We don't use Gmail. Can we still sign in with Google?</summary>
+            <div class="help-a"><p>Yes. Any email address can be made into a Google account without creating a Gmail inbox: go to <a href="https://accounts.google.com/signup">accounts.google.com/signup</a> and choose <em>Use your existing email</em>.</p></div>
+          </details>
+        </section>
+        <section class="help-section" id="phones">
+          <h2>Phones and scanning</h2>
+          <details class="help-q" id="link-phone">
+            <summary>How do I link a phone?</summary>
+            <div class="help-a"><p>In the dashboard, open <em>Team → Phones</em>. Point the phone's camera at the QR code and tap the link: the scanner opens and links itself. Add it to the home screen when asked. You can also print a setup poster for the break room.</p><p>No camera handy? Open the scanner address shown on that page and type the setup code.</p></div>
+          </details>
+          <details class="help-q" id="which-phones">
+            <summary>Which phones and scanners work?</summary>
+            <div class="help-a"><p>Any recent iPhone or Android phone with a browser. Nothing to install from an app store. Bluetooth and USB barcode scanners that act as a keyboard work too, on phones and on the desktop pack station.</p></div>
+          </details>
+          <details class="help-q" id="offline">
+            <summary>What happens when the Wi-Fi drops?</summary>
+            <div class="help-a"><p>Keep scanning. The phone checks each scan itself and queues it, showing how many are waiting. When the connection comes back everything syncs, and the server checks every scan again.</p></div>
+          </details>
+          <details class="help-q" id="pin">
+            <summary>A worker forgot their PIN.</summary>
+            <div class="help-a"><p>Open <em>Team → Workers</em>, find the worker and choose <em>Reset PIN</em>. The new PIN is shown once; give it to them in person.</p></div>
+          </details>
+          <details class="help-q" id="lost-phone">
+            <summary>A phone was lost or stolen.</summary>
+            <div class="help-a"><p>Open <em>Team → Phones</em> and unlink it. It stops working at once. If you think someone else has the setup code, choose <em>Change setup code</em> too; phones that are already linked keep working.</p></div>
+          </details>
+          <details class="help-q" id="barcode-mismatch">
+            <summary>A barcode scans as wrong, but it's the right item.</summary>
+            <div class="help-a"><p>Common format differences (leading zeros, UPC vs EAN) are handled automatically. When a vendor label really is a different code, open the order in the dashboard and teach Autorack that barcode once. It counts as that item from then on. You can also add extra barcodes to a product in the catalog.</p></div>
+          </details>
+        </section>
+        <section class="help-section" id="orders">
+          <h2>Orders and imports</h2>
+          <details class="help-q" id="csv">
+            <summary>What should my CSV look like?</summary>
+            <div class="help-a"><p>One row per order line, with columns for <code>order_number</code>, <code>barcode</code> and <code>quantity</code>. <code>description</code>, <code>customer</code>, <code>sku</code> and <code>location</code> are optional. Common headings like “Order #”, “UPC”, “Qty” and “Bin” are recognised. You'll see a preview before anything is created, and importing the same file twice never creates orders twice.</p></div>
+          </details>
+          <details class="help-q" id="stores">
+            <summary>Can orders come in automatically?</summary>
+            <div class="help-a"><p>Yes. Under <em>Setup → Connections</em> you can connect Shopify, WooCommerce or ShipStation, pull from a Google Sheet or a web address, or email CSV files to your warehouse's import address.</p></div>
+          </details>
+          <details class="help-q" id="flags">
+            <summary>A worker flagged a problem. What now?</summary>
+            <div class="help-a"><p>The order waits on the dashboard with the worker's note and photos. A manager or supervisor can resolve it, ship it short, or send it back to be picked.</p></div>
+          </details>
+        </section>
+        <section class="help-section" id="billing">
+          <h2>Billing</h2>
+          <details class="help-q" id="price">
+            <summary>How much does it cost?</summary>
+            <div class="help-a"><p>$290 a year or $29 a month per warehouse, flat. Unlimited workers, phones and scans. The 14-day trial doesn't need a card, and subscribing early keeps the rest of your trial free.</p></div>
+          </details>
+          <details class="help-q" id="founding">
+            <summary>What is the founding customer price?</summary>
+            <div class="help-a"><p>Warehouses that sign up during our founding period keep the price they signed up at for as long as they stay subscribed, even when prices go up for new customers. You'll see a <em>Founding customer</em> badge on your Billing page. If you cancel and the subscription ends, the founding price ends with it.</p></div>
+          </details>
+          <details class="help-q" id="switch-plan">
+            <summary>Can I switch between yearly and monthly?</summary>
+            <div class="help-a"><p>Yes. Open <em>Billing → Manage billing</em> and choose <em>Update plan</em>. Yearly is two months free.</p></div>
+          </details>
+          <details class="help-q" id="cancel">
+            <summary>How do I cancel?</summary>
+            <div class="help-a"><p>Open <em>Billing → Manage billing</em>. Your subscription runs to the end of the period you've paid for. Afterwards scanning pauses, but your orders, scans and reports stay available to view and export.</p></div>
+          </details>
+          <details class="help-q" id="failed-payment">
+            <summary>A payment failed.</summary>
+            <div class="help-a"><p>Scanning keeps working for a grace period while you update your card in <em>Billing → Manage billing</em>. Stripe retries automatically once the card is updated.</p></div>
+          </details>
+        </section>
+        <section class="help-section" id="data">
+          <h2>Your data</h2>
+          <details class="help-q" id="export">
+            <summary>Can I get my data out?</summary>
+            <div class="help-a"><p>Any time. <em>Results → Insights</em> exports scans and orders as CSV, and <em>Settings</em> has a one-click download of everything as a ZIP.</p></div>
+          </details>
+          <details class="help-q" id="close">
+            <summary>How do I close my account?</summary>
+            <div class="help-a"><p>An owner can close the account from <em>Settings</em>. Billing is cancelled and scanning stops at once. Your data is deleted 45 days later, with a reminder first, and you can reopen any time before then.</p></div>
+          </details>
+          <details class="help-q" id="security">
+            <summary>How is our data protected?</summary>
+            <div class="help-a"><p>See our <a href="/security.html">security page</a> and <a href="/privacy.html">privacy policy</a>.</p></div>
+          </details>
+        </section>
+        <div class="help-contact">
+          <h2>Still stuck?</h2>
+          <p>Sign in and open <strong>Help &amp; support</strong> in the dashboard menu to send us a message. It comes with your account details, so we can help faster.</p>
+          <a class="btn btn-primary" href="/app/#/help">Contact support</a>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer class="site-foot">
+    <div class="container foot-grid">
+      <div class="foot-brand">
+        <a class="lockup" href="/" aria-label="Autorack home">
+          <img class="lockup-mark" src="/assets/brand/mark.svg" alt="" width="30" height="30">
+          <span class="lockup-text"><span class="lockup-word">AUTORACK</span><span class="lockup-tag">VERIFIED LOGISTICS</span></span>
+        </a>
+        <p>Barcode pick verification for small and mid-sized warehouses.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Product</h4>
+        <a href="/#how">How it works</a>
+        <a href="/#features">Features</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#faq">FAQ</a>
+        <a href="/help.html">Help center</a>
+      </div>
+      <div class="foot-col">
+        <h4>Get started</h4>
+        <a href="/app/signup.html">Start free trial</a>
+        <a href="/app/login.html">Owner sign-in</a>
+        <a href="/w/">Scanner app</a>
+      </div>
+      <div class="foot-col">
+        <h4>Legal</h4>
+        <a href="/privacy.html">Privacy policy</a>
+        <a href="/security.html">Security</a>
+        <a href="/legal/license-agreement-v1.pdf">License agreement</a>
+      </div>
+    </div>
+    <div class="container foot-bottom">
+      <span>© 2026 Autorack</span>
+    </div>
+  </footer>
+</body>
+</html>

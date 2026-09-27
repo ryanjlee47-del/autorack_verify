@@ -1,4 +1,4 @@
-"""Billing: one flat monthly price per warehouse, via Stripe Subscriptions.
+"""Billing: one flat price per warehouse, monthly or yearly, via Stripe Subscriptions.
 
 Flow:
   * Signup starts a local 14-day trial. No card needed to start.
@@ -11,6 +11,11 @@ Flow:
     never overwrite a newer status.
   * "Manage billing" opens the Stripe Customer Portal (card updates,
     invoices, cancellation) -- no billing UI of our own to maintain.
+
+Founding customers: while FOUNDING_OFFER_OPEN is on, every new warehouse
+records today's monthly and yearly prices. Checkout charges those, even after
+the list price goes up, for as long as the warehouse stays subscribed. A
+subscription that is cancelled and runs out forfeits the lock.
 
 Everything Stripe-specific goes through `gateway`, which returns plain dicts,
 so tests can swap it out without network access.
@@ -56,6 +61,10 @@ class StripeGateway:
         self._client()
         return stripe.billing_portal.Session.create(customer=customer, return_url=return_url).to_dict()
 
+    def retrieve_price(self, price_id: str) -> dict[str, Any]:
+        self._client()
+        return stripe.Price.retrieve(price_id).to_dict()
+
     def retrieve_subscription(self, sub_id: str) -> dict[str, Any]:
         self._client()
         return stripe.Subscription.retrieve(sub_id).to_dict()
@@ -77,14 +86,59 @@ def _require_stripe() -> None:
         raise ApiError(503, "billing_unavailable", "Online billing isn't configured yet. Contact support to subscribe.")
 
 
+INTERVALS = ("year", "month")
+
+
+def list_price(interval: str) -> int:
+    s = get_settings()
+    return s.plan_annual_price_cents if interval == "year" else s.plan_price_cents
+
+
+def is_founding(wh: Warehouse) -> bool:
+    return wh.founding_since is not None and wh.founding_forfeited_at is None
+
+
+def lock_founding_price(wh: Warehouse) -> None:
+    """Make a new warehouse a founding customer, if the offer is open."""
+    if get_settings().founding_offer_open and wh.founding_since is None:
+        wh.founding_since = utcnow()
+        wh.founding_month_cents = list_price("month")
+        wh.founding_year_cents = list_price("year")
+
+
+def price_for(wh: Warehouse, interval: str) -> int:
+    """What this warehouse pays per `interval`: its locked price, or the list price."""
+    locked = wh.founding_year_cents if interval == "year" else wh.founding_month_cents
+    if is_founding(wh) and locked:
+        return min(locked, list_price(interval))
+    return list_price(interval)
+
+
+def monthly_cost_cents(wh: Warehouse) -> int:
+    """What the warehouse's plan works out to per month (yearly / 12)."""
+    if wh.billing_interval == "year":
+        return round(price_for(wh, "year") / 12)
+    return price_for(wh, "month")
+
+
 def billing_info(wh: Warehouse) -> dict[str, Any]:
     s = get_settings()
     acc = evaluate(wh)
+    interval = wh.billing_interval or "month"
+    plans = {i: {"price_cents": price_for(wh, i), "list_price_cents": list_price(i)} for i in INTERVALS}
     return {
         "plan_name": s.plan_name,
-        "price_cents": s.plan_price_cents,
+        "price_cents": plans[interval]["price_cents"],
         "currency": "usd",
-        "interval": "month",
+        "interval": interval,
+        "plans": plans,
+        "recommended_interval": "year",
+        "founding": {
+            "member": is_founding(wh),
+            "since": wh.founding_since.isoformat() if wh.founding_since else None,
+            "forfeited": wh.founding_forfeited_at is not None,
+            "offer_open": s.founding_offer_open,
+        },
         "status": wh.subscription_status.value,
         "access": {
             "allowed": acc.allowed,
@@ -102,8 +156,33 @@ def billing_info(wh: Warehouse) -> dict[str, Any]:
     }
 
 
-def create_checkout(db: Session, wh: Warehouse, user: User, actor: Actor) -> str:
+def _line_item(wh: Warehouse, interval: str) -> dict[str, Any]:
+    """The catalog price when it matches what this warehouse pays; otherwise an
+    inline price on the same Stripe product (a founding price, or a yearly
+    plan without its own STRIPE_ANNUAL_PRICE_ID)."""
+    s = get_settings()
+    amount = price_for(wh, interval)
+    catalog = s.stripe_annual_price_id if interval == "year" else s.stripe_price_id
+    if catalog and amount == list_price(interval):
+        return {"price": catalog, "quantity": 1}
+    product = gateway.retrieve_price(s.stripe_price_id)["product"]
+    if isinstance(product, dict):
+        product = product["id"]
+    return {
+        "price_data": {
+            "currency": "usd",
+            "product": product,
+            "unit_amount": amount,
+            "recurring": {"interval": interval},
+        },
+        "quantity": 1,
+    }
+
+
+def create_checkout(db: Session, wh: Warehouse, user: User, actor: Actor, interval: str = "year") -> str:
     _require_stripe()
+    if interval not in INTERVALS:
+        raise bad_request("bad_interval", "Choose monthly or yearly.")
     s = get_settings()
     if wh.subscription_status in (SubscriptionStatus.active, SubscriptionStatus.past_due) and wh.stripe_subscription_id:
         raise bad_request("already_subscribed", "You already have a subscription. Use Manage billing instead.")
@@ -116,7 +195,7 @@ def create_checkout(db: Session, wh: Warehouse, user: User, actor: Actor) -> str
         "mode": "subscription",
         "customer": wh.stripe_customer_id,
         "client_reference_id": str(wh.id),
-        "line_items": [{"price": s.stripe_price_id, "quantity": 1}],
+        "line_items": [_line_item(wh, interval)],
         "subscription_data": {"metadata": {"warehouse_id": str(wh.id)}},
         "success_url": f"{base}/app/#/billing?checkout=success",
         "cancel_url": f"{base}/app/#/billing?checkout=cancelled",
@@ -132,7 +211,15 @@ def create_checkout(db: Session, wh: Warehouse, user: User, actor: Actor) -> str
     ):
         params["subscription_data"]["trial_end"] = int(wh.trial_ends_at.timestamp())
     session = gateway.create_checkout_session(**params)
-    audit.record(db, actor, "billing.checkout_started", warehouse_id=wh.id, target_type="warehouse", target_id=wh.id)
+    audit.record(
+        db,
+        actor,
+        "billing.checkout_started",
+        warehouse_id=wh.id,
+        target_type="warehouse",
+        target_id=wh.id,
+        interval=interval,
+    )
     db.commit()
     return str(session["url"])
 
@@ -256,6 +343,15 @@ def apply_subscription(db: Session, wh: Warehouse, sub: dict[str, Any]) -> None:
         items = (sub.get("items") or {}).get("data") or []
         period_end = items[0].get("current_period_end") if items else None
     wh.current_period_end = _ts(period_end)
+    items = (sub.get("items") or {}).get("data") or []
+    recurring = ((items[0].get("price") or {}).get("recurring") or {}) if items else {}
+    if recurring.get("interval") in INTERVALS:
+        wh.billing_interval = recurring["interval"]
+    if status == SubscriptionStatus.canceled and is_founding(wh):
+        wh.founding_forfeited_at = utcnow()
+        audit.record(
+            db, STRIPE_ACTOR, "billing.founding_forfeited", warehouse_id=wh.id, target_type="warehouse", target_id=wh.id
+        )
     if status == SubscriptionStatus.trialing:
         wh.trial_ends_at = _ts(sub.get("trial_end")) or wh.trial_ends_at
     if status == SubscriptionStatus.past_due:

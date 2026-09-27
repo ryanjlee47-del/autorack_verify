@@ -30,9 +30,8 @@ from reportlab.platypus import (
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
 from ..models import TALLY_KINDS, NotificationSent, Order, OrderKind, OrderStatus, Warehouse, utcnow
-from . import reports, tasks
+from . import billing, reports, tasks
 from .dashboard import day_bounds, tz_of
 
 log = logging.getLogger("autorack.monthly")
@@ -128,7 +127,7 @@ def data(db: Session, wh: Warehouse, year: int, month: int) -> dict[str, Any]:
         "jobs": jobs,
         "returns_opened": int(returns_opened),
         "cost_per_error_cents": wh.cost_per_error_cents,
-        "price_cents": get_settings().plan_price_cents,
+        "price_cents": billing.monthly_cost_cents(wh),
     }
 
 

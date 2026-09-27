@@ -14,6 +14,7 @@ from conftest import make_order, scan_event, signup, sync, worker_on_phone
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
+from autorack.config import get_settings
 from autorack.models import SubscriptionStatus, Warehouse, utcnow
 from autorack.services import access, billing
 
@@ -42,6 +43,9 @@ class FakeGateway:
 
     def create_portal_session(self, **kw):
         return {"url": "https://billing.stripe.test/portal"}
+
+    def retrieve_price(self, price_id):
+        return {"id": price_id, "product": "prod_autorack"}
 
     def retrieve_subscription(self, sub_id):
         return self.subscriptions[sub_id]
@@ -135,9 +139,9 @@ def test_locked_warehouse_cannot_sign_workers_in(client, db):
 
 def test_checkout_creates_customer_once_and_carries_trial(client, db, fake_stripe):
     owner = signup(client)
-    r = client.post("/api/billing/checkout", headers=owner.h)
+    r = client.post("/api/billing/checkout", json={"interval": "month"}, headers=owner.h)
     assert r.status_code == 200 and r.json()["url"].startswith("https://checkout.stripe.test")
-    client.post("/api/billing/checkout", headers=owner.h)
+    client.post("/api/billing/checkout", json={"interval": "month"}, headers=owner.h)
     assert fake_stripe.customers == 1
     params = fake_stripe.checkouts[0]
     assert params["line_items"] == [{"price": "price_test_29", "quantity": 1}]
@@ -157,7 +161,65 @@ def test_billing_info_shows_flat_price(client):
     owner = signup(client)
     info = client.get("/api/billing", headers=owner.h).json()
     assert info["price_cents"] == 2900 and info["interval"] == "month"
-    assert client.get("/api/public/config").json()["price_cents"] == 2900
+    assert info["plans"]["year"]["price_cents"] == 29000 and info["recommended_interval"] == "year"
+    assert info["founding"]["member"] is True
+    public = client.get("/api/public/config").json()
+    assert public["price_cents"] == 2900 and public["annual_price_cents"] == 29000
+
+
+def test_yearly_checkout_is_the_default(client, fake_stripe, monkeypatch):
+    owner = signup(client)
+    client.post("/api/billing/checkout", headers=owner.h)
+    # No STRIPE_ANNUAL_PRICE_ID: a yearly price on the monthly price's product.
+    item = fake_stripe.checkouts[0]["line_items"][0]
+    assert item["price_data"] == {
+        "currency": "usd",
+        "product": "prod_autorack",
+        "unit_amount": 29000,
+        "recurring": {"interval": "year"},
+    }
+    monkeypatch.setattr(get_settings(), "stripe_annual_price_id", "price_test_290")
+    client.post("/api/billing/checkout", json={"interval": "year"}, headers=owner.h)
+    assert fake_stripe.checkouts[1]["line_items"] == [{"price": "price_test_290", "quantity": 1}]
+    assert client.post("/api/billing/checkout", json={"interval": "week"}, headers=owner.h).status_code == 422
+
+
+def test_founding_price_survives_a_price_rise(client, db, fake_stripe, monkeypatch):
+    founder = signup(client)
+    monkeypatch.setattr(get_settings(), "plan_price_cents", 4900)
+    monkeypatch.setattr(get_settings(), "plan_annual_price_cents", 49000)
+    monkeypatch.setattr(get_settings(), "founding_offer_open", False)
+    latecomer = signup(client)
+
+    info = client.get("/api/billing", headers=founder.h).json()
+    assert info["plans"]["month"] == {"price_cents": 2900, "list_price_cents": 4900}
+    assert client.get("/api/billing", headers=latecomer.h).json()["founding"]["member"] is False
+    assert client.get("/api/billing", headers=latecomer.h).json()["plans"]["month"]["price_cents"] == 4900
+
+    client.post("/api/billing/checkout", json={"interval": "month"}, headers=founder.h)
+    assert fake_stripe.checkouts[0]["line_items"][0]["price_data"]["unit_amount"] == 2900  # locked
+    client.post("/api/billing/checkout", json={"interval": "month"}, headers=latecomer.h)
+    assert fake_stripe.checkouts[1]["line_items"] == [{"price": "price_test_29", "quantity": 1}]  # list
+
+
+def test_yearly_subscription_and_cancelling_forfeits_founding_price(client, db, fake_stripe):
+    owner = signup(client)
+    client.post("/api/billing/checkout", headers=owner.h)
+    sub = {
+        "id": "sub_1",
+        "status": "active",
+        "customer": "cus_1",
+        "items": {"data": [{"price": {"recurring": {"interval": "year"}}}]},
+    }
+    fake_stripe.subscriptions["sub_1"] = sub
+    post_event(client, sub_event("evt_1", "customer.subscription.created", "sub_1", "cus_1"))
+    info = client.get("/api/billing", headers=owner.h).json()
+    assert info["interval"] == "year" and info["price_cents"] == 29000 and info["founding"]["member"]
+
+    fake_stripe.subscriptions["sub_1"] = {**sub, "status": "canceled"}
+    post_event(client, sub_event("evt_2", "customer.subscription.deleted", "sub_1", "cus_1"))
+    info = client.get("/api/billing", headers=owner.h).json()
+    assert info["founding"] == {**info["founding"], "member": False, "forfeited": True}
 
 
 # ---------------------------------------------------------------------------

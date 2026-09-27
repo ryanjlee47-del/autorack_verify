@@ -52,7 +52,7 @@ from ..models import (
     Worker,
     utcnow,
 )
-from . import email, floor, google_auth, integrations, monitoring, monthly, ratelimit
+from . import billing, email, floor, google_auth, integrations, monitoring, monthly, ratelimit
 from .audit import Actor
 from .dashboard import day_bounds, tz_of
 
@@ -462,7 +462,6 @@ def run_error_spikes(db: Session, now: datetime) -> int:
 def run_account_emails(db: Session, now: datetime) -> int:
     sent = 0
     s = get_settings()
-    price = money(s.plan_price_cents)
     for wh in db.scalars(
         select(Warehouse).where(
             Warehouse.subscription_status.in_([SubscriptionStatus.trialing, SubscriptionStatus.past_due]),
@@ -470,6 +469,16 @@ def run_account_emails(db: Session, now: datetime) -> int:
         )
     ):
         to = recipients(db, wh, want="owners")
+        yearly, monthly = money(billing.price_for(wh, "year")), money(billing.price_for(wh, "month"))
+        plans = f"{yearly}/year or {monthly}/month"
+        price = money(billing.price_for(wh, wh.billing_interval or "month")) + (
+            "/year" if wh.billing_interval == "year" else "/month"
+        )
+        founding = (
+            " As a founding customer you keep this price for as long as you stay subscribed."
+            if billing.is_founding(wh)
+            else ""
+        )
         if wh.subscription_status == SubscriptionStatus.trialing and wh.trial_ends_at:
             left = wh.trial_ends_at - now
             has_card = bool(wh.stripe_subscription_id)
@@ -484,7 +493,7 @@ def run_account_emails(db: Session, now: datetime) -> int:
                     [
                         "Phones can't start new picks until you subscribe. Your orders, scans and reports are all "
                         "still here.",
-                        f"It's {price}/month for the warehouse, flat: unlimited workers, phones and scans.",
+                        f"It's {plans} for the warehouse, flat: unlimited workers, phones and scans.{founding}",
                     ],
                 )
             elif left <= timedelta(days=1):
@@ -495,9 +504,9 @@ def run_account_emails(db: Session, now: datetime) -> int:
                     [
                         f"Your free trial for {wh.name} ends {ends}.",
                         (
-                            f"Your card will be charged {price}/month from then. Nothing else to do."
+                            f"Your card will be charged {price} from then. Nothing else to do."
                             if has_card
-                            else f"Subscribe now ({price}/month, flat) so scanning doesn't stop mid-shift."
+                            else f"Subscribe now ({plans}, flat) so scanning doesn't stop mid-shift.{founding}"
                         ),
                     ],
                 )
@@ -509,9 +518,9 @@ def run_account_emails(db: Session, now: datetime) -> int:
                     [
                         f"Your free trial for {wh.name} ends {ends}.",
                         (
-                            f"Your card is on file; billing starts at {price}/month."
+                            f"Your card is on file; billing starts at {price}."
                             if has_card
-                            else f"To keep verifying picks, subscribe for {price}/month, flat. Cancel any time."
+                            else f"To keep verifying picks, subscribe for {plans}, flat. Cancel any time.{founding}"
                         ),
                     ],
                 )

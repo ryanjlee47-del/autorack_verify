@@ -11,6 +11,7 @@ import { billingView, insightsView, settingsView } from "./views/more.js";
 import { boardView, reportsView } from "./views/reports.js";
 import { importView, newOrderView, orderDetailView, ordersView } from "./views/orders.js";
 import { devicesView, workersView } from "./views/people.js";
+import { helpView } from "./views/help.js";
 import { reportErrors } from "../../shared/report-errors.js";
 import { T } from "./i18n.js";
 
@@ -37,6 +38,7 @@ const ROUTES = [
   [/^\/inserts$/, (m, p) => insertsView(p)],
   [/^\/clients$/, (m, p) => clientsView(p)],
   [/^\/clients\/([0-9a-f-]{36})$/, (m, p) => clientView(m[1], p)],
+  [/^\/help$/, (m, p) => helpView(p)],
 ];
 
 async function route() {
@@ -44,6 +46,7 @@ async function route() {
   document.body.classList.remove("tv");
   const raw = location.hash.replace(/^#/, "") || "/";
   const [path, query] = raw.split("?");
+  if (path !== "/help") ctx.lastRoute = raw;
   const params = new URLSearchParams(query || "");
   for (const [re, view] of ROUTES) {
     const m = re.exec(path);
