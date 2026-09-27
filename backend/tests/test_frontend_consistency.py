@@ -76,3 +76,13 @@ def test_headers_file_matches_server_csp():
     headers = (FRONTEND / "_headers").read_text()
     expected = CSP.format(api="__API_ORIGIN__")
     assert expected in headers
+
+
+def test_files_the_app_reads_are_not_gitignored():
+    # The sample orders once missed a deploy because *.csv is ignored repo-wide.
+    import subprocess
+
+    from autorack.services.onboarding import SAMPLE_CSV
+
+    r = subprocess.run(["git", "check-ignore", "-q", str(SAMPLE_CSV)], cwd=SAMPLE_CSV.parent, check=False)  # noqa: S607
+    assert r.returncode == 1, f"{SAMPLE_CSV} is gitignored, so it won't reach production"

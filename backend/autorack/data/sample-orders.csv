@@ -1,0 +1,61 @@
+order_number,customer,barcode,quantity,description,sku,location
+SAMPLE-1001,Acme Hardware,013307708289,3,Edge protector 2in,SKU-1027,C-09-03
+SAMPLE-1001,Acme Hardware,012419681169,3,Packing tape 48mm,SKU-1003,C-03-03
+SAMPLE-1001,Acme Hardware,013233706021,1,Thermal ribbon 110mm,SKU-1025,A-07-01
+SAMPLE-1001,Acme Hardware,012974698114,2,Pallet label sleeve,SKU-1018,F-09-12
+SAMPLE-1001,Acme Hardware,013344709416,3,Strapping buckle (1000),SKU-1028,D-01-10
+SAMPLE-1001,Acme Hardware,012493683424,3,Cable ties 8in (100),SKU-1005,E-05-05
+SAMPLE-1001,Acme Hardware,013270707159,2,Kraft paper roll 30in,SKU-1026,B-08-08
+SAMPLE-1001,Acme Hardware,013122702639,3,Barcode scanner holster,SKU-1022,D-04-04
+SAMPLE-1002,Northside Supply,013159703760,3,Marker black (12),SKU-1023,E-05-11
+SAMPLE-1002,Northside Supply,012678689074,3,Corrugated box 18x12x6,SKU-1010,D-01-04
+SAMPLE-1002,Northside Supply,012789692468,3,Safety glasses clear,SKU-1013,A-04-01
+SAMPLE-1002,Northside Supply,013122702639,3,Barcode scanner holster,SKU-1022,D-04-04
+SAMPLE-1003,Harbor Outfitters,012604686818,3,Bubble mailer #5,SKU-1008,B-08-02
+SAMPLE-1003,Harbor Outfitters,012419681169,1,Packing tape 48mm,SKU-1003,C-03-03
+SAMPLE-1004,Blue Ridge Pet Co.,013011699248,1,Dunnage air pillows,SKU-1019,A-01-07
+SAMPLE-1004,Blue Ridge Pet Co.,012604686818,2,Bubble mailer #5,SKU-1008,B-08-02
+SAMPLE-1004,Blue Ridge Pet Co.,012345678905,1,Blue widget 12-pack,SKU-1001,A-01-01
+SAMPLE-1004,Blue Ridge Pet Co.,012419681169,1,Packing tape 48mm,SKU-1003,C-03-03
+SAMPLE-1005,Maple & Main,012419681169,2,Packing tape 48mm,SKU-1003,C-03-03
+SAMPLE-1005,Maple & Main,012937696980,3,Void fill paper roll,SKU-1017,E-08-05
+SAMPLE-1005,Maple & Main,012604686818,1,Bubble mailer #5,SKU-1008,B-08-02
+SAMPLE-1005,Maple & Main,012641687946,3,Corrugated box 12x12x12,SKU-1009,C-09-09
+SAMPLE-1005,Maple & Main,013122702639,2,Barcode scanner holster,SKU-1022,D-04-04
+SAMPLE-1005,Maple & Main,012900695859,3,Poly mailer 10x13,SKU-1016,D-07-10
+SAMPLE-1006,Acme Hardware,012567685682,3,Bubble mailer #2,SKU-1007,A-07-07
+SAMPLE-1006,Acme Hardware,012456682297,3,Stretch wrap 18in,SKU-1004,D-04-10
+SAMPLE-1006,Acme Hardware,013381710543,1,Desiccant pack (50),SKU-1029,E-02-05
+SAMPLE-1006,Acme Hardware,013122702639,1,Barcode scanner holster,SKU-1022,D-04-04
+SAMPLE-1006,Acme Hardware,012826693595,1,Box cutter,SKU-1014,B-05-08
+SAMPLE-1006,Acme Hardware,012752691337,3,Nitrile gloves L (100),SKU-1012,F-03-06
+SAMPLE-1006,Acme Hardware,013270707159,3,Kraft paper roll 30in,SKU-1026,B-08-08
+SAMPLE-1007,Northside Supply,012604686818,2,Bubble mailer #5,SKU-1008,B-08-02
+SAMPLE-1007,Northside Supply,012567685682,3,Bubble mailer #2,SKU-1007,A-07-07
+SAMPLE-1008,Harbor Outfitters,012493683424,3,Cable ties 8in (100),SKU-1005,E-05-05
+SAMPLE-1008,Harbor Outfitters,012826693595,1,Box cutter,SKU-1014,B-05-08
+SAMPLE-1008,Harbor Outfitters,012530684551,1,Label roll 4x6 (250),SKU-1006,F-06-12
+SAMPLE-1008,Harbor Outfitters,012641687946,3,Corrugated box 12x12x12,SKU-1009,C-09-09
+SAMPLE-1008,Harbor Outfitters,012863694722,1,Zip bags 6x9 (500),SKU-1015,C-06-03
+SAMPLE-1008,Harbor Outfitters,012604686818,1,Bubble mailer #5,SKU-1008,B-08-02
+SAMPLE-1008,Harbor Outfitters,012419681169,2,Packing tape 48mm,SKU-1003,C-03-03
+SAMPLE-1008,Harbor Outfitters,013270707159,1,Kraft paper roll 30in,SKU-1026,B-08-08
+SAMPLE-1009,Blue Ridge Pet Co.,012900695859,1,Poly mailer 10x13,SKU-1016,D-07-10
+SAMPLE-1009,Blue Ridge Pet Co.,013418711673,3,Fragile tape 2in,SKU-1030,F-03-12
+SAMPLE-1009,Blue Ridge Pet Co.,012567685682,2,Bubble mailer #2,SKU-1007,A-07-07
+SAMPLE-1009,Blue Ridge Pet Co.,012789692468,3,Safety glasses clear,SKU-1013,A-04-01
+SAMPLE-1009,Blue Ridge Pet Co.,012382680039,2,Red widget 12-pack,SKU-1002,B-02-08
+SAMPLE-1009,Blue Ridge Pet Co.,012530684551,3,Label roll 4x6 (250),SKU-1006,F-06-12
+SAMPLE-1009,Blue Ridge Pet Co.,013307708289,3,Edge protector 2in,SKU-1027,C-09-03
+SAMPLE-1010,Maple & Main,012493683424,1,Cable ties 8in (100),SKU-1005,E-05-05
+SAMPLE-1010,Maple & Main,012567685682,3,Bubble mailer #2,SKU-1007,A-07-07
+SAMPLE-1010,Maple & Main,012678689074,1,Corrugated box 18x12x6,SKU-1010,D-01-04
+SAMPLE-1010,Maple & Main,013381710543,1,Desiccant pack (50),SKU-1029,E-02-05
+SAMPLE-1010,Maple & Main,012382680039,3,Red widget 12-pack,SKU-1002,B-02-08
+SAMPLE-1010,Maple & Main,013011699248,3,Dunnage air pillows,SKU-1019,A-01-07
+SAMPLE-1010,Maple & Main,013196704898,3,Clipboard letter,SKU-1024,F-06-06
+SAMPLE-1010,Maple & Main,012974698114,1,Pallet label sleeve,SKU-1018,F-09-12
+SAMPLE-1011,Acme Hardware,012937696980,1,Void fill paper roll,SKU-1017,E-08-05
+SAMPLE-1012,Northside Supply,012419681169,2,Packing tape 48mm,SKU-1003,C-03-03
+SAMPLE-1012,Northside Supply,013048700375,3,Hand truck wheel,SKU-1020,B-02-02
+SAMPLE-1012,Northside Supply,013122702639,1,Barcode scanner holster,SKU-1022,D-04-04

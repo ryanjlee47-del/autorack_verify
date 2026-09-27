@@ -19,6 +19,7 @@ node_modules/
 *.csv
 !backend/autorack/templates/*.csv
 !backend/tests/fixtures/*.csv
+!backend/autorack/data/*.csv
 
 .claude/
 !samples/*.csv
