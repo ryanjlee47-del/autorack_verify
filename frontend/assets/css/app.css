@@ -40,13 +40,13 @@
 }
 
 .sidebar-brand {
-  padding: 0 20px 18px;
+  padding: 0 20px 14px;
   color: var(--navy);
 }
 
 .sidebar-wh {
-  margin: 0 20px 14px;
-  padding-top: 14px;
+  margin: 0 20px 8px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
   color: var(--text-3);
   font-size: 12.5px;
@@ -60,6 +60,18 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Only the menu scrolls on short windows; the brand, warehouse name and
+     footer keep their full size instead of being squashed. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.sidebar-brand,
+.sidebar-wh,
+.sidebar-foot {
+  flex-shrink: 0;
 }
 
 .nav-link {
@@ -1485,11 +1497,11 @@ body.tv {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .nav-group-title {
-  padding: 10px 20px 4px;
+  padding: 8px 20px 3px;
   color: var(--text-3);
   font-size: 11px;
   font-weight: 700;
@@ -1498,8 +1510,8 @@ body.tv {
 }
 
 .nav-group .nav-link {
-  padding-top: 6px;
-  padding-bottom: 6px;
+  padding-top: 5px;
+  padding-bottom: 5px;
 }
 
 a.tile-link {
