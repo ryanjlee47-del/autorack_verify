@@ -1073,3 +1073,59 @@ body.station .camera {
     display: block;
   }
 }
+
+/* Home: one tile per kind of work */
+.home-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.home-tile {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-tile-icon {
+  grid-row: 1 / span 2;
+  font-size: 28px;
+}
+
+.home-tile-label {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.home-tile-count {
+  color: var(--text-3);
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-tile.has-work .home-tile-count {
+  color: var(--text);
+}
+
+.home-tile.active {
+  border: 2px solid var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue-strong);
+}
+
+.home-tile.active .home-tile-count {
+  color: var(--blue-strong);
+}

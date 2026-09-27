@@ -402,7 +402,6 @@ async function showOrders() {
         : h("div", { class: "grid-2" },
           h("button", { class: "btn btn-primary btn-xl", onclick: () => scanOnce(openFromCode) }, T("ordersScanSheet")),
           h("button", { class: "btn btn-xl", onclick: typeOrderNumber }, T("ordersTypeNumber"))),
-      h("button", { class: "btn btn-lg btn-block", onclick: startReturn }, T("returnStart")),
       restockHost,
       note,
       listEl));
@@ -416,6 +415,7 @@ async function showOrders() {
     orders = r.orders;
     toShip = r.to_ship || [];
     batches = r.batches || [];
+    app.requireShip = Boolean(r.require_ship_scan);
     app.shift = r.shift || null;
     app.timeClock = Boolean(r.time_clock_enabled);
     mount(clockLine, app.shift
@@ -478,44 +478,79 @@ function batchRows(batches) {
   ];
 }
 
+// Home tiles: one per kind of work, each with how many are waiting.
+const HOME_TILES = [
+  ["pick", "tilePick", "🛒"],
+  ["ship", "tilePack", "📦"],
+  ["receive", "tileReceive", "🚚"],
+  ["return", "tileReturn", "↩"],
+  ["count", "tileCount", "🔢"],
+];
+
+function orderRow(o, cached) {
+  const c = cached.get(o.id);
+  const ready = c && c.version >= o.version;
+  const tally = o.kind && o.kind !== "pick";
+  const pct = o.units_expected ? Math.min(100, Math.round((100 * o.units_scanned) / o.units_expected)) : 0;
+  return h("button", { class: ["order-row", tally && `order-row-${o.kind}`], onclick: () => openOrder(o.id) },
+    h("div", { class: "order-row-main" },
+      o.rush ? h("span", { class: "badge badge-rush" }, T("rushTag")) : null,
+      tally ? h("span", { class: `badge badge-kind badge-kind-${o.kind}` }, T(`kind_${o.kind}`)) : null,
+      h("span", { class: "order-number" }, o.external_order_number || o.id.slice(0, 8)),
+      h("span", { class: `badge badge-${o.status}` }, T(`status_${o.status}`)),
+      o.assigned_to_me ? h("span", { class: "badge badge-assigned" }, T("ordersAssigned")) : null),
+    o.due_at ? h("div", { class: ["order-row-due", o.late && "late"] },
+      o.late ? `⚠ ${T("lateTag")} · ` : "", T("dueAt", { time: fmtDue(o.due_at) })) : null,
+    h("div", { class: "order-row-sub" },
+      h("span", null, tally && !o.units_expected
+        ? T("tallyCounted", { n: o.units_scanned })
+        : T("progressUnits", { done: o.units_scanned, total: o.units_expected })),
+      h("span", { class: ready ? "ok-text" : "muted" }, ready ? T("ordersReady") : T("ordersNotCached"))),
+    h("div", { class: "bar" }, h("span", { style: { width: `${pct}%` } })));
+}
+
 function renderOrderList(listEl, orders, cached, toShip = [], batches = []) {
-  const shipRows = toShip.length
-    ? [
-      h("h2", { class: "section-title" }, T("ordersToShip"), " · ", String(toShip.length)),
-      ...toShip.map((o) => h("button", { class: "order-row order-row-ship", onclick: () => openOrder(o.id) },
-        h("div", { class: "order-row-main" },
-          h("span", { class: "order-number" }, o.external_order_number || o.id.slice(0, 8)),
-          h("span", { class: "badge badge-completed" }, T("status_completed"))),
-        h("div", { class: "order-row-sub" }, h("span", null, T("shipScan"))))),
-      h("h2", { class: "section-title" }, T("ordersTitle")),
-    ]
-    : [];
-  const batchEls = batchRows(batches);
-  if (!orders.length) {
-    mount(listEl, ...shipRows, ...batchEls, batches.length ? null : h("p", { class: "empty" }, T("ordersEmpty")));
-    return;
+  const byKind = (k) => orders.filter((o) => (o.kind || "pick") === k);
+  const counts = {
+    pick: byKind("pick").length + batches.length,
+    ship: toShip.length,
+    receive: byKind("receive").length,
+    return: byKind("return").length,
+    count: byKind("count").length,
+  };
+  const shown = HOME_TILES.filter(([k]) => k !== "ship" || app.requireShip || counts.ship);
+  if (!app.homeFilter || !shown.some(([k]) => k === app.homeFilter)) {
+    const busy = shown.find(([k]) => counts[k]);
+    app.homeFilter = busy ? busy[0] : "pick";
   }
-  mount(listEl, ...shipRows, ...batchEls, ...orders.map((o) => {
-    const c = cached.get(o.id);
-    const ready = c && c.version >= o.version;
-    const tally = o.kind && o.kind !== "pick";
-    const pct = o.units_expected ? Math.min(100, Math.round((100 * o.units_scanned) / o.units_expected)) : 0;
-    return h("button", { class: ["order-row", tally && `order-row-${o.kind}`], onclick: () => openOrder(o.id) },
+  const filter = app.homeFilter;
+  const tiles = h("div", { class: "home-tiles" }, ...shown.map(([k, label, icon]) => h("button", {
+    class: ["home-tile", k === filter && "active", counts[k] && "has-work"],
+    "aria-pressed": k === filter ? "true" : "false",
+    onclick: () => {
+      app.homeFilter = k;
+      renderOrderList(listEl, orders, cached, toShip, batches);
+    },
+  }, h("span", { class: "home-tile-icon", "aria-hidden": "true" }, icon),
+  h("span", { class: "home-tile-label" }, T(label)),
+  h("span", { class: "home-tile-count" }, String(counts[k])))));
+  let body;
+  if (filter === "ship") {
+    body = toShip.map((o) => h("button", { class: "order-row order-row-ship", onclick: () => openOrder(o.id) },
       h("div", { class: "order-row-main" },
-        o.rush ? h("span", { class: "badge badge-rush" }, T("rushTag")) : null,
-        tally ? h("span", { class: `badge badge-kind badge-kind-${o.kind}` }, T(`kind_${o.kind}`)) : null,
         h("span", { class: "order-number" }, o.external_order_number || o.id.slice(0, 8)),
-        h("span", { class: `badge badge-${o.status}` }, T(`status_${o.status}`)),
-        o.assigned_to_me ? h("span", { class: "badge badge-assigned" }, T("ordersAssigned")) : null),
-      o.due_at ? h("div", { class: ["order-row-due", o.late && "late"] },
-        o.late ? `⚠ ${T("lateTag")} · ` : "", T("dueAt", { time: fmtDue(o.due_at) })) : null,
-      h("div", { class: "order-row-sub" },
-        h("span", null, tally && !o.units_expected
-          ? T("tallyCounted", { n: o.units_scanned })
-          : T("progressUnits", { done: o.units_scanned, total: o.units_expected })),
-        h("span", { class: ready ? "ok-text" : "muted" }, ready ? T("ordersReady") : T("ordersNotCached"))),
-      h("div", { class: "bar" }, h("span", { style: { width: `${pct}%` } })));
-  }));
+        h("span", { class: "badge badge-completed" }, T("status_completed"))),
+      h("div", { class: "order-row-sub" }, h("span", null, T("shipScan")))));
+  } else if (filter === "pick") {
+    const picks = byKind("pick");
+    body = [...(batches.length ? batchRows(batches) : []), ...picks.map((o) => orderRow(o, cached))];
+  } else {
+    body = byKind(filter).map((o) => orderRow(o, cached));
+  }
+  const empty = !body.length ? h("p", { class: "empty" }, filter === "pick" ? T("ordersEmpty") : T("tileEmpty")) : null;
+  mount(listEl, tiles,
+    filter === "return" ? h("button", { class: "btn btn-lg btn-block", onclick: startReturn }, T("returnStart")) : null,
+    ...body, empty);
 }
 
 /** Download orders ahead of time so they can be picked in a dead zone. */

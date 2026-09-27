@@ -1,7 +1,7 @@
 // Workers (PINs, performance) and phones (linking, revoking).
 
 import { confirmDialog, dialog, fmtAgo, fmtNumber, fmtPercent, h, svg, toast } from "../../../shared/dom.js";
-import { api, canManage, card, fail, isOwner, layout, pageHeader, table } from "../core.js";
+import { api, canManage, card, fail, isOwner, layout, pageHeader, table, wantsNew } from "../core.js";
 
 function showPin(name, pin) {
   return dialog(`PIN for ${name}`, (close) => [
@@ -128,6 +128,7 @@ export async function workersView(params) {
         canManage() ? { label: "", render: rowActions } : null,
       ].filter(Boolean), workers, { empty: "No workers yet. Add one, then link a phone so they can sign in." })),
   ]);
+  if (wantsNew(params)) addWorker(reload);
 }
 
 // ---------------------------------------------------------------------------

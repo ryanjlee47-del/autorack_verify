@@ -210,6 +210,8 @@ def test_lists_and_reports_never_include_other_tenants(client, two_tenants):
         "/api/shifts",
         "/api/exports/timesheet.csv",
         "/api/billing/clients",
+        "/api/search?q=SECRET",
+        "/api/search?q=B-SECRET-BARCODE",
         "/api/dashboard/summary",
         "/api/dashboard/live",
         "/api/dashboard/workers",

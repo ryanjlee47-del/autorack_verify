@@ -2,7 +2,7 @@
 // and 3PL clients.
 
 import { confirmDialog, dialog, fmtAgo, fmtDateTime, fmtCents, h, mount, toast } from "../../../shared/dom.js";
-import { api, canManage, card, ctx, download, fail, layout, pageHeader, table, tz } from "../core.js";
+import { api, canManage, card, ctx, download, fail, layout, pageHeader, table, tz, wantsNew } from "../core.js";
 import { pickProduct } from "./products.js";
 
 // ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ async function editShift(s, reload) {
 // Pack inserts
 // ---------------------------------------------------------------------------
 
-export async function insertsView() {
+export async function insertsView(params = new URLSearchParams()) {
   const [inserts, clients] = await Promise.all([api("/api/inserts"), api("/api/clients")]);
   const reload = () => insertsView().catch(fail);
   const clientName = new Map(clients.map((c) => [c.id, c.name]));
@@ -146,6 +146,7 @@ export async function insertsView() {
       } : null,
     ].filter(Boolean), inserts, { empty: "No inserts. Add one and packers will be asked for it on every matching order." })),
   ]);
+  if (wantsNew(params)) editInsert(null, clients, reload);
 }
 
 async function editInsert(ins, clients, reload) {
@@ -257,6 +258,7 @@ export async function clientsView(params = new URLSearchParams()) {
         onRow: manage ? (c) => { location.hash = `#/clients/${c.id}?month=${month}`; } : null,
       })),
   ]);
+  if (wantsNew(params)) editClient(null, reload);
 }
 
 const RATE_FIELDS = [

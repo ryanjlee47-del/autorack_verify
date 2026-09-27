@@ -33,7 +33,7 @@ const ROUTES = [
   [/^\/settings$/, () => settingsView()],
   [/^\/restock$/, (m, p) => restockView(p)],
   [/^\/time$/, (m, p) => timeView(p)],
-  [/^\/inserts$/, () => insertsView()],
+  [/^\/inserts$/, (m, p) => insertsView(p)],
   [/^\/clients$/, (m, p) => clientsView(p)],
   [/^\/clients\/([0-9a-f-]{36})$/, (m, p) => clientView(m[1], p)],
 ];

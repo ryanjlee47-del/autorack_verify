@@ -162,7 +162,14 @@ export function layout(active, content) {
   mount(root,
     h("div", { class: "shell" },
       h("aside", { class: "sidebar" },
-        h("div", { class: "sidebar-brand" }, brandLockup({ tagline: true, href: "#/" })),
+        h("div", { class: "sidebar-brand" }, brandLockup({ tagline: true, href: "#/" }),
+          h("button", {
+            class: "btn btn-sm nav-toggle", type: "button", "aria-expanded": "false",
+            onclick: (e) => {
+              const open = e.currentTarget.closest(".sidebar").classList.toggle("nav-open");
+              e.currentTarget.setAttribute("aria-expanded", String(open));
+            },
+          }, "☰ Menu")),
         warehousePicker(me),
         h("nav", { class: "nav" }, ...navLinks),
         h("div", { class: "sidebar-foot" },
@@ -170,8 +177,157 @@ export function layout(active, content) {
           h("div", { class: "small muted", title: me.user.email }, me.user.email,
             role() && role() !== "owner" ? ` · ${role()}` : ""),
           h("button", { class: "link-btn small", onclick: logout }, "Sign out"))),
-      h("main", { class: "main", id: "main" }, accessBanner(), content)));
+      h("main", { class: "main", id: "main" }, topBar(), accessBanner(), content)));
 }
+
+// ---------------------------------------------------------------------------
+// Top bar: search everything (Ctrl+K), and "+ New"
+// ---------------------------------------------------------------------------
+
+/** What "+ New" and the command palette can create. */
+function newItems() {
+  if (!canManage()) return [];
+  return [
+    ["New order", "#/orders/new"],
+    ["Import orders (CSV)", "#/orders/import"],
+    ["New receipt (receiving)", "#/orders/new?kind=receive"],
+    ["New cycle count", "#/orders/new?kind=count"],
+    ["New product", "#/products?new=1"],
+    ["Add a worker", "#/workers?new=1"],
+    ["Link a phone or pack station", "#/devices"],
+    ["New pack insert", "#/inserts?new=1"],
+    ["New client", "#/clients?new=1"],
+  ];
+}
+
+function topBar() {
+  const items = newItems();
+  const menu = items.length ? h("details", { class: "new-menu" },
+    h("summary", { class: "btn btn-primary" }, "+ New"),
+    h("div", { class: "new-menu-list", role: "menu" }, ...items.map(([label, href]) =>
+      h("a", { href, role: "menuitem", onclick: (e) => e.target.closest("details").removeAttribute("open") }, label)))) : null;
+  return h("div", { class: "app-top" },
+    h("button", { class: "search-trigger", type: "button", onclick: openPalette },
+      h("span", { class: "search-icon", "aria-hidden": "true" }, "⌕"),
+      h("span", null, "Search orders, tracking, products, lots…"),
+      h("kbd", null, navigator.platform && /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K")),
+    menu);
+}
+
+/** Every page, for jumping around from the palette. */
+function pageItems() {
+  return navGroups().flatMap(([group, links]) => links.map(([href, label]) => [`Go to ${label}`, href, group || ""]));
+}
+
+let paletteOpen = false;
+
+export function openPalette() {
+  if (paletteOpen) return;
+  paletteOpen = true;
+  let active = 0;
+  let items = [];
+  let timer = null;
+  let seq = 0;
+  const input = h("input", {
+    class: "input palette-input", type: "search", autocomplete: "off", spellcheck: "false",
+    placeholder: "Search, or type a command (new order, restock, settings…)", "aria-label": "Search",
+  });
+  const list = h("div", { class: "palette-list", role: "listbox" });
+  const staticItems = () => [
+    ...newItems().map(([label, href]) => ({ label, href, group: "Create" })),
+    ...pageItems().map(([label, href, group]) => ({ label, href, group: group ? `Pages · ${group}` : "Pages" })),
+  ];
+  const render = () => {
+    active = Math.max(0, Math.min(active, items.length - 1));
+    let lastGroup = null;
+    const rows = [];
+    items.forEach((it, i) => {
+      if (it.group !== lastGroup) {
+        rows.push(h("div", { class: "palette-group" }, it.group));
+        lastGroup = it.group;
+      }
+      rows.push(h("a", {
+        class: ["palette-item", i === active && "active"], href: it.href, role: "option",
+        onmouseenter: () => { active = i; render(); },
+        onclick: () => close(),
+      }, h("span", null, it.label), it.hint ? h("span", { class: "muted small" }, it.hint) : null));
+    });
+    mount(list, ...(rows.length ? rows : [h("p", { class: "muted palette-empty" }, "Nothing found.")]));
+    const el = list.querySelector(".palette-item.active");
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+  };
+  const filterStatic = (q) => {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return staticItems().filter((it) => words.every((w) => it.label.toLowerCase().includes(w)));
+  };
+  const search = async (q) => {
+    const mine = ++seq;
+    let r;
+    try {
+      r = await api(`/api/search?q=${encodeURIComponent(q)}`);
+    } catch {
+      return;
+    }
+    if (mine !== seq) return;
+    const found = [
+      ...r.orders.map((o) => ({
+        group: "Orders", href: `#/orders/${o.id}`, label: o.number || o.id.slice(0, 8),
+        hint: [o.kind !== "pick" ? o.kind : null, o.status.replace("_", " "), o.customer, o.tracking_number].filter(Boolean).join(" · "),
+      })),
+      ...r.products.map((p) => ({ group: "Products", href: `#/products/${p.id}`, label: p.name, hint: [p.sku, p.barcode].filter(Boolean).join(" · ") })),
+      ...r.workers.map((w) => ({ group: "Workers", href: "#/workers", label: w.name, hint: w.active ? "" : "inactive" })),
+      ...r.clients.map((c) => ({ group: "Clients", href: `#/clients/${c.id}`, label: c.name })),
+    ];
+    items = [...found, ...filterStatic(q)];
+    render();
+  };
+  input.addEventListener("input", () => {
+    const q = input.value.trim();
+    active = 0;
+    items = q ? filterStatic(q) : staticItems();
+    render();
+    clearTimeout(timer);
+    if (q) timer = setTimeout(() => search(q), 180);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { active += 1; render(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { active -= 1; render(); e.preventDefault(); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      const it = items[active];
+      if (it) { location.hash = it.href; close(); }
+      else if (input.value.trim()) { location.hash = `#/orders?status=&q=${encodeURIComponent(input.value.trim())}`; close(); }
+    }
+  });
+  const dlg = h("dialog", { class: "dialog palette", "aria-label": "Search" }, input, list,
+    h("div", { class: "palette-foot muted small" }, "↑↓ to move · Enter to open · Esc to close"));
+  function close() {
+    if (!paletteOpen) return;
+    paletteOpen = false;
+    clearTimeout(timer);
+    dlg.close();
+    dlg.remove();
+  }
+  dlg.addEventListener("close", () => { if (paletteOpen) close(); });
+  dlg.addEventListener("click", (e) => { if (e.target === dlg) close(); });
+  document.body.appendChild(dlg);
+  items = staticItems();
+  render();
+  dlg.showModal();
+  input.focus();
+}
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+    if (!ctx.me || !ctx.me.warehouse || !document.getElementById("main")) return;
+    e.preventDefault();
+    openPalette();
+  } else if (e.key === "/" && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "")
+    && document.getElementById("main") && !document.querySelector("dialog[open]")) {
+    e.preventDefault();
+    openPalette();
+  }
+});
 
 export async function logout() {
   try {
@@ -181,6 +337,14 @@ export async function logout() {
   }
   setToken(null);
   location.replace("/app/login.html");
+}
+
+/** `?new=1` from "+ New" or the palette: open the create dialog once, then drop the flag. */
+export function wantsNew(params) {
+  if (!params || params.get("new") !== "1") return false;
+  const [path] = location.hash.split("?");
+  history.replaceState(null, "", path);
+  return canManage();
 }
 
 export function pageHeader(title, subtitle, ...actions) {

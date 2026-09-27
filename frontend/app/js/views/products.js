@@ -3,7 +3,7 @@
 
 import { imageUrl } from "../../../shared/api.js";
 import { confirmDialog, dialog, fmtAgo, fmtNumber, h, mount, toast } from "../../../shared/dom.js";
-import { api, canManage, card, download, fail, getToken, layout, pageHeader, table } from "../core.js";
+import { api, canManage, card, download, fail, getToken, layout, pageHeader, table, wantsNew } from "../core.js";
 
 const TABS = [
   ["active", "All products"],
@@ -52,6 +52,7 @@ export async function productsView(params) {
       h("div", { class: "row" }, search)),
     card(null, listHost),
   ]);
+  if (wantsNew(params)) newProduct();
 
   const r = await api(`/api/products?${new URLSearchParams({ show, q, limit: "500" })}`);
   const rows = r.products;

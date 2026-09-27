@@ -211,3 +211,22 @@ def test_onboarding_checklist_and_sample_orders(client):
     scan(client, phone, order["id"], order["lines"][0]["expected_barcode"])
     assert "scan" in {s["key"] for s in client.get("/api/onboarding", headers=owner.h).json()["steps"] if s["done"]}
     assert client.post("/api/onboarding/dismiss", headers=owner.h).json()["dismissed"] is True
+
+
+def test_global_search_finds_orders_products_workers(client):
+    from conftest import add_worker, make_order, signup
+
+    owner = signup(client)
+    o = make_order(client, owner, [("012345678905", 1)], number="SO-FIND-ME")
+    client.post(
+        "/api/products", json={"name": "Findable widget", "sku": "FW-1", "barcode": "036000291452"}, headers=owner.h
+    )
+    add_worker(client, owner, "Findley")
+    r = client.get("/api/search", params={"q": "find"}, headers=owner.h).json()
+    assert [x["number"] for x in r["orders"]] == ["SO-FIND-ME"]
+    assert [x["name"] for x in r["products"]] == ["Findable widget"]
+    assert [x["name"] for x in r["workers"]] == ["Findley"]
+    by_barcode = client.get("/api/search", params={"q": "012345678905"}, headers=owner.h).json()
+    assert [x["id"] for x in by_barcode["orders"]] == [o["id"]]
+    by_qr = client.get("/api/search", params={"q": f"AUTORACK:ORDER:{o['id']}"}, headers=owner.h).json()
+    assert by_qr["orders"][0]["id"] == o["id"]
