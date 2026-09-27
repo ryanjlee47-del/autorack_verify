@@ -22,6 +22,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
@@ -31,7 +32,9 @@ from . import __version__
 from .api import account, admin, auth, legal, orders, people, reporting, warehouse, worker
 from .config import get_settings
 from .db import get_db, get_sessionmaker
-from .services import jobs
+from .deps import client_ip
+from .services import jobs, monitoring
+from .services.ratelimit import memory_limiter
 
 log = logging.getLogger("autorack")
 
@@ -41,6 +44,15 @@ CSP = (
     "font-src 'self'; connect-src 'self' {api}; frame-ancestors 'none'; base-uri 'self'; "
     "form-action 'self'; manifest-src 'self'; worker-src 'self'"
 )
+
+
+class ClientError(BaseModel):
+    app: str = Field(default="web", max_length=20)
+    message: str = Field(max_length=1000)
+    stack: str | None = Field(default=None, max_length=8000)
+    source: str | None = Field(default=None, max_length=300)
+    line: int | None = None
+    page: str | None = Field(default=None, max_length=300)
 
 
 class FrontendFiles(StaticFiles):
@@ -67,6 +79,7 @@ def create_app() -> FastAPI:
     problems = s.validate_for_production()
     if problems:
         raise RuntimeError("Refusing to start with an unsafe production config:\n- " + "\n- ".join(problems))
+    monitoring.init_sentry()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -148,6 +161,21 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.exception_handler(Exception)
+    async def unexpected(request: Request, exc: Exception) -> JSONResponse:
+        # A bug. Record it (the operators get an email within a minute) and
+        # give the user a message that doesn't leak internals.
+        monitoring.record_exception(exc, context={"path": request.url.path, "method": request.method})
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": {
+                    "code": "server_error",
+                    "message": "Something went wrong on our side. We've been notified and will look into it.",
+                }
+            },
+        )
+
     @app.exception_handler(OperationalError)
     async def db_unavailable(request: Request, exc: OperationalError) -> JSONResponse:
         log.error("database unavailable: %s", exc.orig)
@@ -161,8 +189,23 @@ def create_app() -> FastAPI:
 
     @api.get("/health", tags=["public"])
     def health(db: Session = Depends(get_db)) -> dict[str, Any]:
+        """For uptime monitors: 200 when the app and database answer."""
         db.execute(text("SELECT 1"))
-        return {"ok": True, "version": __version__}
+        last = jobs.last_run_at()
+        return {
+            "ok": True,
+            "version": __version__,
+            "jobs_last_run": last.isoformat() if last else None,
+        }
+
+    @api.post("/client-errors", tags=["public"], status_code=202)
+    def client_error(body: ClientError, request: Request) -> dict[str, bool]:
+        """Browser errors from our own pages (no auth: the sign-in page can
+        break too). Rate-limited per address; content is size-capped."""
+        ip = client_ip(request)
+        memory_limiter.check(f"client-errors:{ip}", 20, 60, "Too many error reports.")
+        recorded = monitoring.record_browser(body.model_dump(), ip=ip, user_agent=request.headers.get("user-agent"))
+        return {"recorded": recorded}
 
     @api.get("/public/config", tags=["public"])
     def public_config() -> dict[str, Any]:

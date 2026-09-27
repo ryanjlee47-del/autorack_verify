@@ -6,6 +6,9 @@ import { request } from "../../shared/api.js";
 import { brandLockup, h, mount } from "../../shared/dom.js";
 import { agreementSigner, loadAgreement } from "./agreement.js";
 import { getToken, setToken } from "./core.js";
+import { reportErrors } from "../../shared/report-errors.js";
+
+reportErrors("signin");
 
 const root = document.getElementById("auth");
 const page = root.dataset.page;
@@ -129,6 +132,13 @@ async function signAgreementStep(account) {
     }));
   window.scrollTo(0, 0);
 }
+
+// A sign-in link pasted into a tab that already shows this page only changes
+// the #fragment, which doesn't reload it.
+window.addEventListener("hashchange", () => {
+  const t = new URLSearchParams(location.hash.slice(1)).get("token");
+  if (t) verify(t);
+});
 
 const token = new URLSearchParams(location.hash.slice(1)).get("token");
 if (token) verify(token);

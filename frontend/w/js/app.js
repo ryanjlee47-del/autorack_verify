@@ -17,6 +17,9 @@ import { Scanner } from "./scanner.js";
 import * as S from "./state.js";
 import { requestPersistence, store } from "./store.js";
 import { Sync } from "./sync.js";
+import { reportErrors } from "../../shared/report-errors.js";
+
+reportErrors("phone");
 
 const LS_DEVICE = "ar.device";
 const LS_SESSION = "ar.session";

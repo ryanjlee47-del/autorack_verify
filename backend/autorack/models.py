@@ -616,6 +616,30 @@ class FeatureUsage(Base):
     count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class ErrorEvent(Base):
+    """Something broke: a server exception, a failed job, a browser error.
+
+    One row per distinct problem (its signature), counting repeats, so a bug
+    hit a thousand times is one line and one alert, not a thousand.
+    """
+
+    __tablename__ = "error_events"
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    signature: Mapped[str] = mapped_column(String(64), unique=True)
+    source: Mapped[str] = mapped_column(String(16))  # server | job | browser
+    kind: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(String(1000))
+    detail: Mapped[str | None] = mapped_column(Text)  # traceback or stack, truncated
+    context: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)  # last occurrence: path, app, ...
+    count: Mapped[int] = mapped_column(Integer, default=1)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    alerted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    alerted_count: Mapped[int] = mapped_column(Integer, default=0)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class RateLimitHit(Base):
     """Shared rate-limit ledger, so every API process sees the same budget."""
 

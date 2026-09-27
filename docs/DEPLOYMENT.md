@@ -113,3 +113,28 @@ first sign-in creates the account automatically.
 - [ ] Stripe test mode end-to-end: subscribe, fail a payment (card `4000 0000 0000 0341`), cancel.
 - [ ] `pip-audit -r backend/requirements.txt` clean.
 - [ ] Neon point-in-time restore enabled; you know how to use it.
+
+## 8. Knowing when it breaks
+
+**Error alerts (built in).** Every server crash, failed background job and
+JavaScript error on the dashboard, phones or operator console is recorded
+and emailed to `OPERATOR_EMAILS` within about a minute — one digest, at most
+hourly for an error that keeps happening. See and resolve them in the
+operator console → **Errors**. Nothing to set up beyond `OPERATOR_EMAILS`.
+
+**Uptime monitoring (5 minutes, free).** Error alerts can't tell you the site
+is completely down. Use UptimeRobot (uptimerobot.com, free plan):
+
+1. Sign up, then **Add New Monitor** → type **HTTP(s)**.
+2. URL: `https://YOUR-APP.onrender.com/api/health`, interval **5 minutes**.
+3. Alert contacts: your email, and add the free mobile app for push alerts.
+
+`/api/health` answers 200 only when the app *and* the database respond, and
+reports `jobs_last_run` (when the scheduled emails last ran). A side effect on
+Render's free plan: the 5-minute check keeps the service from sleeping, so
+the job loop keeps running too. (It uses about 720 of the 750 free hours a
+month for one service.)
+
+**Sentry (optional).** For richer crash reports (stack traces with context,
+release tracking), create a free project at sentry.io (platform: FastAPI),
+and set `SENTRY_DSN` on Render. Personal data (emails, IPs) isn't sent.

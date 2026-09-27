@@ -60,6 +60,7 @@ def _schema() -> Iterator[None]:
 
 
 TABLES = [
+    "error_events",
     "agreement_signatures",
     "feature_usage",
     "notifications_sent",

@@ -166,7 +166,7 @@ def test_admin_routes_need_operator(app, client, two_tenants):
     for path, operations in app.openapi()["paths"].items():
         if not path.startswith("/api/admin/"):
             continue
-        url = path.replace("{warehouse_id}", wh_id).replace("{photo_id}", ids["photo_id"])
+        url = path.replace("{warehouse_id}", wh_id).replace("{photo_id}", ids["photo_id"]).replace("{error_id}", "1")
         for method in operations:
             r = client.request(method.upper(), url, headers=a.h, json={"status": "pilot"})
             assert r.status_code == 403, (method, path, r.status_code)

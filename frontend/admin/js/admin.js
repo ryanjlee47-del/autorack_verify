@@ -9,6 +9,9 @@ import {
   api, card, ctx, download, fail, getToken, loadMe, logout, photoThumb, poll, stopPolling, table, toLogin,
 } from "../../app/js/core.js";
 import { REASONS } from "../../app/js/views/flags.js";
+import { reportErrors } from "../../shared/report-errors.js";
+
+reportErrors("operator");
 
 const TABS = [
   ["#/", "Overview"],
@@ -17,6 +20,7 @@ const TABS = [
   ["#/photos", "Photos"],
   ["#/activity", "Activity"],
   ["#/notices", "Notices"],
+  ["#/errors", "Errors"],
 ];
 
 const STATUS_LABEL = {
@@ -297,6 +301,46 @@ async function notices() {
     ], past, { empty: "No notices sent yet." })));
 }
 
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+async function errors(params) {
+  const show = params.get("show") || "open";
+  const list = await api(`/api/admin/errors?show=${show}`);
+  const detailHost = h("div");
+  const openDetail = async (e) => {
+    const d = await api(`/api/admin/errors/${e.id}`);
+    mount(detailHost, card(`${d.kind}`,
+      h("p", null, d.message),
+      h("p", { class: "muted small" }, `${d.count} time${d.count === 1 ? "" : "s"} · first ${fmtDateTime(d.first_seen)} · last ${fmtDateTime(d.last_seen)}`),
+      h("pre", { class: "error-detail" }, JSON.stringify(d.context, null, 2)),
+      d.detail ? h("pre", { class: "error-detail" }, d.detail) : null,
+      d.resolved_at ? h("p", { class: "ok-text" }, `Resolved ${fmtDateTime(d.resolved_at)}`) : h("button", {
+        class: "btn btn-primary",
+        onclick: async () => {
+          await api(`/api/admin/errors/${d.id}/resolve`, { method: "POST" }).catch(fail);
+          toast("Marked resolved. You'll be alerted if it happens again.", "ok");
+          errors(params).catch(fail);
+        },
+      }, "Mark resolved")));
+    detailHost.scrollIntoView({ behavior: "smooth" });
+  };
+  shell("#/errors",
+    h("div", { class: "page-head" }, h("div", null, h("h1", null, "Errors"),
+      h("p", { class: "muted" }, "Server crashes, failed background jobs, and JavaScript errors from the dashboard, phones and this console. You're emailed within a minute of anything new, and at most hourly for repeats."))),
+    h("div", { class: "toolbar" }, h("div", { class: "tabs" }, ...[["open", "Open"], ["resolved", "Resolved"], ["all", "All"]].map(([v, label]) =>
+      h("button", { class: ["tab", show === v && "active"], onclick: () => { location.hash = `#/errors?show=${v}`; } }, label)))),
+    card(null, table([
+      { label: "Last seen", render: (e) => h("span", { class: "muted nowrap" }, fmtAgo(e.last_seen)) },
+      { label: "Where", render: (e) => h("span", { class: "badge" }, e.source) },
+      { label: "Error", render: (e) => h("div", null, h("strong", null, e.kind), h("div", { class: "muted small" }, e.message.slice(0, 160))) },
+      { label: "Times", align: "right", render: (e) => fmtNumber(e.count) },
+      { label: "Page / path", render: (e) => h("span", { class: "mono small" }, e.context.path || e.context.page || e.context.job || "") },
+    ], list, { empty: show === "open" ? "No open errors. Nice." : "Nothing here.", onRow: openDetail })),
+    detailHost);
+}
+
 function photoGrid(photos, showWarehouse = true) {
   if (!photos.length) return h("div", { class: "empty" }, "No photos yet.");
   return h("div", { class: "photo-grid" }, ...photos.map((p) => h("figure", { class: "photo-card" },
@@ -365,6 +409,7 @@ const ROUTES = [
   [/^\/photos$/, () => photos()],
   [/^\/activity$/, (m, p) => activity(p)],
   [/^\/notices$/, () => notices()],
+  [/^\/errors$/, (m, p) => errors(p)],
 ];
 
 async function route() {

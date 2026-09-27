@@ -49,11 +49,19 @@ from ..models import (
     Worker,
     utcnow,
 )
-from . import email, ratelimit
+from . import email, monitoring, ratelimit
 from .audit import Actor
 from .dashboard import day_bounds, tz_of
 
 log = logging.getLogger("autorack.jobs")
+
+_last_run: datetime | None = None
+
+
+def last_run_at() -> datetime | None:
+    """When this process last finished a job run (for the health check)."""
+    return _last_run
+
 
 ADVISORY_LOCK_ID = 0x4155_5452  # "AUTR": one job runner at a time, cluster-wide
 SPIKE_WINDOW = timedelta(minutes=60)
@@ -633,18 +641,21 @@ def run_all(db: Session, now: datetime | None = None) -> dict[str, Any]:
                 ("error_spikes", run_error_spikes),
                 ("account_emails", run_account_emails),
                 ("account_deletions", run_account_deletions),
+                ("error_alerts", monitoring.run_error_alerts),
             ):
                 try:
                     out[name] = job(db, now)
-                except Exception:
+                except Exception as exc:
                     db.rollback()
-                    log.exception("job %s failed", name)
+                    monitoring.record_exception(exc, source="job", context={"job": name})
                     out[name] = "error"
             if now.minute == 0:
                 out["pruned"] = prune(db, now)
         finally:
             lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": ADVISORY_LOCK_ID})
             lock_conn.commit()
+    global _last_run
+    _last_run = utcnow()
     return out
 
 
@@ -674,6 +685,6 @@ class JobLoop:
             try:
                 with self.session_factory() as db:
                     run_all(db)
-            except Exception:
-                log.exception("job loop iteration failed")
+            except Exception as exc:
+                monitoring.record_exception(exc, source="job", context={"job": "loop"})
             self._stop.wait(self.interval)

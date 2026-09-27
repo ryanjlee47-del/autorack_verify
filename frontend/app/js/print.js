@@ -6,6 +6,9 @@ import { imageUrl, request } from "../../shared/api.js";
 import { brandLockup, fmtDateTime, fmtMoney, fmtNumber, fmtPercent, h, mount, svg } from "../../shared/dom.js";
 import { getToken } from "./core.js";
 import { customerTable, skuTable, workerTable } from "./views/reports.js";
+import { reportErrors } from "../../shared/report-errors.js";
+
+reportErrors("print");
 
 const host = document.getElementById("sheets");
 const status = document.getElementById("print-status");

@@ -8,6 +8,9 @@ import { billingView, insightsView, settingsView } from "./views/more.js";
 import { boardView, reportsView } from "./views/reports.js";
 import { importView, newOrderView, orderDetailView, ordersView } from "./views/orders.js";
 import { devicesView, workersView } from "./views/people.js";
+import { reportErrors } from "../../shared/report-errors.js";
+
+reportErrors("dashboard");
 
 const ROUTES = [
   [/^\/?$/, () => dashboardView()],

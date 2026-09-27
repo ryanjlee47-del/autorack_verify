@@ -27,6 +27,7 @@ from ..errors import ApiError, bad_request, not_found
 from ..models import (
     AuditLog,
     Device,
+    ErrorEvent,
     Membership,
     Order,
     OrderFlag,
@@ -499,6 +500,65 @@ def list_notices(uctx: UserContext = Depends(require_operator), db: Session = De
             select(AuditLog).where(AuditLog.action == "operator.notice").order_by(AuditLog.id.desc()).limit(50)
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+
+def _error_dict(e: ErrorEvent, detail: bool = False) -> dict[str, Any]:
+    out = {
+        "id": e.id,
+        "source": e.source,
+        "kind": e.kind,
+        "message": e.message,
+        "count": e.count,
+        "first_seen": e.first_seen.isoformat(),
+        "last_seen": e.last_seen.isoformat(),
+        "resolved_at": e.resolved_at.isoformat() if e.resolved_at else None,
+        "context": e.context,
+    }
+    if detail:
+        out["detail"] = e.detail
+    return out
+
+
+@router.get("/errors")
+def list_errors(
+    show: Literal["open", "resolved", "all"] = "open",
+    uctx: UserContext = Depends(require_operator),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    stmt = select(ErrorEvent)
+    if show == "open":
+        stmt = stmt.where(ErrorEvent.resolved_at.is_(None))
+    elif show == "resolved":
+        stmt = stmt.where(ErrorEvent.resolved_at.is_not(None))
+    return [_error_dict(e) for e in db.scalars(stmt.order_by(ErrorEvent.last_seen.desc()).limit(200))]
+
+
+@router.get("/errors/{error_id}")
+def error_detail(
+    error_id: int, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    e = db.get(ErrorEvent, error_id)
+    if not e:
+        raise not_found("Error not found")
+    return _error_dict(e, detail=True)
+
+
+@router.post("/errors/{error_id}/resolve")
+def resolve_error(
+    error_id: int, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Fixed. If it happens again it reopens and you're alerted at once."""
+    e = db.get(ErrorEvent, error_id)
+    if not e:
+        raise not_found("Error not found")
+    e.resolved_at = utcnow()
+    db.commit()
+    return _error_dict(e)
 
 
 @router.get("/usage")

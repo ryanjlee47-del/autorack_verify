@@ -69,3 +69,16 @@ body {
     padding-right: 16px;
   }
 }
+
+.error-detail {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

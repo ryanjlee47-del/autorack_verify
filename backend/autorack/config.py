@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     agreement_countersigner_name: str = ""
     agreement_countersigner_title: str = ""
 
+    # Optional: also send server exceptions to Sentry (sentry.io). Operators
+    # get email alerts either way.
+    sentry_dsn: str = ""
+
     log_level: str = "INFO"
 
     @field_validator("database_url")

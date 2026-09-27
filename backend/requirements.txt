@@ -15,3 +15,5 @@ segno==1.6.6
 # Stamping the signed license agreement (both BSD-licensed)
 pypdf==6.19.0
 reportlab==5.0.1
+# Optional error reporting (only active when SENTRY_DSN is set)
+sentry-sdk==2.70.0

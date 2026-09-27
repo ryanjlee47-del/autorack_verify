@@ -42,5 +42,7 @@ services:
         sync: false
       - key: AGREEMENT_COUNTERSIGNER_TITLE
         sync: false
+      - key: SENTRY_DSN
+        sync: false
       - key: WEB_CONCURRENCY
         value: "1"
