@@ -496,3 +496,19 @@ label {
   width: 100%;
   justify-content: center;
 }
+
+/* A batch-picking tote letter */
+.tote-chip {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  vertical-align: middle;
+}

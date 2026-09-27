@@ -67,6 +67,14 @@ async function proof(id, token, me) {
       return null;
     }
   }));
+  const packEls = await Promise.all((p.pack_photos || []).map(async (pid) => {
+    try {
+      const url = await imageUrl(`/api/photos/${pid}`, token);
+      return h("figure", { class: "doc-photo doc-photo-pack" }, h("img", { src: url, alt: "The packed box" }));
+    } catch {
+      return null;
+    }
+  }));
   const shipped = p.status === "shipped";
   document.title = `Shipment proof ${p.external_order_number || ""} · Autorack`;
   mount(host, h("section", { class: "sheet doc" },
@@ -93,9 +101,17 @@ async function proof(id, token, me) {
       h("tbody", null, ...p.picks.map((s) => {
         const l = lines.get(s.line_item_id);
         return h("tr", null, h("td", null, fmtDateTime(s.at, zone)), h("td", null, s.worker || ""),
-          h("td", { class: "mono" }, s.scanned_barcode), h("td", null, l ? l.description || l.sku || l.expected_barcode : ""),
+          s.confirmed
+            ? h("td", { class: "muted" }, "No barcode: confirmed by hand")
+            : h("td", { class: "mono" }, s.scanned_barcode),
+          h("td", null, l ? l.description || l.sku || l.expected_barcode : "",
+            s.quantity > 1 ? ` × ${s.quantity}` : "", s.substitution ? " (approved substitute)" : ""),
           p.picks.some(traced) ? h("td", { class: "mono" }, traceText(s)) : null);
       }))),
+    packEls.some(Boolean) ? [
+      h("h2", { class: "doc-h2" }, "The packed box"),
+      h("div", { class: "doc-photos" }, ...packEls.filter(Boolean)),
+    ] : null,
     p.flags.length ? [
       h("h2", { class: "doc-h2" }, "Problems reported"),
       h("ul", { class: "doc-list" }, ...p.flags.map((f) => h("li", null,

@@ -33,6 +33,7 @@ from .api import (
     account,
     admin,
     auth,
+    batches,
     integrations,
     legal,
     orders,
@@ -232,7 +233,9 @@ def create_app() -> FastAPI:
             "version": __version__,
         }
 
-    for module in (auth, legal, account, warehouse, people, integrations, products, orders, reporting, worker, admin):
+    routers = (auth, legal, account, warehouse, people, integrations, products, orders, batches)
+    routers += (reporting, worker, admin)
+    for module in routers:
         api.include_router(module.router)
     api.include_router(integrations.inbound_router)
     api.include_router(public.router)

@@ -46,6 +46,7 @@ class WarehouseUpdate(BaseModel):
     alert_error_rate: bool | None = None
     leaderboard_enabled: bool | None = None
     require_ship_scan: bool | None = None
+    require_pack_photo: bool | None = None
     onboarding_dismissed: bool | None = None
     monthly_report_enabled: bool | None = None
 
@@ -58,6 +59,7 @@ SETTING_FIELDS = (
     "alert_error_rate",
     "leaderboard_enabled",
     "require_ship_scan",
+    "require_pack_photo",
     "onboarding_dismissed",
     "monthly_report_enabled",
 )

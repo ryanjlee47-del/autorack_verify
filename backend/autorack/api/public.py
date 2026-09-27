@@ -3,8 +3,9 @@ shares with their customer (or their customer's customer).
 
 What it shows is chosen for a stranger: what was ordered, what was
 verified by scan and when, lot/serial numbers, the tracking number, and how
-many wrong items were caught before packing. Not who picked it, not
-internal notes, not problem reports or photos.
+many wrong items were caught before packing, and the photo of the packed
+box. Not who picked it, not internal notes, not problem reports or their
+photos.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import secrets
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -22,7 +23,7 @@ from ..db import get_db
 from ..deps import OwnerContext, client_ip, require_manager
 from ..errors import bad_request, not_found
 from ..models import Order as OrderModel
-from ..models import OrderKind, OrderLineItem, OrderStatus, ScanEvent, ScanResult, Warehouse, utcnow
+from ..models import OrderKind, OrderLineItem, OrderStatus, Photo, ScanEvent, ScanResult, Warehouse, utcnow
 from ..services import audit, usage
 from ..services import dashboard as dash
 from ..services import orders as order_svc
@@ -73,9 +74,7 @@ def unshare_proof(
         db.commit()
 
 
-@public_router.get("/proof/{token}")
-def public_proof(token: str, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
-    memory_limiter.check(f"proof:{client_ip(request)}", 60, 60, "Too many requests. Try again in a minute.")
+def _shared(db: Session, token: str) -> tuple[OrderModel, Warehouse]:
     if not 20 <= len(token) <= 64:
         raise not_found("This link isn't valid (it may have been turned off).")
     order = db.scalar(select(OrderModel).where(OrderModel.share_token == token))
@@ -84,6 +83,28 @@ def public_proof(token: str, request: Request, db: Session = Depends(get_db)) ->
     wh = db.get(Warehouse, order.warehouse_id)
     if wh is None or wh.closed_at:
         raise not_found("This link isn't valid (it may have been turned off).")
+    return order, wh
+
+
+@public_router.get("/proof/{token}/photos/{photo_id}", response_class=Response)
+def public_pack_photo(token: str, photo_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    """The packed-box photo, only through the order's share link."""
+    memory_limiter.check(f"proof:{client_ip(request)}", 60, 60, "Too many requests. Try again in a minute.")
+    order, _ = _shared(db, token)
+    photo = db.scalar(select(Photo).where(Photo.id == photo_id, Photo.order_id == order.id, Photo.kind == "pack"))
+    if not photo:
+        raise not_found("Photo not found.")
+    return Response(
+        content=photo.data,
+        media_type=photo.content_type,
+        headers={"Cache-Control": "private, max-age=3600", "Content-Security-Policy": "default-src 'none'"},
+    )
+
+
+@public_router.get("/proof/{token}")
+def public_proof(token: str, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    memory_limiter.check(f"proof:{client_ip(request)}", 60, 60, "Too many requests. Try again in a minute.")
+    order, wh = _shared(db, token)
     lines = order_svc.lines_for(db, order.id)
     by_line: dict[uuid.UUID, OrderLineItem] = {li.id: li for li in lines}
     voided = select(ScanEvent.voids_scan_id).where(ScanEvent.order_id == order.id, ScanEvent.voids_scan_id.is_not(None))
@@ -131,6 +152,8 @@ def public_proof(token: str, request: Request, db: Session = Depends(get_db)) ->
                 if s.line_item_id in by_line
                 else "",
                 "barcode": s.scanned_barcode,
+                "quantity": s.quantity,
+                "confirmed": s.confirmed,
                 "at": s.client_scanned_at.isoformat(),
                 "lot": s.lot,
                 "serial": s.serial,
@@ -138,5 +161,6 @@ def public_proof(token: str, request: Request, db: Session = Depends(get_db)) ->
             }
             for s in scans
         ],
+        "pack_photos": [str(pid) for pid in order_svc.pack_photo_ids(db, order.id)],
         "generated_at": utcnow().isoformat(),
     }

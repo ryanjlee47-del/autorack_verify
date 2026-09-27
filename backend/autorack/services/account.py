@@ -52,6 +52,7 @@ from ..models import (
     OrderLineItem,
     OwnerSession,
     Photo,
+    PickBatch,
     Product,
     ProductBarcode,
     ProductImage,
@@ -601,6 +602,7 @@ def purge(db: Session, wh: Warehouse, actor: Actor) -> dict[str, int]:
     gone("scans", delete(ScanEvent).where(ScanEvent.warehouse_id == wid))
     gone("order_lines", delete(OrderLineItem).where(OrderLineItem.warehouse_id == wid))
     gone("orders", delete(Order).where(Order.warehouse_id == wid))
+    gone("pick_batches", delete(PickBatch).where(PickBatch.warehouse_id == wid))
     gone("product_substitutes", delete(ProductSubstitute).where(ProductSubstitute.warehouse_id == wid))
     gone("kit_components", delete(KitComponent).where(KitComponent.warehouse_id == wid))
     gone("product_barcodes", delete(ProductBarcode).where(ProductBarcode.warehouse_id == wid))

@@ -1,7 +1,7 @@
 // Public proof of shipment: /proof.html#t=<token>. The token is in the hash
 // so it never reaches server logs or a Referer header.
 
-import { request } from "../../shared/api.js";
+import { imageUrl, request } from "../../shared/api.js";
 import { fmtDateTime, h, mount } from "../../shared/dom.js";
 
 const TRACK_URLS = {
@@ -20,7 +20,20 @@ function trace(u) {
   return [u.lot && `Lot ${u.lot}`, u.serial && `S/N ${u.serial}`, u.expiry && `Exp ${u.expiry}`].filter(Boolean).join(" · ");
 }
 
-function render(p) {
+function packPhotos(p, t) {
+  if (!p.pack_photos || !p.pack_photos.length) return null;
+  const figs = p.pack_photos.map((pid) => {
+    const img = h("img", { class: "proof-photo", alt: "The packed box before it was sealed" });
+    imageUrl(`/api/public/proof/${t}/photos/${pid}`).then((url) => { img.src = url; }, () => img.remove());
+    return h("figure", null, img);
+  });
+  return h("section", { class: "card" },
+    h("h2", { class: "card-title" }, "The packed box"),
+    h("p", { class: "muted" }, "Photographed at the packing bench before the label went on."),
+    h("div", { class: "proof-photos" }, ...figs));
+}
+
+function render(p, t) {
   const tz = p.timezone;
   const shipped = p.status === "shipped";
   const trackUrl = p.tracking_number && TRACK_URLS[p.carrier] ? TRACK_URLS[p.carrier](encodeURIComponent(p.tracking_number)) : null;
@@ -38,7 +51,7 @@ function render(p) {
       p.tracking_number ? h("div", null, h("div", { class: "proof-label" }, p.carrier ? `${p.carrier} tracking` : "Tracking"),
         h("div", { class: "proof-value mono" }, trackUrl ? h("a", { href: trackUrl, rel: "noopener noreferrer", target: "_blank" }, p.tracking_number) : p.tracking_number)) : null,
       h("div", null, h("div", { class: "proof-label" }, "Units verified"),
-        h("div", { class: "proof-value" }, String(p.units.length)))),
+        h("div", { class: "proof-value" }, String(p.units.reduce((n, u) => n + (u.quantity || 1), 0))))),
     h("p", { class: "proof-summary" },
       allVerified
         ? "Every item on this order was scanned and matched to the order before it was packed."
@@ -61,8 +74,11 @@ function render(p) {
         h("tbody", null, ...p.units.map((u) => h("tr", null,
           h("td", { class: "muted" }, fmtDateTime(u.at, tz)),
           h("td", null, u.item || "–"),
-          h("td", { class: "mono" }, u.barcode),
+          u.confirmed
+            ? h("td", { class: "muted" }, `No barcode: checked by hand${u.quantity > 1 ? ` × ${u.quantity}` : ""}`)
+            : h("td", { class: "mono" }, u.barcode, u.quantity > 1 ? h("span", { class: "muted" }, ` × ${u.quantity}`) : null),
           traced ? h("td", { class: "mono" }, trace(u)) : null)))))),
+    packPhotos(p, t),
   ];
 }
 
@@ -75,7 +91,7 @@ async function main() {
     return;
   }
   try {
-    mount(host, ...render(await request(`/api/public/proof/${t}`)));
+    mount(host, ...render(await request(`/api/public/proof/${t}`), t));
   } catch (e) {
     mount(host, h("div", { class: "empty" }, h("h1", null, "This link isn't available"),
       h("p", null, e.status === 404 ? "It may have been turned off by the sender. Ask them for a new one." : "Couldn't load it. Try again in a minute.")));

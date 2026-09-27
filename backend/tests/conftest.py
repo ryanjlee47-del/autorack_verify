@@ -81,6 +81,7 @@ TABLES = [
     "scan_events",
     "order_line_items",
     "orders",
+    "pick_batches",
     "product_substitutes",
     "kit_components",
     "product_barcodes",

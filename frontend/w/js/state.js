@@ -83,7 +83,8 @@ export function displayLines(order, pending) {
     const lineId = (ev.local && ev.local.lineId) || (ev.kind === "short" && ev.line_item_id);
     if (!lineId || !qty.has(lineId)) continue;
     const units = (ev.local && ev.local.qty) || 1;
-    if (ev.kind === "scan" && (ev.local.result === "match" || ev.local.result === "counted")) {
+    const counts = ev.kind === "scan" || ev.kind === "confirm";
+    if (counts && ev.local && (ev.local.result === "match" || ev.local.result === "counted")) {
       qty.set(lineId, qty.get(lineId) + units);
     }
     if (ev.kind === "void") qty.set(lineId, Math.max(0, qty.get(lineId) - units));
@@ -179,6 +180,25 @@ export function classify(order, lines, raw) {
   }
   if (m.resolved || m.ambiguous) return { result: "review", lineId: m.resolved ? m.lineId : null, tier: m.tier };
   return { result: "mismatch", lineId: null, tier: null };
+}
+
+/**
+ * Batch picking: which order a scanned item goes to. `entries` are
+ * [{order, lines}] in tote order. The order of the line being picked wins if
+ * it still needs the item, then the others in tote order; if none needs it,
+ * the scan is judged against the order being picked. Returns {order, c}.
+ */
+export function classifyBatch(entries, raw, preferId) {
+  const ordered = entries.slice().sort((a, b) => Number(b.order.id === preferId) - Number(a.order.id === preferId));
+  let fallback = null;
+  for (const { order, lines } of ordered) {
+    const c = classify(order, lines, raw);
+    if (c.result === "match") return { order, c };
+    if (!fallback && (c.result === "over_pick" || c.result === "review")) fallback = { order, c };
+  }
+  if (fallback) return fallback;
+  const first = ordered[0];
+  return { order: first.order, c: classify(first.order, first.lines, raw) };
 }
 
 /** The line to pick next: the worker's choice if unfinished, else walk by location. */

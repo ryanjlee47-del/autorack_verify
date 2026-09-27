@@ -22,6 +22,7 @@ from ..models import (
     OrderLineItem,
     OrderSource,
     OrderStatus,
+    Photo,
     ScanEvent,
     Warehouse,
     utcnow,
@@ -371,6 +372,13 @@ def cancel_order(db: Session, order: Order, actor: Actor) -> None:
     audit.record(db, actor, "order.cancelled", warehouse_id=order.warehouse_id, target_type="order", target_id=order.id)
 
 
+def pack_photo_ids(db: Session, order_id: uuid.UUID) -> list[uuid.UUID]:
+    """Photos of the packed box, oldest first."""
+    return list(
+        db.scalars(select(Photo.id).where(Photo.order_id == order_id, Photo.kind == "pack").order_by(Photo.created_at))
+    )
+
+
 def bump(order: Order) -> None:
     order.version = (order.version or 1) + 1
     order.updated_at = utcnow()
@@ -567,6 +575,8 @@ def order_summary(order: Order, lines: list[OrderLineItem]) -> dict[str, Any]:
         "version": order.version,
         "notes": order.notes,
         "assigned_worker_id": str(order.assigned_worker_id) if order.assigned_worker_id else None,
+        "batch_id": str(order.batch_id) if order.batch_id else None,
+        "tote": order.tote,
         "created_at": order.created_at.isoformat(),
         "started_at": order.started_at.isoformat() if order.started_at else None,
         "completed_at": order.completed_at.isoformat() if order.completed_at else None,
@@ -616,6 +626,8 @@ def offline_payload(db: Session, wh: Warehouse, order: Order) -> dict[str, Any]:
         "products": products_for_lines(db, lines),
         "open_flags": open_flag_count(db, order.id),
         "require_ship_scan": wh.require_ship_scan,
+        "require_pack_photo": wh.require_pack_photo,
+        "pack_photos": len(pack_photo_ids(db, order.id)),
         "fetched_at": utcnow().isoformat(),
     }
 

@@ -28,6 +28,7 @@ from ..models import (
     OrderLineItem,
     OrderStatus,
     Photo,
+    PickBatch,
     ScanEvent,
     ScanResult,
     Worker,
@@ -347,6 +348,8 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
         "flags": [flag_dict(f, workers, photos.get(f.id, [])) for f in flags],
         "qr_svg": qr_svg(order_svc.order_qr_payload(order)),
         "products": order_svc.products_for_lines(db, lines),
+        "pack_photos": [str(pid) for pid in order_svc.pack_photo_ids(db, order.id)],
+        "batch": _batch_of(db, order),
         "variance": tasks.variance(db, order) if order.kind in TALLY_KINDS else None,
         "returns": tasks.returns_of(db, order) if order.kind == OrderKind.pick else [],
         "return_of": _return_of(db, order),
@@ -354,6 +357,13 @@ def order_detail(order_id: uuid.UUID, ctx: OwnerContext, db: Session) -> dict[st
         if order.share_token
         else None,
     }
+
+
+def _batch_of(db: Session, order: Order) -> dict[str, Any] | None:
+    if not order.batch_id:
+        return None
+    b = db.get(PickBatch, order.batch_id)
+    return {"id": str(b.id), "number": b.number, "tote": order.tote} if b else None
 
 
 def _return_of(db: Session, order: Order) -> dict[str, Any] | None:
@@ -810,6 +820,9 @@ def shipment_proof(
         {
             "line_item_id": str(s.line_item_id),
             "scanned_barcode": s.scanned_barcode,
+            "quantity": s.quantity,
+            "confirmed": s.confirmed,
+            "substitution": s.substitution,
             "worker": workers.get(s.worker_id),
             "at": s.client_scanned_at.isoformat(),
             "lot": s.lot,

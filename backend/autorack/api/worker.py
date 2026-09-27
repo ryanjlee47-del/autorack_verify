@@ -43,10 +43,11 @@ from ..models import (
     ScanResult,
     ShortReason,
     Warehouse,
+    Worker,
     utcnow,
 )
 from ..security import is_valid_pin, normalize_join_code
-from ..services import audit, scans, tasks, usage
+from ..services import audit, batches, scans, tasks, usage
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
 from ..services import orders as order_svc
@@ -93,6 +94,7 @@ def device_info(dctx: DeviceContext = Depends(current_device)) -> dict[str, Any]
         "warehouse": {"id": str(dctx.warehouse.id), "name": dctx.warehouse.name},
         "access": _access_dict(dctx),
         "require_ship_scan": dctx.warehouse.require_ship_scan,
+        "require_pack_photo": dctx.warehouse.require_pack_photo,
         "pin_length": get_settings().pin_length,
         "server_time": utcnow().isoformat(),
     }
@@ -173,6 +175,10 @@ def open_orders(ctx: WorkerContext = Depends(require_worker_access), db: Session
             .limit(200)
         )
     )
+    open_batches = batches.open_batches(db, ctx.warehouse, ctx.worker.id)
+    batched = {b.id for b in open_batches}
+    # A batched order is picked from its batch, not on its own.
+    orders = [o for o in orders if o.batch_id not in batched]
     rows = dash.order_rows(db, ctx.warehouse, orders)
     for r, o in zip(rows, orders, strict=True):
         r["version"] = o.version
@@ -197,8 +203,16 @@ def open_orders(ctx: WorkerContext = Depends(require_worker_access), db: Session
         to_ship = dash.order_rows(db, ctx.warehouse, ready)
         for r, o in zip(to_ship, ready, strict=True):
             r["version"] = o.version
+    batch_rows = []
+    for b in open_batches:
+        d = batches.batch_dict(db, ctx.warehouse, b)
+        d.pop("orders")
+        d["assigned_to_me"] = b.assigned_worker_id == ctx.worker.id
+        batch_rows.append(d)
+    db.commit()
     return {
         "orders": rows,
+        "batches": batch_rows,
         "to_ship": to_ship,
         "require_ship_scan": ctx.warehouse.require_ship_scan,
         "server_time": utcnow().isoformat(),
@@ -260,9 +274,28 @@ def order_payload(
     return order_svc.offline_payload(db, ctx.warehouse, order)
 
 
+@router.get("/batches/{batch_id}")
+def batch_payload(
+    batch_id: uuid.UUID, ctx: WorkerContext = Depends(require_worker_access), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Every order in the batch, each with what the phone needs offline."""
+    b = batches.get(db, ctx.warehouse, batch_id)
+    orders = batches.orders_of(db, b)
+    return {
+        "id": str(b.id),
+        "number": b.number,
+        "closed_at": b.closed_at.isoformat() if b.closed_at else None,
+        "orders": [
+            {**order_svc.offline_payload(db, ctx.warehouse, o), "tote": o.tote}
+            for o in orders
+            if o.status != OrderStatus.cancelled
+        ],
+    }
+
+
 class SyncEventIn(BaseModel):
     id: uuid.UUID
-    kind: Literal["scan", "void", "flag", "short", "ship", "finish"] = "scan"
+    kind: Literal["scan", "void", "flag", "short", "ship", "finish", "confirm"] = "scan"
     order_id: uuid.UUID
     session_id: uuid.UUID
     client_scanned_at: datetime
@@ -293,6 +326,8 @@ class SyncEventIn(BaseModel):
             raise ValueError("flag events need reason")
         if self.kind == "short" and not (self.line_item_id and self.quantity):
             raise ValueError("short events need line_item_id and quantity")
+        if self.kind == "confirm" and not self.line_item_id:
+            raise ValueError("confirm events need line_item_id")
         if self.kind == "ship" and not self.tracking_number:
             raise ValueError("ship events need tracking_number")
         return self
@@ -372,18 +407,23 @@ PHOTO_TYPES = {
     "image/webp": (b"RIFF",),
 }
 MAX_PHOTOS_PER_FLAG = 4
+MAX_PACK_PHOTOS = 6
 
 
 @router.post("/photos", status_code=201)
 async def upload_photo(
     request: Request,
     id: uuid.UUID = Query(...),
-    flag_id: uuid.UUID = Query(...),
+    flag_id: uuid.UUID | None = Query(None),
+    order_id: uuid.UUID | None = Query(None),
+    kind: Literal["problem", "pack"] = Query("problem"),
+    worker_id: uuid.UUID | None = Query(None),
     dctx: DeviceContext = Depends(current_device),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """A picture of a problem, attached to a flag or short pick the phone has
-    already synced. Raw image bytes in the body; compressed on the phone.
+    """A picture of a problem (attached to a flag or short pick the phone has
+    already synced) or of the packed box (attached to its order, proof of what
+    went in it). Raw image bytes in the body; compressed on the phone.
 
     Device-authenticated like sync, so a photo taken offline still uploads
     after the worker's session ended. Idempotent on the photo id.
@@ -395,10 +435,27 @@ async def upload_photo(
         if existing.warehouse_id != dctx.warehouse.id:
             raise bad_request("id_conflict", "Duplicate id.")
         return {"id": str(existing.id), "status": "duplicate"}
-    flag = db.scalar(select(OrderFlag).where(OrderFlag.id == flag_id, OrderFlag.warehouse_id == dctx.warehouse.id))
-    if not flag:
-        # The flag is still in the phone's outbox; it retries after syncing.
-        raise ApiError(409, "flag_not_synced", "Sync the problem report first.")
+    flag: OrderFlag | None = None
+    order: Order | None = None
+    if kind == "pack":
+        if order_id is None:
+            raise bad_request("order_required", "Say which order the box is for.")
+        order = db.scalar(select(Order).where(Order.id == order_id, Order.warehouse_id == dctx.warehouse.id))
+        if not order:
+            raise not_found("Order not found.")
+        if order.status == OrderStatus.cancelled:
+            raise bad_request("order_cancelled", "This order was cancelled.")
+        limit, same = MAX_PACK_PHOTOS, (Photo.order_id == order.id) & (Photo.kind == "pack")
+        who = worker_id if worker_id and _works_here(db, dctx, worker_id) else None
+    else:
+        if flag_id is None:
+            raise bad_request("flag_required", "Say which problem the photo is for.")
+        flag = db.scalar(select(OrderFlag).where(OrderFlag.id == flag_id, OrderFlag.warehouse_id == dctx.warehouse.id))
+        if not flag:
+            # The flag is still in the phone's outbox; it retries after syncing.
+            raise ApiError(409, "flag_not_synced", "Sync the problem report first.")
+        limit, same = MAX_PHOTOS_PER_FLAG, Photo.flag_id == flag.id
+        who = flag.worker_id
     ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     if ctype not in PHOTO_TYPES:
         raise ApiError(415, "photo_type", "Photos must be JPEG, PNG or WebP.")
@@ -410,21 +467,30 @@ async def upload_photo(
     data = bytes(body)
     if not data or not data.startswith(PHOTO_TYPES[ctype]):
         raise bad_request("photo_invalid", "That file isn't a valid image.")
-    count = db.scalar(select(func.count()).select_from(Photo).where(Photo.flag_id == flag.id)) or 0
-    if count >= MAX_PHOTOS_PER_FLAG:
-        raise bad_request("photo_limit", f"At most {MAX_PHOTOS_PER_FLAG} photos per problem.")
+    count = db.scalar(select(func.count()).select_from(Photo).where(same)) or 0
+    if count >= limit:
+        what = "per box" if kind == "pack" else "per problem"
+        raise bad_request("photo_limit", f"At most {limit} photos {what}.")
     db.add(
         Photo(
             id=id,
             warehouse_id=dctx.warehouse.id,
-            flag_id=flag.id,
-            order_id=flag.order_id,
-            worker_id=flag.worker_id,
+            flag_id=flag.id if flag else None,
+            kind=kind,
+            order_id=flag.order_id if flag else order.id,  # type: ignore[union-attr]
+            worker_id=who,
             content_type=ctype,
             size_bytes=len(data),
             data=data,
         )
     )
-    usage.track(db, dctx.warehouse.id, "floor.photo")
+    if order is not None:
+        order_svc.bump(order)
+    usage.track(db, dctx.warehouse.id, f"floor.{kind}_photo" if kind == "pack" else "floor.photo")
     db.commit()
     return {"id": str(id), "status": "applied"}
+
+
+def _works_here(db: Session, dctx: DeviceContext, worker_id: uuid.UUID) -> bool:
+    w = db.get(Worker, worker_id)
+    return w is not None and w.warehouse_id == dctx.warehouse.id

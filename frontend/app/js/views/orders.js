@@ -3,7 +3,7 @@
 import {
   confirmDialog, dialog, fmtAgo, fmtDateTime, fmtNumber, h, mount, svg, toast,
 } from "../../../shared/dom.js";
-import { api, canManage, card, download, fail, layout, pageHeader, statusBadge, table, tz } from "../core.js";
+import { api, canManage, card, download, fail, layout, pageHeader, photoStrip, statusBadge, table, tz } from "../core.js";
 import { problemLabel } from "./dashboard.js";
 import { flagItem } from "./flags.js";
 
@@ -83,6 +83,7 @@ export async function ordersView(params) {
   const selected = new Set();
   const listHost = h("div", null, h("div", { class: "skeleton" }));
   const moreHost = h("div", { class: "row center-row" });
+  const batchesHost = h("div");
   let offset = 0;
   let rows = [];
 
@@ -109,9 +110,14 @@ export async function ordersView(params) {
       h("div", { class: "tabs" }, ...(tally ? TALLY_TABS : TABS).map(([value, label]) =>
         h("button", { class: ["tab", status === value && "active"], onclick: () => go({ status: value }) }, label))),
       h("div", { class: "row" }, search,
-        h("button", { class: "btn", onclick: () => printSheets([...selected]) }, "Print selected"))),
+        h("button", { class: "btn", onclick: () => printSheets([...selected]) }, "Print selected"),
+        !tally && canManage()
+          ? h("button", { class: "btn", title: "Pick several orders in one walk, one tote each", onclick: () => batchPick([...selected]) }, "Batch pick")
+          : null)),
+    tally ? null : batchesHost,
     card(null, listHost, moreHost),
   ]);
+  if (!tally) loadBatches(batchesHost).catch(() => {});
 
   const render = () => {
     const allBox = h("input", {
@@ -135,7 +141,11 @@ export async function ordersView(params) {
           return box;
         },
       },
-      { label: K.col, render: (o) => h("span", { class: "mono strong" }, o.external_order_number || o.id.slice(0, 8)) },
+      {
+        label: K.col,
+        render: (o) => h("span", null, h("span", { class: "mono strong" }, o.external_order_number || o.id.slice(0, 8)),
+          o.tote && o.batch_id ? h("span", { class: "tote-chip", title: "In a batch: this order's tote" }, o.tote) : null),
+      },
       kind === "count" ? null : { label: kind === "receive" ? "Supplier" : "Customer", render: (o) => o.customer || h("span", { class: "muted" }, "–") },
       { label: "Status", render: (o) => statusBadge(tally && o.status === "completed" ? "finished" : o.status) },
       { label: "Lines", align: "right", render: (o) => String(o.line_count) },
@@ -163,6 +173,54 @@ export async function ordersView(params) {
     mount(moreHost, r.has_more ? h("button", { class: "btn", onclick: () => load().catch(fail) }, "Load more") : null);
   };
   await load();
+}
+
+// ---------------------------------------------------------------------------
+// Batch picking
+// ---------------------------------------------------------------------------
+
+async function batchPick(ids) {
+  if (ids.length < 2) return toast("Select 2 to 12 orders to pick together.", "warn");
+  if (ids.length > 12) return toast("A batch holds at most 12 orders, one per tote.", "warn");
+  const workers = (await api("/api/workers")).workers.filter((w) => w.active);
+  const who = h("select", { class: "input" }, h("option", { value: "" }, "Anyone"),
+    ...workers.map((w) => h("option", { value: w.worker_id }, w.name)));
+  const ok = await dialog("Batch pick", (close) => [
+    h("p", null, `${ids.length} orders, picked in one walk. Each gets a tote (A, B, C…); the phone says which tote every item goes in.`),
+    h("label", null, "Picked by", who),
+    h("div", { class: "dialog-actions" },
+      h("button", { class: "btn", onclick: () => close(false) }, "Cancel"),
+      h("button", { class: "btn btn-primary", onclick: () => close(true) }, "Create batch")),
+  ]);
+  if (!ok) return;
+  try {
+    const b = await api("/api/batches", { method: "POST", body: { order_ids: ids, worker_id: who.value || null } });
+    toast(`Batch ${b.number} is on the phones`, "ok");
+    location.hash = `#/orders?status=open&b=${Date.now()}`;
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function loadBatches(host) {
+  const r = await api("/api/batches");
+  if (!r.open.length) return mount(host);
+  mount(host, card(`Batches being picked (${r.open.length})`,
+    h("ul", { class: "feed" }, ...r.open.map((b) => h("li", { class: "feed-item batch-item" },
+      h("div", null,
+        h("strong", null, `Batch ${b.number}`), " · ",
+        `${b.orders_left} of ${b.order_count} orders left · ${b.units_scanned}/${b.units_expected} units`,
+        b.assigned_worker ? ` · ${b.assigned_worker}` : "",
+        h("div", { class: "batch-totes" }, ...b.orders.map((o) => h("a", { href: `#/orders/${o.id}`, class: "batch-tote" },
+          h("span", { class: "tote-chip" }, o.tote), " ", o.external_order_number || o.id.slice(0, 8),
+          o.status === "completed" || o.status === "shipped" ? " ✓" : "")))),
+      canManage() ? h("button", {
+        class: "btn btn-sm",
+        onclick: async () => {
+          if (!(await confirmDialog("Break up this batch?", "Orders not yet picked go back to the normal list. Nothing scanned is lost.", { confirmLabel: "Break up" }))) return;
+          api(`/api/batches/${b.id}`, { method: "DELETE" }).then(() => loadBatches(host), fail);
+        },
+      }, "Break up") : null)))));
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +289,7 @@ export async function orderDetailView(id) {
         shipped ? h("p", { class: "ship-line" },
           "Shipped ", fmtDateTime(order.shipped_at, tz()), order.shipped_by ? ` by ${order.shipped_by}` : "",
           " · ", order.carrier ? `${order.carrier} ` : "", h("span", { class: "mono strong" }, order.tracking_number)) : null,
+        order.batch ? h("p", null, "Picked in batch ", h("strong", null, order.batch.number), " · tote ", h("span", { class: "tote-chip" }, order.batch.tote || "?")) : null,
         pushLine(order, reload)),
       h("div", { class: "row" },
         !tally && (shipped || order.status === "completed")
@@ -283,6 +342,11 @@ export async function orderDetailView(id) {
           h("p", { class: "muted small" }, `Workers scan this (on the printed sheet) to open the ${tally ? K.col.toLowerCase() : "order"} on their phone.`)),
         card("Assignment", assign, h("p", { class: "muted small" }, `Assigned ${tally ? "jobs" : "orders"} show first on that worker's phone and are hidden from others.`)),
         card("Notes", notesEditor(order, editable)))),
+
+    order.pack_photos && order.pack_photos.length
+      ? card(`The packed box (${order.pack_photos.length})`, photoStrip(order.pack_photos),
+        h("p", { class: "muted small" }, "Taken at the packing bench before the label went on. Shown on the shipment proof and the shared link."))
+      : null,
 
     closedFlags.length ? card("Resolved problems",
       h("ul", { class: "feed" }, ...closedFlags.map((f) => flagItem(id, f, { item: flagLine(f), onDone: reload })))) : null,

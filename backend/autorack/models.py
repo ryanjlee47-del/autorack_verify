@@ -199,6 +199,8 @@ class Warehouse(Base):
     # Features some floors want and some don't
     leaderboard_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     require_ship_scan: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # A photo of the packed box before the label goes on (proof for claims).
+    require_pack_photo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     onboarding_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     # Closing an account (owner or operator): scanning stops at once and the
@@ -498,6 +500,21 @@ class ProductSubstitute(Base):
     )
 
 
+class PickBatch(Base):
+    """Several orders picked in one walk: each order goes in its own tote,
+    and the phone says which tote each scanned item belongs in."""
+
+    __tablename__ = "pick_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    number: Mapped[str] = mapped_column(String(40))
+    assigned_worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ImportBatch(Base):
     __tablename__ = "import_batches"
 
@@ -581,6 +598,9 @@ class Order(Base):
     carrier: Mapped[str | None] = mapped_column(String(32))
     shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     shipped_by_worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
+    # Batch picking: picked together with other orders, into this tote.
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("pick_batches.id"), index=True)
+    tote: Mapped[str | None] = mapped_column(String(20))
     # Orders pulled from a store: where they came from, so tracking can go back.
     integration_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("integrations.id"))
     store_order_id: Mapped[str | None] = mapped_column(String(100))
@@ -758,7 +778,9 @@ class Photo(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
-    flag_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("order_flags.id"), index=True)
+    # A problem photo hangs on its flag; a packing photo only on its order.
+    flag_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("order_flags.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="problem", server_default="problem")
     order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), index=True)
     worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id"))
     content_type: Mapped[str] = mapped_column(String(32))

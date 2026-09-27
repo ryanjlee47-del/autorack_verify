@@ -127,7 +127,11 @@ export class Sync {
     const photos = await store.photosAll();
     for (const p of photos) {
       try {
-        await request(`/api/worker/photos?id=${encodeURIComponent(p.id)}&flag_id=${encodeURIComponent(p.flag_id)}`, {
+        const enc = encodeURIComponent;
+        const where = p.kind === "pack"
+          ? `order_id=${enc(p.order_id)}&kind=pack${p.worker_id ? `&worker_id=${enc(p.worker_id)}` : ""}`
+          : `flag_id=${enc(p.flag_id)}`;
+        await request(`/api/worker/photos?id=${enc(p.id)}&${where}`, {
           method: "POST",
           deviceToken: this.h.deviceToken(),
           blob: p.blob,

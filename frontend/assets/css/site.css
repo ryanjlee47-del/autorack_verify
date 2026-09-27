@@ -777,3 +777,19 @@ body {
   color: var(--ok);
   font-weight: 700;
 }
+
+.proof-photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.proof-photos figure {
+  margin: 0;
+}
+
+.proof-photo {
+  width: 100%;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border, #ddd);
+}

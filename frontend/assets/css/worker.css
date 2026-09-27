@@ -784,3 +784,45 @@ body {
   color: var(--text-2);
   font-weight: 600;
 }
+
+/* Batch picking: which tote each item goes in */
+.badge-kind-batch {
+  background: #1f5fa8;
+}
+
+.tote-tag {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--navy);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.overlay-tote .overlay-icon {
+  display: grid;
+  place-items: center;
+  width: 200px;
+  height: 200px;
+  border: 8px solid currentColor;
+  border-radius: 24px;
+  font-size: 150px;
+}
+
+/* No-barcode items */
+.confirm-btn {
+  margin-top: 10px;
+}
+
+.line .confirm-btn {
+  margin-top: 8px;
+}
+
+.confirm-item {
+  display: flex;
+  align-items: center;
+  font-size: 20px;
+}

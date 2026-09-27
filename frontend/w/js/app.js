@@ -38,6 +38,8 @@ const app = {
   session: readJson(LS_SESSION), // {token, id, workerId, workerName, expiresAt}
   screen: null,
   order: null, // cached payload of the order being picked
+  batch: null, // {id, number, orders: [payload + tote]} while batch picking
+  packShots: {}, // order id -> box photos waiting to upload
   pending: [], // outbox events (all orders)
   history: [], // recent scans on this phone, for undo
   targetLineId: null,
@@ -170,6 +172,7 @@ function topbar(...right) {
 function rerender() {
   const screens = {
     link: showLink, pin: showPin, orders: showOrders, pick: showPick, complete: showComplete, locked: showLocked,
+    batch: showPick,
     notice: () => showNotice(app.noticeVersion || "1"),
   };
   (screens[app.screen] || showPin)();
@@ -369,6 +372,7 @@ async function showOrders() {
   if (!app.session) return showPin();
   stopCamera();
   app.order = null;
+  app.batch = null;
   const listEl = h("div", { class: "order-list" }, h("div", { class: "skeleton" }));
   const note = h("p", { class: "muted small" });
   setScreen("orders",
@@ -386,28 +390,52 @@ async function showOrders() {
 
   let orders;
   let toShip = [];
+  let batches = [];
   let offline = false;
   try {
     const r = await api("/api/worker/orders");
     orders = r.orders;
     toShip = r.to_ship || [];
+    batches = r.batches || [];
     await store.metaSet("orderList", orders);
+    await store.metaSet("batchList", batches);
   } catch (e) {
     if (!e.isNetwork) return;
     offline = true;
     orders = await cachedOrderList();
+    batches = (await store.metaGet("batchList").catch(() => null)) || [];
   }
   if (app.screen !== "orders") return;
   note.textContent = offline ? T("ordersOfflineList") : "";
   const cached = new Map((await store.allOrders()).map((o) => [o.id, o]));
-  renderOrderList(listEl, orders, cached, toShip);
+  renderOrderList(listEl, orders, cached, toShip, batches);
   if (!offline) prefetch(orders, cached).then(async () => {
     if (app.screen !== "orders") return;
-    renderOrderList(listEl, orders, new Map((await store.allOrders()).map((o) => [o.id, o])), toShip);
+    renderOrderList(listEl, orders, new Map((await store.allOrders()).map((o) => [o.id, o])), toShip, batches);
   });
 }
 
-function renderOrderList(listEl, orders, cached, toShip = []) {
+function batchRows(batches) {
+  if (!batches.length) return [];
+  return [
+    h("h2", { class: "section-title" }, T("batchesTitle")),
+    ...batches.map((b) => {
+      const pct = b.units_expected ? Math.min(100, Math.round((100 * b.units_scanned) / b.units_expected)) : 0;
+      return h("button", { class: "order-row order-row-batch", onclick: () => openBatch(b.id) },
+        h("div", { class: "order-row-main" },
+          h("span", { class: "badge badge-kind badge-kind-batch" }, "▦"),
+          h("span", { class: "order-number" }, T("batchTitle", { number: b.number })),
+          b.assigned_to_me ? h("span", { class: "badge badge-assigned" }, T("ordersAssigned")) : null),
+        h("div", { class: "order-row-sub" },
+          h("span", null, T("batchOrders", { n: b.order_count })),
+          h("span", null, T("progressUnits", { done: b.units_scanned, total: b.units_expected }))),
+        h("div", { class: "bar" }, h("span", { style: { width: `${pct}%` } })));
+    }),
+    h("h2", { class: "section-title" }, T("ordersTitle")),
+  ];
+}
+
+function renderOrderList(listEl, orders, cached, toShip = [], batches = []) {
   const shipRows = toShip.length
     ? [
       h("h2", { class: "section-title" }, T("ordersToShip"), " · ", String(toShip.length)),
@@ -419,11 +447,12 @@ function renderOrderList(listEl, orders, cached, toShip = []) {
       h("h2", { class: "section-title" }, T("ordersTitle")),
     ]
     : [];
+  const batchEls = batchRows(batches);
   if (!orders.length) {
-    mount(listEl, ...shipRows, h("p", { class: "empty" }, T("ordersEmpty")));
+    mount(listEl, ...shipRows, ...batchEls, batches.length ? null : h("p", { class: "empty" }, T("ordersEmpty")));
     return;
   }
-  mount(listEl, ...shipRows, ...orders.map((o) => {
+  mount(listEl, ...shipRows, ...batchEls, ...orders.map((o) => {
     const c = cached.get(o.id);
     const ready = c && c.version >= o.version;
     const tally = o.kind && o.kind !== "pick";
@@ -487,10 +516,150 @@ async function openOrder(id) {
     return;
   }
   app.order = order;
+  app.batch = null;
   app.targetLineId = null;
   app.pending = await store.outboxAll().catch(() => []);
+  await countPackShots();
   showPick();
   if (navigator.onLine) refreshOrderInBackground(order.id);
+}
+
+/** Box photos still on the phone, per order. */
+async function countPackShots() {
+  const shots = {};
+  for (const p of await store.photosAll().catch(() => [])) {
+    if (p.kind === "pack") shots[p.order_id] = (shots[p.order_id] || 0) + 1;
+  }
+  app.packShots = shots;
+}
+
+// ---------------------------------------------------------------------------
+// Batch picking: several orders in one walk, one tote each
+// ---------------------------------------------------------------------------
+
+async function openBatch(id) {
+  let batch = null;
+  try {
+    const r = await api(`/api/worker/batches/${id}`);
+    for (const o of r.orders) await store.putOrder(o);
+    batch = { id: r.id, number: r.number, orders: r.orders };
+    await store.metaSet(`batch:${id}`, { id: r.id, number: r.number, orderIds: r.orders.map((o) => o.id) });
+  } catch (e) {
+    if (!e.isNetwork) {
+      toast(e.message, "bad");
+      return;
+    }
+    const meta = await store.metaGet(`batch:${id}`).catch(() => null);
+    const orders = meta ? await Promise.all(meta.orderIds.map((oid) => store.getOrder(oid).catch(() => null))) : [];
+    if (!meta || orders.some((o) => !o)) {
+      toast(T("batchNotCached"), "bad");
+      return;
+    }
+    batch = { id: meta.id, number: meta.number, orders };
+  }
+  app.batch = batch;
+  app.pending = await store.outboxAll().catch(() => []);
+  app.targetLineId = null;
+  app.order = batchOrders()[0] || batch.orders[0];
+  await countPackShots();
+  showPick();
+}
+
+/** The batch's orders still being picked, in tote order. */
+function batchOrders() {
+  return app.batch.orders.filter((o) => !["cancelled", "shipped"].includes(o.status));
+}
+
+/** Every line of the batch, each tagged with its order and tote. */
+function batchLines() {
+  return batchOrders().flatMap((o) =>
+    S.displayLines(o, pendingFor(o.id)).map((l) => ({ ...l, orderId: o.id, tote: o.tote })));
+}
+
+function batchOrder(id) {
+  return app.batch.orders.find((o) => o.id === id) || null;
+}
+
+/** Point app.order at the order of the line being picked (for short picks, flags). */
+function focusBatchTarget() {
+  if (!app.batch) return;
+  const target = S.nextLine(batchLines(), app.targetLineId);
+  if (target) app.order = batchOrder(target.orderId);
+}
+
+function renderBatchBody() {
+  const lines = batchLines();
+  const prog = S.progress(lines);
+  const target = S.nextLine(lines, app.targetLineId);
+  const pct = prog.total ? Math.round((100 * prog.done) / prog.total) : 0;
+  const flagged = batchOrders().some((o) => o.status === "flagged" || o.open_flags);
+  mount(document.getElementById("pick-top"),
+    h("div", { class: "pick-head" },
+      h("button", { class: "btn btn-sm", onclick: showOrders }, "← ", T("back")),
+      h("div", { class: "pick-title" },
+        h("span", { class: "order-number" }, T("batchTitle", { number: app.batch.number })),
+        h("span", { class: "muted" }, T("progressUnits", { done: prog.done, total: prog.total })))),
+    h("div", { class: "bar bar-lg" }, h("span", { style: { width: `${pct}%` } })),
+    flagged ? h("div", { class: "banner banner-warn" }, T("orderFlagged")) : null,
+    app.locked ? h("div", { class: "banner banner-bad" }, app.locked) : null);
+
+  const targetCard = target
+    ? h("section", { class: ["target", productOf(target) && productOf(target).thumb && "target-with-photo"] },
+      productPhoto(target),
+      h("div", { class: "target-label" }, T("pickNext")),
+      target.location ? h("div", { class: "target-location" }, target.location) : null,
+      h("div", { class: "target-name" }, lineLabel(target)),
+      h("div", { class: "tote-tag" }, T("batchTote", { tote: target.tote || "?" })),
+      target.kit_name ? h("div", { class: "kit-tag" }, T("kitPart", { kit: target.kit_name })) : null,
+      packerNote(target),
+      h("div", { class: "target-meta" },
+        target.sku ? h("span", { class: "mono" }, target.sku) : null,
+        h("span", { class: "mono muted" }, target.expected_barcode)),
+      traceTags(target),
+      target.confirm_without_scan ? confirmButton(target) : null,
+      h("div", { class: "target-qty" },
+        T("pickQty", { done: target.scanned_quantity, total: target.expected_quantity }),
+        target.short_quantity ? h("span", { class: "short-tag" }, T("shortLine", { n: target.short_quantity })) : null))
+    : h("section", { class: "target target-done" },
+      h("div", { class: "complete-check" }, "✓"),
+      h("div", { class: "target-name" }, T("batchDone")),
+      h("p", { class: "muted" }, T("batchDoneDetail")),
+      h("button", { class: "btn btn-primary btn-xl", onclick: showOrders }, T("orderCompleteNext")));
+
+  const withTarget = (fn) => () => {
+    focusBatchTarget();
+    return fn(null);
+  };
+  mount(document.getElementById("pick-body"),
+    targetCard,
+    target
+      ? h("div", { class: "actions" },
+        h("button", { class: "btn btn-primary btn-xl action-scan", onclick: startCamera }, T("pickCamera")),
+        h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
+        h("button", { class: "btn btn-lg", onclick: withTarget(shortPick) }, T("pickShort")),
+        h("button", { class: "btn btn-lg", onclick: withTarget(flagProblem) }, T("pickFlag")),
+        h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo")))
+      : h("div", { class: "actions" },
+        h("button", { class: "btn btn-lg", onclick: undoLast }, T("pickUndo"))),
+    h("h2", { class: "section-title" }, T("pickAllLines")),
+    h("ul", { class: "lines" }, ...S.sortForWalking(lines).map((l) => {
+      const done = S.remaining(l) === 0;
+      return h("li", {
+        class: ["line", done && "line-done", target && l.id === target.id && "line-target"],
+        onclick: () => {
+          if (done) return;
+          app.targetLineId = l.id;
+          renderPickBody();
+        },
+      },
+      h("div", { class: "line-main" },
+        h("span", { class: "line-name" }, productPhoto(l, "line-photo"), lineLabel(l)),
+        h("span", { class: "line-qty" }, done ? `✓ ${l.expected_quantity}` : `${l.scanned_quantity}/${l.expected_quantity}`)),
+      h("div", { class: "line-sub" },
+        h("span", { class: "tote-chip" }, l.tote || "?"),
+        l.location ? h("span", null, l.location) : null,
+        h("span", { class: "mono" }, l.expected_barcode)));
+    })));
 }
 
 async function openFromCode(text) {
@@ -566,6 +735,7 @@ function showPick() {
 }
 
 function renderPickBody() {
+  if (app.batch) return renderBatchBody();
   if (S.isTally(app.order)) return renderTallyBody();
   const order = app.order;
   const lines = currentLines();
@@ -595,6 +765,7 @@ function renderPickBody() {
         target.sku ? h("span", { class: "mono" }, target.sku) : null,
         h("span", { class: "mono muted" }, target.expected_barcode)),
       traceTags(target),
+      target.confirm_without_scan ? confirmButton(target) : null,
       h("div", { class: "target-qty" },
         T("pickQty", { done: target.scanned_quantity, total: target.expected_quantity }),
         target.short_quantity ? h("span", { class: "short-tag" }, T("shortLine", { n: target.short_quantity })) : null))
@@ -632,6 +803,7 @@ function renderPickBody() {
           done && !short ? `✓ ${l.expected_quantity}` : `${l.scanned_quantity}/${l.expected_quantity}`)),
       h("div", { class: "line-sub" },
         short ? h("span", { class: "short-tag" }, T("shortLine", { n: short })) : null,
+        l.confirm_without_scan ? h("span", { class: "short-tag" }, T("confirmTag")) : null,
         l.location ? h("span", null, l.location) : null,
         h("span", { class: "mono" }, l.expected_barcode)));
     })));
@@ -731,8 +903,83 @@ function renderTallyBody() {
           h("span", { class: "line-qty" }, blind ? String(l.scanned_quantity) : `${l.scanned_quantity}/${l.expected_quantity}`)),
         h("div", { class: "line-sub" },
           l.location ? h("span", null, l.location) : null,
-          lineLabel(l) !== l.expected_barcode ? h("span", { class: "mono" }, l.expected_barcode) : null));
+          lineLabel(l) !== l.expected_barcode ? h("span", { class: "mono" }, l.expected_barcode) : null),
+        l.confirm_without_scan ? confirmButton(l, true) : null);
     })));
+}
+
+// ---------------------------------------------------------------------------
+// Items with no barcode: confirmed by tap, marked as not scan-verified
+// ---------------------------------------------------------------------------
+
+function confirmButton(line, small = false) {
+  return h("button", {
+    class: ["btn", small ? "btn-sm" : "btn-primary btn-lg btn-block", "confirm-btn"],
+    onclick: (e) => {
+      e.stopPropagation();
+      confirmNoBarcode(line);
+    },
+  }, "✋ ", T("confirmTap"));
+}
+
+async function confirmNoBarcode(line) {
+  if (app.batch && line.orderId) app.order = batchOrder(line.orderId);
+  const order = app.order;
+  const tally = S.isTally(order);
+  const max = tally ? 100000 : S.remaining(line);
+  if (max <= 0) return;
+  const photos = [];
+  const qty = await dialog(T("confirmTitle"), (close) => {
+    const input = h("input", {
+      class: "input input-xl", type: "number", inputmode: "numeric", min: "1", max: String(max),
+      value: String(tally ? 1 : max),
+    });
+    return h("form", {
+      class: "stack",
+      onsubmit: (e) => {
+        e.preventDefault();
+        close(Math.max(1, Math.min(max, parseInt(input.value, 10) || 1)));
+      },
+    },
+    h("p", { class: "confirm-item" }, productPhoto(line, "line-photo"), h("strong", null, lineLabel(line))),
+    h("p", { class: "muted" }, T("confirmHelp")),
+    h("label", null, T("confirmQty")), input,
+    photoPicker(photos),
+    h("div", { class: "dialog-actions" },
+      h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("cancel")),
+      h("button", { class: "btn btn-primary", type: "submit" }, T("confirmButton"))));
+  });
+  if (!qty) return;
+  const result = tally ? "counted" : "match";
+  const ev = {
+    id: uuid4(),
+    kind: "confirm",
+    order_id: order.id,
+    session_id: app.session.id,
+    client_scanned_at: new Date().toISOString(),
+    client_seq: await store.nextSeq().catch(() => Date.now()),
+    line_item_id: line.id,
+    quantity: qty,
+    offline: !app.status.online,
+    local: { result, lineId: line.id, qty },
+  };
+  try {
+    await store.outboxAdd(ev);
+  } catch {
+    toast(T("storageFailed"), "bad");
+    return;
+  }
+  app.pending.push(ev);
+  remember({ id: ev.id, orderId: order.id, kind: "scan", result, lineId: line.id, qty, at: ev.client_scanned_at });
+  await savePackPhotos(photos, order.id);
+  app.status.pending += 1;
+  refreshChip();
+  FX.play("ok");
+  toast(T("confirmDone", { n: qty }), "ok");
+  if (app.sync) app.sync.kick();
+  app.targetLineId = null;
+  if (!tally && !app.batch && S.progress(currentLines()).complete) showComplete();
+  else renderPickBody();
 }
 
 async function finishTask() {
@@ -871,10 +1118,25 @@ async function handleScan(rawText) {
     showResult({ result: "order_code" });
     return;
   }
-  const order = app.order;
-  const lines = currentLines();
-  const target = S.nextLine(lines, app.targetLineId);
-  let c = S.classify(order, lines, raw);
+  let order = app.order;
+  let lines = currentLines();
+  let target = S.nextLine(lines, app.targetLineId);
+  let c;
+  if (app.batch) {
+    // Which tote is it for? The first order in the batch that still needs it.
+    const all = batchLines();
+    const want = S.nextLine(all, app.targetLineId);
+    const entries = batchOrders().map((o) => ({ order: o, lines: S.displayLines(o, pendingFor(o.id)) }));
+    if (!entries.length) return;
+    const pick = S.classifyBatch(entries, raw, want ? want.orderId : null);
+    order = pick.order;
+    c = pick.c;
+    app.order = order;
+    lines = currentLines();
+    target = want && want.orderId === order.id ? lines.find((l) => l.id === want.id) : null;
+  } else {
+    c = S.classify(order, lines, raw);
+  }
   // Lot / serial / expiry: from the barcode if it carries them, else ask.
   let details = S.unitDetails(raw);
   const hit = lines.find((l) => l.id === c.lineId);
@@ -924,7 +1186,8 @@ async function handleScan(rawText) {
   const after = currentLines();
   const line = after.find((l) => l.id === c.lineId) || c.line;
   if (c.result === "match" && line && line.scanned_quantity >= line.expected_quantity) app.targetLineId = null;
-  showResult({ ...c, line, scanId: ev.id, complete: !S.isTally(order) && S.progress(after).complete });
+  const complete = app.batch ? false : !S.isTally(order) && S.progress(after).complete;
+  showResult({ ...c, line, scanId: ev.id, complete, tote: app.batch ? order.tote : null });
   app.status.pending += 1;
   refreshChip();
   if (app.sync) app.sync.kick();
@@ -949,7 +1212,9 @@ function showResult(r) {
       : ["warn", "+", T("resultExtra"), T(order.kind === "count" ? "resultExtraDetailCount" : "resultExtraDetail")],
     match: r.sub
       ? ["warn", "⇄", T("resultSubstitute"), T("resultSubstituteDetail", { sub: r.sub, item: r.line ? lineLabel(r.line) : "" })]
-      : ["ok", "✓", r.qty ? T("resultCase", { n: r.qty }) : T("resultMatch"), r.line ? `${lineLabel(r.line)} · ${T("resultMatchDetail", { done: r.line.scanned_quantity, total: r.line.expected_quantity })}` : ""],
+      : r.tote
+        ? ["ok", r.tote, T("batchPutInTote", { tote: r.tote }), r.line ? `${r.qty ? `${T("resultCase", { n: r.qty })} · ` : ""}${lineLabel(r.line)}` : ""]
+        : ["ok", "✓", r.qty ? T("resultCase", { n: r.qty }) : T("resultMatch"), r.line ? `${lineLabel(r.line)} · ${T("resultMatchDetail", { done: r.line.scanned_quantity, total: r.line.expected_quantity })}` : ""],
     mismatch: r.problem === "wrong_lot"
       ? ["bad", "✕", T("resultWrongLot"), T("resultWrongLotDetail", { lot: r.line.required_lot })]
       : r.problem === "expired"
@@ -998,7 +1263,7 @@ function showResult(r) {
         : null,
       h("button", { class: "btn btn-xl btn-light", onclick: dismiss }, T("resultDismiss")));
   const el = h("div", {
-    class: ["overlay", `overlay-${kind}`], role: "alertdialog", "aria-live": "assertive",
+    class: ["overlay", `overlay-${kind}`, r.tote && r.result === "match" && "overlay-tote"], role: "alertdialog", "aria-live": "assertive",
     onclick: kind === "ok" ? dismiss : null,
   },
   h("div", { class: "overlay-icon" }, icon),
@@ -1006,11 +1271,14 @@ function showResult(r) {
   detail ? h("div", { class: "overlay-detail" }, detail) : null,
   buttons);
   document.body.appendChild(el);
-  app.overlay = { el, timer: kind === "ok" ? setTimeout(dismiss, MATCH_OVERLAY_MS) : null, dismiss, close };
+  // A tote letter stays up a little longer: the worker has to read it.
+  const ms = r.tote ? MATCH_OVERLAY_MS * 2 : MATCH_OVERLAY_MS;
+  app.overlay = { el, timer: kind === "ok" ? setTimeout(dismiss, ms) : null, dismiss, close };
 }
 
 function showComplete() {
   if (!app.order) return showOrders();
+  if (app.batch) return showPick();
   stopCamera();
   if (app.screen !== "complete") FX.play("ok");
   const prog = S.progress(currentLines());
@@ -1048,12 +1316,48 @@ function shipControls({ big = false } = {}) {
       h("button", { class: ["btn btn-primary", size], onclick: showOrders }, T("orderCompleteNext")),
     ];
   }
+  const shots = packShotCount(order);
+  const needPhoto = Boolean(order.require_pack_photo) && shots === 0;
   return [
     required ? h("p", { class: "muted" }, T("shipRequired")) : h("p", { class: "muted" }, T("shipHelp")),
-    h("button", { class: ["btn", required ? "btn-primary" : "", size], onclick: () => scanOnce(handleLabel) }, T("shipScan")),
-    h("button", { class: ["btn", size], onclick: typeTracking }, T("shipType")),
-    required ? null : h("button", { class: ["btn btn-primary", size], onclick: showOrders }, T("orderCompleteNext")),
+    h("button", { class: ["btn", needPhoto && "btn-primary", size], onclick: takePackPhoto },
+      "📷 ", shots ? T("packPhotoMore", { n: shots }) : T("packPhoto")),
+    needPhoto ? h("p", { class: "banner banner-warn" }, T("packPhotoRequired")) : null,
+    h("button", { class: ["btn", required && !needPhoto ? "btn-primary" : "", size], disabled: needPhoto, onclick: () => scanOnce(handleLabel) }, T("shipScan")),
+    h("button", { class: ["btn", size], disabled: needPhoto, onclick: typeTracking }, T("shipType")),
+    required || needPhoto ? null : h("button", { class: ["btn btn-primary", size], onclick: showOrders }, T("orderCompleteNext")),
   ];
+}
+
+function packShotCount(order) {
+  return (order.pack_photos || 0) + (app.packShots[order.id] || 0);
+}
+
+/** The packed box, before the label goes on: proof for a "not in the box" claim. */
+async function takePackPhoto() {
+  const order = app.order;
+  if (!order) return;
+  const blob = await takePhoto();
+  if (!blob) return;
+  await savePackPhotos([blob], order.id);
+  FX.play("ok");
+  toast(T("packPhotoSaved"), "ok");
+  if (app.sync) app.sync.kick();
+  if (app.screen === "complete") showComplete();
+  else renderPickBody();
+}
+
+async function savePackPhotos(photos, orderId) {
+  for (const blob of photos) {
+    try {
+      await store.photoAdd({
+        id: uuid4(), kind: "pack", order_id: orderId, worker_id: app.session && app.session.workerId, blob, created: Date.now(),
+      });
+      app.packShots[orderId] = (app.packShots[orderId] || 0) + 1;
+    } catch {
+      toast(T("photoFailed"), "warn");
+    }
+  }
 }
 
 function typeTracking() {
@@ -1076,6 +1380,11 @@ function typeTracking() {
 async function handleLabel(raw) {
   const order = app.order;
   if (!order) return;
+  if (order.require_pack_photo && packShotCount(order) === 0) {
+    FX.play("bad");
+    toast(T("packPhotoRequired"), "bad", 6000);
+    return;
+  }
   const check = S.checkLabel(order, raw);
   if (!check.ok) {
     FX.play("bad");
@@ -1125,6 +1434,12 @@ function typeBarcode() {
 }
 
 async function undoLast() {
+  if (app.batch) {
+    // The most recent pick in any of the batch's orders.
+    const hits = app.batch.orders.map((o) => S.lastUndoable(app.history, o.id)).filter(Boolean);
+    hits.sort((a, b) => app.history.indexOf(b) - app.history.indexOf(a));
+    if (hits[0]) app.order = batchOrder(hits[0].orderId);
+  }
   const lastScan = S.lastUndoable(app.history, app.order.id);
   if (!lastScan) {
     toast(T("pickNothingToUndo"));
@@ -1482,6 +1797,10 @@ async function onSyncResult(batch, resp) {
     if (!cached) continue;
     const { order, needsRefetch } = S.applyServerState(cached, resp.orders[id]);
     await store.putOrder(order);
+    if (app.batch) {
+      const i = app.batch.orders.findIndex((o) => o.id === id);
+      if (i >= 0) app.batch.orders[i] = { ...order, tote: app.batch.orders[i].tote };
+    }
     if (app.order && app.order.id === id) {
       const linesById = new Map(order.lines.map((l) => [l.id, l]));
       for (const c of S.corrections(batch.filter((e) => e.order_id === id), resp.events, linesById)) {
@@ -1506,10 +1825,15 @@ async function onSyncResult(batch, resp) {
     }
   }
   if (resp.access && !resp.access.allowed) app.locked = resp.access.message;
+  await countPackShots();
   for (const id of needRefetch) {
     try {
       const fresh = await fetchOrder(id);
       if (app.order && app.order.id === id) app.order = fresh;
+      if (app.batch) {
+        const i = app.batch.orders.findIndex((o) => o.id === id);
+        if (i >= 0) app.batch.orders[i] = fresh;
+      }
     } catch {
       break;
     }

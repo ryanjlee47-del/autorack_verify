@@ -196,6 +196,7 @@ export async function settingsView() {
   const monthlyOn = checkbox(wh.monthly_report_enabled);
   const board = checkbox(wh.leaderboard_enabled);
   const shipScan = checkbox(wh.require_ship_scan);
+  const packPhoto = checkbox(wh.require_pack_photo);
   const mine = ctx.me.membership;
   const myName = h("input", { class: "input", value: ctx.me.user.name || "", placeholder: "Your name" });
   const mySummary = checkbox(mine.email_daily_summary, false);
@@ -254,10 +255,11 @@ export async function settingsView() {
     card("On the floor",
       h("div", { class: "settings-list" },
         h("label", { class: "row check" }, shipScan, h("span", null, h("strong", null, "Scan the shipping label on every order"), h("span", { class: "muted" }, " — after picking, the worker scans the box's shipping label, tying the order to its tracking number. Proof of what went in which parcel. Off: it's optional."))),
+        h("label", { class: "row check" }, packPhoto, h("span", null, h("strong", null, "Photo of every packed box"), h("span", { class: "muted" }, " — before the label goes on, the worker photographs the open box. It shows on the order, the shipment proof and the shared proof link: your answer to “it wasn't in the box”. Off: a photo is optional."))),
         h("label", { class: "row check" }, board, h("span", null, h("strong", null, "Floor board"), h("span", { class: "muted" }, " — a live shift leaderboard (units, orders, accuracy) for a TV on the floor. Some teams love it, some don't; it's off until you turn it on.")))),
       owner ? h("button", {
         class: "btn",
-        onclick: () => save({ require_ship_scan: shipScan.checked, leaderboard_enabled: board.checked }, "Saved"),
+        onclick: () => save({ require_ship_scan: shipScan.checked, require_pack_photo: packPhoto.checked, leaderboard_enabled: board.checked }, "Saved"),
       }, "Save") : null),
 
     card("Barcode matching",

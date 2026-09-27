@@ -61,6 +61,9 @@ NO_BODY = {
     ("DELETE", "/api/products/{product_id}/barcodes/{barcode_id}"),
     ("POST", "/api/products/{product_id}/assign-barcode"),
     ("DELETE", "/api/products/{product_id}/substitutes/{substitute_id}"),
+    ("GET", "/api/batches/{batch_id}"),
+    ("DELETE", "/api/batches/{batch_id}"),
+    ("GET", "/api/worker/batches/{batch_id}"),
 }
 
 
@@ -94,6 +97,14 @@ def _catalog_for(client, owner) -> dict[str, str]:
     return {"product_id": p["id"], "barcode_id": r.json()["barcodes"][0]["id"], "substitute_id": sub["id"]}
 
 
+def _batch_for(client, owner) -> str:
+    one = make_order(client, owner, [("B-SECRET-B1", 1)], number="B-SECRET-BATCHED-1")
+    two = make_order(client, owner, [("B-SECRET-B2", 1)], number="B-SECRET-BATCHED-2")
+    r = client.post("/api/batches", json={"order_ids": [one["id"], two["id"]]}, headers=owner.h)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
 @pytest.fixture
 def two_tenants(client):
     a = signup(client, "Warehouse A")
@@ -125,6 +136,7 @@ def two_tenants(client):
         "flag_event_id": flag["id"],
         "integration_id": _connection_for(client, b),
         **_catalog_for(client, b),
+        "batch_id": _batch_for(client, b),
     }
     return a, a_phone, b, ids
 
@@ -164,6 +176,7 @@ def test_lists_and_reports_never_include_other_tenants(client, two_tenants):
         "/api/integrations",
         "/api/products",
         "/api/products?q=SECRET",
+        "/api/batches",
         "/api/dashboard/summary",
         "/api/dashboard/live",
         "/api/dashboard/workers",

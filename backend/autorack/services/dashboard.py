@@ -303,6 +303,8 @@ def order_rows(db: Session, wh: Warehouse, orders: list[Order]) -> list[dict[str
                 "workers": int(workers or 0),
                 "assigned_worker": names.get(o.assigned_worker_id) if o.assigned_worker_id else None,
                 "assigned_worker_id": str(o.assigned_worker_id) if o.assigned_worker_id else None,
+                "batch_id": str(o.batch_id) if o.batch_id else None,
+                "tote": o.tote,
                 "last_scan_at": last.isoformat() if last else None,
                 "created_at": o.created_at.isoformat(),
                 "completed_at": o.completed_at.isoformat() if o.completed_at else None,

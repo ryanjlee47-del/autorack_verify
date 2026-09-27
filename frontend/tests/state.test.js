@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  applyServerState, checkLabel, classify, corrections, displayLines, isOrderCode, lastUndoable, nextLine,
+  applyServerState, checkLabel, classify, classifyBatch, corrections, displayLines, isOrderCode, lastUndoable, nextLine,
   orderIdFromCode, progress, remaining, shippedTracking, sortForWalking, toWire,
 } from "../w/js/state.js";
 
@@ -251,4 +251,31 @@ test("case barcodes count their pack size and substitutes are marked", async () 
   const undo = [...pending, { id: "v", kind: "void", order_id: "o1", client_seq: 2, local: { lineId: "a", qty: 12 } }];
   assert.equal(displayLines(o, undo)[0].scanned_quantity, 0);
   assert.deepEqual(classify(o, o.lines, "SUB-9"), { result: "match", lineId: "b", tier: 5, sub: "Widget, new box" });
+});
+
+test("confirm events count like scans in the displayed lines", () => {
+  const o = order();
+  const pending = [{ id: "c1", kind: "confirm", order_id: "o1", client_seq: 1, line_item_id: "b", quantity: 1, local: { result: "match", lineId: "b", qty: 1 } }];
+  assert.equal(displayLines(o, pending).find((l) => l.id === "b").scanned_quantity, 1);
+});
+
+test("classifyBatch: the scan goes to the first tote that still needs it", () => {
+  const one = order({ id: "o1" });
+  const two = order({ id: "o2", lines: one.lines.map((l) => ({ ...l })) });
+  // o1 already has its one VND-1; o2 still needs one.
+  const linesOne = one.lines.map((l) => (l.id === "b" ? { ...l, scanned_quantity: 1 } : l));
+  const entries = [{ order: one, lines: linesOne }, { order: two, lines: two.lines }];
+  const hit = classifyBatch(entries, "VND-1", "o1");
+  assert.equal(hit.order.id, "o2");
+  assert.equal(hit.c.result, "match");
+  // The preferred order wins when both need it.
+  assert.equal(classifyBatch(entries, "025300000208", "o2").order.id, "o2");
+  assert.equal(classifyBatch(entries, "025300000208", "o1").order.id, "o1");
+  // Nobody needs it: judged against the preferred order.
+  const miss = classifyBatch(entries, "999", "o2");
+  assert.equal(miss.order.id, "o2");
+  assert.equal(miss.c.result, "mismatch");
+  // Everyone has it: over-pick, not a mismatch.
+  const full = entries.map((e) => ({ ...e, lines: e.lines.map((l) => (l.id === "b" ? { ...l, scanned_quantity: 1 } : l)) }));
+  assert.equal(classifyBatch(full, "VND-1", "o1").c.result, "over_pick");
 });

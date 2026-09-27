@@ -63,7 +63,7 @@ MAX_CLOCK_SKEW = timedelta(minutes=5)
 @dataclass
 class SyncEvent:
     id: uuid.UUID
-    kind: Literal["scan", "void", "flag", "short", "ship", "finish"]
+    kind: Literal["scan", "void", "flag", "short", "ship", "finish", "confirm"]
     order_id: uuid.UUID
     session_id: uuid.UUID
     client_scanned_at: datetime
@@ -212,6 +212,8 @@ def _apply_order_group(
                     if index is None:
                         index = order_svc.build_index(db, wh, lines)
                     out[ev.id] = _apply_scan(db, device, wh, order, lines_by_id, index, sess, ev)
+                elif ev.kind == "confirm":
+                    out[ev.id] = _apply_confirm(db, device, wh, order, lines_by_id, sess, ev)
                 elif ev.kind == "void":
                     out[ev.id] = _apply_void(db, device, wh, order, lines_by_id, sess, ev)
                 elif ev.kind == "short":
@@ -247,7 +249,7 @@ def _existing_outcome(db: Session, wh: Warehouse, ev: SyncEvent) -> EventOutcome
         if shipped and order is not None and order.tracking_number == tracking:
             return EventOutcome(str(ev.id), "ship", "duplicate", result="shipped")
         return None
-    if ev.kind in ("scan", "void"):
+    if ev.kind in ("scan", "void", "confirm"):
         prior = db.get(ScanEvent, ev.id)
         if prior is None:
             return None
@@ -382,6 +384,58 @@ def _apply_scan(
         quantity=units if units != 1 else None,
         substitution=True if substitution and result in (ScanResult.match, ScanResult.counted) else None,
     )
+
+
+def _apply_confirm(
+    db: Session,
+    device: Device,
+    wh: Warehouse,
+    order: Order,
+    lines_by_id: dict[str, OrderLineItem],
+    sess: WorkerSession,
+    ev: SyncEvent,
+) -> EventOutcome:
+    """An item with no barcode (a gift card, loose screws): the worker taps to
+    say it's in the box. It counts, but is marked as not scan-verified."""
+    _ensure_open(order)
+    line = lines_by_id.get(str(ev.line_item_id)) if ev.line_item_id else None
+    if line is None:
+        raise EventError("line_missing", "That item isn't on this order any more.")
+    if not line.confirm_without_scan:
+        raise EventError("scan_required", "This item has a barcode. Scan it.")
+    tally = order.kind in TALLY_KINDS
+    qty = max(1, ev.quantity or 1)
+    if not tally:
+        remaining = order_svc.line_remaining(line)
+        if remaining <= 0:
+            raise EventError("line_complete", "That item is already fully picked.")
+        qty = min(qty, remaining)
+    line.scanned_quantity += qty
+    result = ScanResult.counted if tally else ScanResult.match
+    _mark_started(order, ev.client_scanned_at)
+    db.add(
+        ScanEvent(
+            id=ev.id,
+            warehouse_id=wh.id,
+            order_id=order.id,
+            line_item_id=line.id,
+            intended_line_item_id=line.id,
+            worker_id=sess.worker_id,
+            device_id=device.id,
+            worker_session_id=sess.id,
+            scanned_barcode="",
+            normalized_barcode="",
+            result=result,
+            is_match=result == ScanResult.match,
+            was_offline=ev.offline,
+            client_seq=ev.client_seq,
+            client_scanned_at=ev.client_scanned_at,
+            quantity=qty,
+            confirmed=True,
+        )
+    )
+    db.flush()
+    return EventOutcome(str(ev.id), "confirm", "applied", result=result.value, line_item_id=str(line.id), quantity=qty)
 
 
 # ---------------------------------------------------------------------------
