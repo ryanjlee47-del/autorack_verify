@@ -7,6 +7,7 @@
 
 import { request } from "../../shared/api.js";
 import { h, mount } from "../../shared/dom.js";
+import { T } from "./i18n.js";
 
 /** Shrink a blank's text until it fits, as the server does in the PDF. */
 function fitText(span) {
@@ -38,7 +39,7 @@ function todayIn(timeZone) {
  * timeZone: for the effective date shown on page 1
  * submitLabel, onSubmit(details) -> Promise (rejections are shown inline)
  */
-export function agreementSigner({ info, prefill = {}, timeZone, submitLabel = "Sign agreement", onSubmit, onBack = null }) {
+export function agreementSigner({ info, prefill = {}, timeZone, submitLabel = T("Sign agreement"), onSubmit, onBack = null }) {
   const started = Date.now();
   const [pw, ph] = info.page_size;
   const overlays = {}; // field key -> [span, ...]
@@ -64,27 +65,27 @@ export function agreementSigner({ info, prefill = {}, timeZone, submitLabel = "S
       layer.appendChild(span);
     }
     return h("div", { class: "agr-page", style: { aspectRatio: `${pw} / ${ph}` } },
-      h("img", { src, alt: `Agreement page ${number} of ${info.pages.length}`, loading: number <= 2 ? "eager" : "lazy", draggable: "false" }),
+      h("img", { src, alt: T("Agreement page {number} of {length}", { number, length: info.pages.length }), loading: number <= 2 ? "eager" : "lazy", draggable: "false" }),
       layer);
   });
 
-  const endMarker = h("div", { class: "agr-end" }, "End of agreement");
-  const doc = h("div", { class: "agr-doc", tabindex: "0", "aria-label": "License agreement" }, ...pages, endMarker);
+  const endMarker = h("div", { class: "agr-end" }, T("End of agreement"));
+  const doc = h("div", { class: "agr-doc", tabindex: "0", "aria-label": T("License agreement") }, ...pages, endMarker);
   const progress = h("div", { class: "agr-progress" });
 
   const field = (id, label, value, attrs = {}) => {
     const input = h("input", { class: "input", id, value: value || "", maxlength: "300", autocomplete: "off", ...attrs });
     return [h("label", { for: id }, label), input];
   };
-  const [companyL, company] = field("agr-company", "Company legal name (the Client)", prefill.company_name, { autocomplete: "organization" });
-  const [addressL, address] = field("agr-address", "Company address", prefill.company_address, { autocomplete: "street-address", maxlength: "500" });
-  const [nameL, name] = field("agr-name", "Your full legal name — typing it is your signature", prefill.signer_name, { autocomplete: "name", maxlength: "200" });
-  const [titleL, title] = field("agr-title", "Your title", prefill.signer_title, { placeholder: "e.g. Owner, CEO, Operations Manager", maxlength: "200" });
+  const [companyL, company] = field("agr-company", T("Company legal name (the Client)"), prefill.company_name, { autocomplete: "organization" });
+  const [addressL, address] = field("agr-address", T("Company address"), prefill.company_address, { autocomplete: "street-address", maxlength: "500" });
+  const [nameL, name] = field("agr-name", T("Your full legal name — typing it is your signature"), prefill.signer_name, { autocomplete: "name", maxlength: "200" });
+  const [titleL, title] = field("agr-title", T("Your title"), prefill.signer_title, { placeholder: T("e.g. Owner, CEO, Operations Manager"), maxlength: "200" });
   const sigPreview = h("div", { class: "agr-sig-preview", "aria-live": "polite" });
   const agree = h("input", { type: "checkbox", id: "agr-agree" });
   const err = h("p", { class: "form-error", role: "alert" });
   const btn = h("button", { class: "btn btn-primary btn-lg", type: "submit", disabled: true }, submitLabel);
-  const lockNote = h("p", { class: "agr-lock muted small" }, "Scroll through the whole agreement above to sign.");
+  const lockNote = h("p", { class: "agr-lock muted small" }, T("Scroll through the whole agreement above to sign."));
 
   const countersigner = info.countersigner || {};
   const paint = () => {
@@ -107,7 +108,7 @@ export function agreementSigner({ info, prefill = {}, timeZone, submitLabel = "S
         fitText(s);
       }
     }
-    sigPreview.textContent = name.value.trim() || "Your signature";
+    sigPreview.textContent = name.value.trim() || T("Your signature");
     sigPreview.classList.toggle("agr-empty", !name.value.trim());
     const ready = reachedEnd && agree.checked && [company, address, name, title].every((i) => i.value.trim());
     btn.disabled = !ready;
@@ -124,8 +125,8 @@ export function agreementSigner({ info, prefill = {}, timeZone, submitLabel = "S
       paint();
     }
     progress.textContent = reachedEnd
-      ? "You've reached the end. Fill in the details below to sign."
-      : `Page ${page} of ${info.pages.length} · scroll to the end to sign`;
+      ? T("You've reached the end. Fill in the details below to sign.")
+      : T("Page {page} of {length} · scroll to the end to sign", { page, length: info.pages.length });
     progress.classList.toggle("agr-progress-done", reachedEnd);
   };
   doc.addEventListener("scroll", onScroll, { passive: true });
@@ -162,13 +163,13 @@ export function agreementSigner({ info, prefill = {}, timeZone, submitLabel = "S
   h("label", { class: "row check agr-consent", for: "agr-agree" }, agree, h("span", null, info.consent_text)),
   err,
   h("div", { class: "row agr-actions" },
-    onBack ? h("button", { class: "btn btn-lg", type: "button", onclick: onBack }, "Back") : null,
+    onBack ? h("button", { class: "btn btn-lg", type: "button", onclick: onBack }, T("Back")) : null,
     btn));
 
   const root = h("div", { class: "agr" },
     h("div", { class: "row-between agr-head" },
-      h("div", null, h("strong", null, info.title), h("span", { class: "muted small" }, ` · version ${info.version}`)),
-      h("a", { class: "btn btn-sm", href: info.pdf_url, target: "_blank", rel: "noopener" }, "Open PDF")),
+      h("div", null, h("strong", null, info.title), h("span", { class: "muted small" }, " " + T("· version {version}", { version: info.version }))),
+      h("a", { class: "btn btn-sm", href: info.pdf_url, target: "_blank", rel: "noopener" }, T("Open PDF"))),
     progress,
     doc,
     form);
@@ -186,22 +187,22 @@ export function agreementGate(host, { me, info, onSigned, onSignOut, onSwitch, a
   const wh = me.warehouse;
   if (!me.agreement.can_sign) {
     mount(host, h("div", { class: "agr-gate" },
-      h("h1", null, "Waiting on the license agreement"),
-      h("p", { class: "muted" }, `An owner of ${wh.name} needs to sign the Autorack license agreement before the dashboard can be used. Ask them to sign in; it takes a few minutes.`),
+      h("h1", null, T("Waiting on the license agreement")),
+      h("p", { class: "muted" }, T("An owner of {name} needs to sign the Autorack license agreement before the dashboard can be used. Ask them to sign in; it takes a few minutes.", { name: wh.name })),
       h("div", { class: "row" },
         ...me.warehouses.filter((w) => w.id !== wh.id).map((w) =>
           h("button", { class: "btn", onclick: () => onSwitch(w.id) }, `Go to ${w.name}`)),
-        h("button", { class: "btn", onclick: onSignOut }, "Sign out"))));
+        h("button", { class: "btn", onclick: onSignOut }, T("Sign out")))));
     return;
   }
   mount(host, h("div", { class: "agr-gate" },
-    h("h1", null, `Sign the license agreement for ${wh.name}`),
-    h("p", { class: "muted" }, "Before you keep using Autorack, please read our license agreement and sign it. Your phones keep scanning in the meantime."),
+    h("h1", null, T("Sign the license agreement for {name}", { name: wh.name })),
+    h("p", { class: "muted" }, T("Before you keep using Autorack, please read our license agreement and sign it. Your phones keep scanning in the meantime.")),
     agreementSigner({
       info,
       timeZone: wh.timezone,
       prefill: { signer_name: me.user.name || "" },
-      submitLabel: "Sign and continue",
+      submitLabel: T("Sign and continue"),
       onSubmit: async (details) => {
         await api("/api/agreement/sign", { method: "POST", body: details });
         onSigned();

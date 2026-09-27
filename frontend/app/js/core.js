@@ -2,6 +2,7 @@
 
 import { ApiError, imageUrl, download as rawDownload, request } from "../../shared/api.js";
 import { brandLockup, dialog, h, mount, toast } from "../../shared/dom.js";
+import { LANGUAGES, T, getLang, setLang } from "./i18n.js";
 
 const TOKEN_KEY = "ar.owner_token";
 
@@ -94,24 +95,32 @@ export async function switchWarehouse(id) {
 // Layout
 // ---------------------------------------------------------------------------
 
+/** Dashboard language: English, Español, 中文, Tiếng Việt. */
+export function languagePicker() {
+  return h("select", {
+    class: "input input-inline lang-select", "aria-label": T("Language"),
+    onchange: (e) => setLang(e.target.value),
+  }, ...LANGUAGES.map(([code, name]) => h("option", { value: code, selected: code === getLang(), lang: code }, name)));
+}
+
 /** The sidebar, grouped by what you're doing. */
 function navGroups() {
   const wh = ctx.me.warehouse;
   return [
-    [null, [["#/", "Dashboard"]]],
-    ["Work", [
-      ["#/orders", "Orders"],
-      ["#/restock", "Restock"],
-      wh.leaderboard_enabled ? ["#/board", "Floor board"] : null,
+    [null, [["#/", T("Dashboard")]]],
+    [T("Work"), [
+      ["#/orders", T("Orders")],
+      ["#/restock", T("Restock")],
+      wh.leaderboard_enabled ? ["#/board", T("Floor board")] : null,
     ]],
-    ["Products", [["#/products", "Catalog"], ["#/inserts", "Pack inserts"]]],
-    ["Team", [["#/workers", "Workers"], ["#/time", "Time clock"], ["#/devices", "Phones"]]],
-    ["Results", [["#/reports", "Reports"], ["#/insights", "Insights"]]],
-    ["Setup", [
-      ["#/clients", "Clients"],
-      ["#/connections", "Connections"],
-      isOwner() ? ["#/billing", "Billing"] : null,
-      ["#/settings", "Settings"],
+    [T("Products"), [["#/products", T("Catalog")], ["#/inserts", T("Pack inserts")]]],
+    [T("Team"), [["#/workers", T("Workers")], ["#/time", T("Time clock")], ["#/devices", T("Phones")]]],
+    [T("Results"), [["#/reports", T("Reports")], ["#/insights", T("Insights")]]],
+    [T("Setup"), [
+      ["#/clients", T("Clients")],
+      ["#/connections", T("Connections")],
+      isOwner() ? ["#/billing", T("Billing")] : null,
+      ["#/settings", T("Settings")],
     ]],
   ].map(([title, links]) => [title, links.filter(Boolean)]);
 }
@@ -122,7 +131,7 @@ function warehousePicker(me) {
   }
   return h("select", {
     class: "sidebar-wh sidebar-wh-select",
-    "aria-label": "Warehouse",
+    "aria-label": T("Warehouse"),
     onchange: (e) => switchWarehouse(e.target.value).catch(fail),
   }, ...me.warehouses.map((w) => h("option", { value: w.id, selected: w.id === me.warehouse.id }, w.name)));
 }
@@ -133,21 +142,21 @@ export function accessBanner() {
   if (a.state === "closed") {
     const due = ctx.me.warehouse.deletion_due_at;
     return h("div", { class: "banner banner-bad app-banner" },
-      "This account is closed. Scanning is off",
-      due ? `, and its data will be permanently deleted on ${new Date(due).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}. ` : ". ",
-      h("a", { href: "#/settings" }, isOwner() ? "Download your data or reopen →" : "Details →"));
+      T("This account is closed. Scanning is off"),
+      due ? T(", and its data will be permanently deleted on {p0}.", { p0: new Date(due).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) }) + " " : ". ",
+      h("a", { href: "#/settings" }, isOwner() ? T("Download your data or reopen →") : T("Details →")));
   }
   if (!a.allowed) {
     return h("div", { class: "banner banner-bad app-banner" },
-      a.message, " ", isOwner() ? h("a", { href: "#/billing" }, "Go to billing →") : null);
+      a.message, " ", isOwner() ? h("a", { href: "#/billing" }, T("Go to billing →")) : null);
   }
   if (a.state === "grace") {
-    return h("div", { class: "banner banner-warn app-banner" }, a.message, " ", h("a", { href: "#/billing" }, "Update payment →"));
+    return h("div", { class: "banner banner-warn app-banner" }, a.message, " ", h("a", { href: "#/billing" }, T("Update payment →")));
   }
   if (a.state === "trialing" && a.trial_days_left !== null && a.trial_days_left <= 5) {
     return h("div", { class: "banner banner-info app-banner" },
-      `Free trial: ${a.trial_days_left} day${a.trial_days_left === 1 ? "" : "s"} left. `,
-      h("a", { href: "#/billing" }, "Subscribe →"));
+      T("Free trial: {trial_days_left} day{p1} left.", { trial_days_left: a.trial_days_left, p1: a.trial_days_left === 1 ? "" : "s" }) + " ",
+      h("a", { href: "#/billing" }, T("Subscribe →")));
   }
   return null;
 }
@@ -169,14 +178,15 @@ export function layout(active, content) {
               const open = e.currentTarget.closest(".sidebar").classList.toggle("nav-open");
               e.currentTarget.setAttribute("aria-expanded", String(open));
             },
-          }, "☰ Menu")),
+          }, T("☰ Menu"))),
         warehousePicker(me),
         h("nav", { class: "nav" }, ...navLinks),
         h("div", { class: "sidebar-foot" },
-          me.is_operator ? h("a", { class: "small", href: "/admin/" }, "Operator console →") : null,
+          me.is_operator ? h("a", { class: "small", href: "/admin/" }, T("Operator console →")) : null,
           h("div", { class: "small muted", title: me.user.email }, me.user.email,
             role() && role() !== "owner" ? ` · ${role()}` : ""),
-          h("button", { class: "link-btn small", onclick: logout }, "Sign out"))),
+          h("button", { class: "link-btn small", onclick: logout }, T("Sign out")),
+          languagePicker())),
       h("main", { class: "main", id: "main" }, topBar(), accessBanner(), content)));
 }
 
@@ -188,29 +198,29 @@ export function layout(active, content) {
 function newItems() {
   if (!canManage()) return [];
   return [
-    ["New order", "#/orders/new"],
-    ["Import orders (CSV)", "#/orders/import"],
-    ["New receipt (receiving)", "#/orders/new?kind=receive"],
-    ["New cycle count", "#/orders/new?kind=count"],
-    ["New product", "#/products?new=1"],
-    ["Add a worker", "#/workers?new=1"],
-    ["Link a phone or pack station", "#/devices"],
-    ["New pack insert", "#/inserts?new=1"],
-    ["New client", "#/clients?new=1"],
+    [T("New order"), "#/orders/new"],
+    [T("Import orders (CSV)"), "#/orders/import"],
+    [T("New receipt (receiving)"), "#/orders/new?kind=receive"],
+    [T("New cycle count"), "#/orders/new?kind=count"],
+    [T("New product"), "#/products?new=1"],
+    [T("Add a worker"), "#/workers?new=1"],
+    [T("Link a phone or pack station"), "#/devices"],
+    [T("New pack insert"), "#/inserts?new=1"],
+    [T("New client"), "#/clients?new=1"],
   ];
 }
 
 function topBar() {
   const items = newItems();
   const menu = items.length ? h("details", { class: "new-menu" },
-    h("summary", { class: "btn btn-primary" }, "+ New"),
+    h("summary", { class: "btn btn-primary" }, T("+ New")),
     h("div", { class: "new-menu-list", role: "menu" }, ...items.map(([label, href]) =>
       h("a", { href, role: "menuitem", onclick: (e) => e.target.closest("details").removeAttribute("open") }, label)))) : null;
   return h("div", { class: "app-top" },
     h("button", { class: "search-trigger", type: "button", onclick: openPalette },
       h("span", { class: "search-icon", "aria-hidden": "true" }, "⌕"),
-      h("span", null, "Search orders, tracking, products, lots…"),
-      h("kbd", null, navigator.platform && /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K")),
+      h("span", null, T("Search orders, tracking, products, lots…")),
+      h("kbd", null, navigator.platform && /Mac/.test(navigator.platform) ? "⌘K" : T("Ctrl K"))),
     menu);
 }
 
@@ -230,12 +240,12 @@ export function openPalette() {
   let seq = 0;
   const input = h("input", {
     class: "input palette-input", type: "search", autocomplete: "off", spellcheck: "false",
-    placeholder: "Search, or type a command (new order, restock, settings…)", "aria-label": "Search",
+    placeholder: T("Search, or type a command (new order, restock, settings…)"), "aria-label": T("Search"),
   });
   const list = h("div", { class: "palette-list", role: "listbox" });
   const staticItems = () => [
-    ...newItems().map(([label, href]) => ({ label, href, group: "Create" })),
-    ...pageItems().map(([label, href, group]) => ({ label, href, group: group ? `Pages · ${group}` : "Pages" })),
+    ...newItems().map(([label, href]) => ({ label, href, group: T("Create") })),
+    ...pageItems().map(([label, href, group]) => ({ label, href, group: group ? T("Pages · {group}", { group }) : T("Pages") })),
   ];
   const render = () => {
     active = Math.max(0, Math.min(active, items.length - 1));
@@ -252,7 +262,7 @@ export function openPalette() {
         onclick: () => close(),
       }, h("span", null, it.label), it.hint ? h("span", { class: "muted small" }, it.hint) : null));
     });
-    mount(list, ...(rows.length ? rows : [h("p", { class: "muted palette-empty" }, "Nothing found.")]));
+    mount(list, ...(rows.length ? rows : [h("p", { class: "muted palette-empty" }, T("Nothing found."))]));
     const el = list.querySelector(".palette-item.active");
     if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
   };
@@ -271,12 +281,12 @@ export function openPalette() {
     if (mine !== seq) return;
     const found = [
       ...r.orders.map((o) => ({
-        group: "Orders", href: `#/orders/${o.id}`, label: o.number || o.id.slice(0, 8),
+        group: T("Orders"), href: `#/orders/${o.id}`, label: o.number || o.id.slice(0, 8),
         hint: [o.kind !== "pick" ? o.kind : null, o.status.replace("_", " "), o.customer, o.tracking_number].filter(Boolean).join(" · "),
       })),
-      ...r.products.map((p) => ({ group: "Products", href: `#/products/${p.id}`, label: p.name, hint: [p.sku, p.barcode].filter(Boolean).join(" · ") })),
-      ...r.workers.map((w) => ({ group: "Workers", href: "#/workers", label: w.name, hint: w.active ? "" : "inactive" })),
-      ...r.clients.map((c) => ({ group: "Clients", href: `#/clients/${c.id}`, label: c.name })),
+      ...r.products.map((p) => ({ group: T("Products"), href: `#/products/${p.id}`, label: p.name, hint: [p.sku, p.barcode].filter(Boolean).join(" · ") })),
+      ...r.workers.map((w) => ({ group: T("Workers"), href: "#/workers", label: w.name, hint: w.active ? "" : "inactive" })),
+      ...r.clients.map((c) => ({ group: T("Clients"), href: `#/clients/${c.id}`, label: c.name })),
     ];
     items = [...found, ...filterStatic(q)];
     render();
@@ -299,8 +309,8 @@ export function openPalette() {
       else if (input.value.trim()) { location.hash = `#/orders?status=&q=${encodeURIComponent(input.value.trim())}`; close(); }
     }
   });
-  const dlg = h("dialog", { class: "dialog palette", "aria-label": "Search" }, input, list,
-    h("div", { class: "palette-foot muted small" }, "↑↓ to move · Enter to open · Esc to close"));
+  const dlg = h("dialog", { class: "dialog palette", "aria-label": T("Search") }, input, list,
+    h("div", { class: "palette-foot muted small" }, T("↑↓ to move · Enter to open · Esc to close")));
   function close() {
     if (!paletteOpen) return;
     paletteOpen = false;
@@ -357,7 +367,7 @@ export function card(title, ...children) {
   return h("section", { class: "card" }, title ? h("h2", { class: "card-title" }, title) : null, ...children);
 }
 
-export function table(columns, rows, { empty = "Nothing here yet.", onRow } = {}) {
+export function table(columns, rows, { empty = T("Nothing here yet."), onRow } = {}) {
   if (!rows.length) return h("div", { class: "empty" }, empty);
   return h("div", { class: "table-wrap" },
     h("table", { class: "table" },
@@ -367,8 +377,18 @@ export function table(columns, rows, { empty = "Nothing here yet.", onRow } = {}
           ...columns.map((c) => h("td", { class: c.align ? `t-${c.align}` : null }, c.render ? c.render(r) : r[c.key])))))));
 }
 
+const STATUS_LABELS = {
+  pending: T("Not started"),
+  in_progress: T("In progress"),
+  flagged: T("Flagged"),
+  completed: T("Completed"),
+  finished: T("Finished"),
+  shipped: T("Shipped"),
+  cancelled: T("Cancelled"),
+};
+
 export function statusBadge(status) {
-  return h("span", { class: `badge badge-${status}` }, String(status).replace("_", " "));
+  return h("span", { class: `badge badge-${status}` }, STATUS_LABELS[status] || String(status).replace("_", " "));
 }
 
 // ---------------------------------------------------------------------------
@@ -383,20 +403,20 @@ export function photoStrip(ids, { base = "/api/photos/" } = {}) {
 }
 
 export function photoThumb(id, base = "/api/photos/", caption = null) {
-  const img = h("img", { class: "photo-thumb", alt: "Photo from the floor", loading: "lazy" });
-  const btn = h("button", { class: "photo-btn", type: "button", onclick: () => openPhoto(img.src, caption), "aria-label": "Open photo" }, img);
+  const img = h("img", { class: "photo-thumb", alt: T("Photo from the floor"), loading: "lazy" });
+  const btn = h("button", { class: "photo-btn", type: "button", onclick: () => openPhoto(img.src, caption), "aria-label": T("Open photo") }, img);
   imageUrl(`${base}${id}`, getToken()).then((url) => { img.src = url; }, () => btn.classList.add("photo-missing"));
   return btn;
 }
 
 function openPhoto(src, caption) {
   if (!src) return;
-  dialog("Photo from the floor", (close) => [
-    h("img", { class: "photo-full", src, alt: caption || "Photo from the floor" }),
+  dialog(T("Photo from the floor"), (close) => [
+    h("img", { class: "photo-full", src, alt: caption || T("Photo from the floor") }),
     caption ? h("p", { class: "muted small" }, caption) : null,
     h("div", { class: "dialog-actions" },
-      h("a", { class: "btn", href: src, download: "autorack-photo.jpg" }, "Download"),
-      h("button", { class: "btn btn-primary", onclick: () => close(true) }, "Close")),
+      h("a", { class: "btn", href: src, download: "autorack-photo.jpg" }, T("Download")),
+      h("button", { class: "btn btn-primary", onclick: () => close(true) }, T("Close"))),
   ], { wide: true });
 }
 

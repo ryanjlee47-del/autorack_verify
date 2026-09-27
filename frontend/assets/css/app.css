@@ -1820,3 +1820,19 @@ kbd {
     display: flex;
   }
 }
+
+.lang-select {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-brand .lang-select {
+  margin-top: 0;
+}

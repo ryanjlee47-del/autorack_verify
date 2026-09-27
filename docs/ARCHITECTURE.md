@@ -105,3 +105,41 @@ now?": pilot or active → yes; trial → until it ends; past-due → during the
 period; otherwise no. Locked warehouses can't sign workers in, open orders on
 phones, or create or import orders. They **can** read everything, manage billing,
 and sync scans that already happened.
+
+## Floor operations
+
+- **Boxes** (`packages`): every label scan is a box. A `ship` sync event with
+  `final: false` adds a box and leaves the order open; the last label (or a
+  label-less "that's all the boxes" event) ships it. The package id is the
+  phone's event id, so a replayed event is a duplicate. Tracking numbers are
+  unique across orders *and* boxes.
+- **Pack inserts** apply to every order, one client's orders, or orders
+  containing a product. The server refuses the ship event while one is
+  unchecked; checks are `insert` sync events (scanned or tapped).
+- **Batch picking**: a batch is only a grouping with a tote letter per order.
+  Each scan is still sent for one order (the phone picks the first order in
+  the batch that still needs the item), so matching, undo and proofs are
+  unchanged.
+- **Restock tasks** come from `restock` sync events and from short picks or
+  flags with an out-of-stock reason, one open task per bin and item.
+- **Time clock** (`shifts`): clock in/out on the phone; a shift left open for
+  14 hours is closed by the jobs runner at the worker's last scan.
+
+## 3PL clients and the portal
+
+`clients` owns orders and products. A portal login is a `membership` with
+role `client` and a `client_id`: `current_member` refuses it everywhere in the
+dashboard API, and `current_client` (used only by `/api/portal/*`) scopes
+every query to that client. The portal never returns worker names, problem
+reports or problem photos; packed-box photos are served only for the client's
+own orders. Statements multiply the client's `rates` by counts taken from the
+scan log for the month (`services/client_billing.py`).
+
+## Languages
+
+The phone app has its own dictionary (`frontend/w/js/i18n.js`). The dashboard
+wraps every string in `T("English text", vars)`; `app/js/locales/{es,zh,vi}.js`
+map the English to translations and `frontend/tests/dashboard-i18n.test.js`
+fails if a string has no translation or a translation uses a placeholder the
+English doesn't. Changing the language reloads the page. API error messages
+stay in English.

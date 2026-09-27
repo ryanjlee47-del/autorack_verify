@@ -64,8 +64,18 @@ export function svg(markup, className) {
 // Formatting
 // ---------------------------------------------------------------------------
 
+// The dashboard sets these for its chosen language (app/js/i18n.js); pages
+// that don't translate keep English words and the browser's own locale.
+let locale;
+let translate = (text, vars) => (vars ? text.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m)) : text);
+
+export function setLocale(value, fn) {
+  locale = value;
+  if (fn) translate = fn;
+}
+
 export function fmtNumber(n) {
-  return n === null || n === undefined ? "–" : new Intl.NumberFormat().format(n);
+  return n === null || n === undefined ? "–" : new Intl.NumberFormat(locale).format(n);
 }
 
 export function fmtPercent(x, digits = 1) {
@@ -73,13 +83,13 @@ export function fmtPercent(x, digits = 1) {
 }
 
 export function fmtMoney(cents, currency = "usd") {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency: currency.toUpperCase(), maximumFractionDigits: 0 })
+  return new Intl.NumberFormat(locale, { style: "currency", currency: currency.toUpperCase(), maximumFractionDigits: 0 })
     .format(cents / 100);
 }
 
 /** Money to the cent, for invoices and rates ($2.50, not $3). */
 export function fmtCents(cents, currency = "usd") {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency: currency.toUpperCase() }).format((cents || 0) / 100);
+  return new Intl.NumberFormat(locale, { style: "currency", currency: currency.toUpperCase() }).format((cents || 0) / 100);
 }
 
 export function fmtDateTime(iso, timeZone) {
@@ -87,7 +97,7 @@ export function fmtDateTime(iso, timeZone) {
   const opts = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
   if (timeZone) opts.timeZone = timeZone;
   try {
-    return new Intl.DateTimeFormat(undefined, opts).format(new Date(iso));
+    return new Intl.DateTimeFormat(locale, opts).format(new Date(iso));
   } catch {
     return new Date(iso).toLocaleString();
   }
@@ -97,16 +107,16 @@ export function fmtDate(iso, timeZone) {
   if (!iso) return "–";
   const opts = { year: "numeric", month: "short", day: "numeric" };
   if (timeZone) opts.timeZone = timeZone;
-  return new Intl.DateTimeFormat(undefined, opts).format(new Date(iso));
+  return new Intl.DateTimeFormat(locale, opts).format(new Date(iso));
 }
 
 export function fmtAgo(iso, now = Date.now()) {
-  if (!iso) return "never";
+  if (!iso) return translate("never");
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
-  if (s < 45) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} d ago`;
+  if (s < 45) return translate("just now");
+  if (s < 3600) return translate("{n} min ago", { n: Math.round(s / 60) });
+  if (s < 86400) return translate("{n} h ago", { n: Math.round(s / 3600) });
+  return translate("{n} d ago", { n: Math.round(s / 86400) });
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +161,7 @@ export function dialog(title, render, { wide = false } = {}) {
       dlg,
       h("div", { class: "dialog-head" },
         h("h2", null, title),
-        h("button", { class: "icon-btn", "aria-label": "Close", onclick: () => close(null) }, "✕")),
+        h("button", { class: "icon-btn", "aria-label": translate("Close"), onclick: () => close(null) }, "✕")),
       h("div", { class: "dialog-body" }, render(close)),
     );
     document.body.appendChild(dlg);
@@ -161,11 +171,11 @@ export function dialog(title, render, { wide = false } = {}) {
   });
 }
 
-export function confirmDialog(title, message, { confirmLabel = "Confirm", danger = false } = {}) {
+export function confirmDialog(title, message, { confirmLabel = translate("Confirm"), danger = false } = {}) {
   return dialog(title, (close) => [
     h("p", null, message),
     h("div", { class: "dialog-actions" },
-      h("button", { class: "btn", onclick: () => close(false) }, "Cancel"),
+      h("button", { class: "btn", onclick: () => close(false) }, translate("Cancel")),
       h("button", { class: ["btn", danger ? "btn-danger" : "btn-primary"], onclick: () => close(true) }, confirmLabel)),
   ]).then((v) => v === true);
 }

@@ -2,19 +2,20 @@
 
 import { confirmDialog, dialog, fmtAgo, fmtNumber, fmtPercent, h, svg, toast } from "../../../shared/dom.js";
 import { api, canManage, card, fail, isOwner, layout, pageHeader, table, wantsNew } from "../core.js";
+import { T } from "../i18n.js";
 
 function showPin(name, pin) {
-  return dialog(`PIN for ${name}`, (close) => [
-    h("p", null, "Give this PIN to ", h("strong", null, name), ". It's shown only once. You can reset it any time."),
-    h("div", { class: "pin-reveal", "aria-label": `PIN ${pin.split("").join(" ")}` }, pin),
-    h("div", { class: "dialog-actions" }, h("button", { class: "btn btn-primary", onclick: () => close(true) }, "Done")),
+  return dialog(T("PIN for {name}", { name }), (close) => [
+    h("p", null, T("Give this PIN to") + " ", h("strong", null, name), T(". It's shown only once. You can reset it any time.")),
+    h("div", { class: "pin-reveal", "aria-label": T("PIN {p0}", { p0: pin.split("").join(" ") }) }, pin),
+    h("div", { class: "dialog-actions" }, h("button", { class: "btn btn-primary", onclick: () => close(true) }, T("Done"))),
   ]);
 }
 
 async function addWorker(reload) {
-  const result = await dialog("Add worker", (close) => {
-    const name = h("input", { class: "input", placeholder: "Name as it should appear on reports", maxlength: "100", required: true });
-    const pin = h("input", { class: "input mono", placeholder: "Leave blank to generate", inputmode: "numeric", maxlength: "4", pattern: "[0-9]{4}" });
+  const result = await dialog(T("Add worker"), (close) => {
+    const name = h("input", { class: "input", placeholder: T("Name as it should appear on reports"), maxlength: "100", required: true });
+    const pin = h("input", { class: "input mono", placeholder: T("Leave blank to generate"), inputmode: "numeric", maxlength: "4", pattern: "[0-9]{4}" });
     return h("form", {
       class: "stack",
       onsubmit: (e) => {
@@ -22,12 +23,12 @@ async function addWorker(reload) {
         close({ name: name.value.trim(), pin: pin.value.trim() || null });
       },
     },
-    h("label", null, "Name"), name,
-    h("label", null, "4-digit PIN"), pin,
-    h("p", { class: "muted small" }, "PINs are unique within this warehouse. A generated PIN avoids easy guesses like 1234."),
+    h("label", null, T("Name")), name,
+    h("label", null, T("4-digit PIN")), pin,
+    h("p", { class: "muted small" }, T("PINs are unique within this warehouse. A generated PIN avoids easy guesses like 1234.")),
     h("div", { class: "dialog-actions" },
-      h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
-      h("button", { class: "btn btn-primary", type: "submit" }, "Add worker")));
+      h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("Cancel")),
+      h("button", { class: "btn btn-primary", type: "submit" }, T("Add worker"))));
   });
   if (!result) return;
   try {
@@ -49,7 +50,7 @@ export async function workersView(params) {
       class: "btn btn-sm",
       onclick: async (e) => {
         e.stopPropagation();
-        if (!(await confirmDialog("Reset PIN?", `${w.name} will be signed out and needs the new PIN.`, { confirmLabel: "Reset PIN" }))) return;
+        if (!(await confirmDialog(T("Reset PIN?"), T("{name} will be signed out and needs the new PIN.", { name: w.name }), { confirmLabel: T("Reset PIN") }))) return;
         try {
           const r = await api(`/api/workers/${w.worker_id}/reset-pin`, { method: "POST", body: {} });
           await showPin(r.name, r.pin);
@@ -57,26 +58,26 @@ export async function workersView(params) {
           fail(err);
         }
       },
-    }, "Reset PIN") : null,
+    }, T("Reset PIN")) : null,
     h("button", {
       class: "btn btn-sm",
       onclick: async (e) => {
         e.stopPropagation();
-        const name = await dialog("Rename worker", (close) => {
+        const name = await dialog(T("Rename worker"), (close) => {
           const input = h("input", { class: "input", value: w.name, maxlength: "100" });
           return h("form", { class: "stack", onsubmit: (ev) => { ev.preventDefault(); close(input.value.trim()); } }, input,
-            h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
-              h("button", { class: "btn btn-primary", type: "submit" }, "Save")));
+            h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("Cancel")),
+              h("button", { class: "btn btn-primary", type: "submit" }, T("Save"))));
         });
         if (name) await api(`/api/workers/${w.worker_id}`, { method: "PATCH", body: { name } }).then(reload, fail);
       },
-    }, "Rename"),
+    }, T("Rename")),
     h("button", {
       class: "btn btn-sm btn-ghost",
       onclick: async (e) => {
         e.stopPropagation();
         if (w.active) {
-          if (!(await confirmDialog("Deactivate worker?", `${w.name} is signed out and their PIN stops working. Their history is kept.`, { confirmLabel: "Deactivate", danger: true }))) return;
+          if (!(await confirmDialog(T("Deactivate worker?"), T("{name} is signed out and their PIN stops working. Their history is kept.", { name: w.name }), { confirmLabel: T("Deactivate"), danger: true }))) return;
           await api(`/api/workers/${w.worker_id}`, { method: "PATCH", body: { active: false } }).then(reload, fail);
         } else {
           try {
@@ -88,45 +89,45 @@ export async function workersView(params) {
           }
         }
       },
-    }, w.active ? "Deactivate" : "Reactivate"));
+    }, w.active ? T("Deactivate") : T("Reactivate")));
 
   const workers = data.workers.slice().sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
   layout("#/workers", [
-    pageHeader("Workers", "Everyone who signs in on a phone with a PIN.",
+    pageHeader(T("Workers"), T("Everyone who signs in on a phone with a PIN."),
       h("select", {
         class: "input input-inline",
         onchange: (e) => { location.hash = `#/workers?days=${e.target.value}`; },
-      }, ...[7, 30, 90].map((d) => h("option", { value: String(d), selected: d === days }, `Last ${d} days`))),
-      canManage() ? h("button", { class: "btn btn-primary", onclick: () => addWorker(reload) }, "Add worker") : null),
+      }, ...[7, 30, 90].map((d) => h("option", { value: String(d), selected: d === days }, T("Last {d} days", { d })))),
+      canManage() ? h("button", { class: "btn btn-primary", onclick: () => addWorker(reload) }, T("Add worker")) : null),
     card(null,
-      h("p", { class: "muted small" }, `Warehouse mistake rate over ${days} days: `, h("strong", null, fmtPercent(data.warehouse_error_rate)),
-        ". A worker is highlighted when their rate is at least double that (and 3 points higher) over 30+ scans."),
+      h("p", { class: "muted small" }, T("Warehouse mistake rate over {days} days:", { days }) + " ", h("strong", null, fmtPercent(data.warehouse_error_rate)),
+        T(". A worker is highlighted when their rate is at least double that (and 3 points higher) over 30+ scans.")),
       table([
         {
-          label: "Name",
+          label: T("Name"),
           render: (w) => h("span", { class: "row nowrap" }, h("strong", null, w.name),
             !w.active ? h("span", { class: "badge" }, "inactive") : null,
             w.needs_attention ? h("span", { class: "badge badge-warn" }, "check in") : null),
         },
-        { label: "Scans", align: "right", render: (w) => fmtNumber(w.scans) },
-        { label: "Units picked", align: "right", render: (w) => fmtNumber(w.units_picked ?? 0) },
+        { label: T("Scans"), align: "right", render: (w) => fmtNumber(w.scans) },
+        { label: T("Units picked"), align: "right", render: (w) => fmtNumber(w.units_picked ?? 0) },
         {
-          label: "Units / hour", align: "right",
-          render: (w) => (w.uph != null ? h("span", { title: `${w.hours} hours on the clock` }, String(w.uph)) : h("span", { class: "muted", title: "Needs the time clock (Settings → On the floor)" }, "–")),
+          label: T("Units / hour"), align: "right",
+          render: (w) => (w.uph != null ? h("span", { title: T("{hours} hours on the clock", { hours: w.hours }) }, String(w.uph)) : h("span", { class: "muted", title: T("Needs the time clock (Settings → On the floor)") }, "–")),
         },
-        { label: "Mistakes caught", align: "right", render: (w) => fmtNumber((w.mismatches ?? 0) + (w.over_picks ?? 0)) },
-        { label: "Mistake rate", align: "right", render: (w) => h("span", { class: w.needs_attention ? "warn-text" : null }, fmtPercent(w.error_rate)) },
-        { label: "Undos", align: "right", render: (w) => fmtNumber(w.undos ?? 0) },
-        { label: "Flags", align: "right", render: (w) => fmtNumber(w.flags ?? 0) },
-        { label: "Last active", render: (w) => h("span", { class: "muted" }, fmtAgo(w.last_active)) },
+        { label: T("Mistakes caught"), align: "right", render: (w) => fmtNumber((w.mismatches ?? 0) + (w.over_picks ?? 0)) },
+        { label: T("Mistake rate"), align: "right", render: (w) => h("span", { class: w.needs_attention ? "warn-text" : null }, fmtPercent(w.error_rate)) },
+        { label: T("Undos"), align: "right", render: (w) => fmtNumber(w.undos ?? 0) },
+        { label: T("Flags"), align: "right", render: (w) => fmtNumber(w.flags ?? 0) },
+        { label: T("Last active"), render: (w) => h("span", { class: "muted" }, fmtAgo(w.last_active)) },
         {
-          label: "Privacy notice",
+          label: T("Privacy notice"),
           render: (w) => (w.notice_acknowledged_at
-            ? h("span", { class: "muted", title: new Date(w.notice_acknowledged_at).toLocaleString() }, "Read ✓")
-            : h("span", { class: "muted" }, "Not yet")),
+            ? h("span", { class: "muted", title: new Date(w.notice_acknowledged_at).toLocaleString() }, T("Read ✓"))
+            : h("span", { class: "muted" }, T("Not yet"))),
         },
         canManage() ? { label: "", render: rowActions } : null,
-      ].filter(Boolean), workers, { empty: "No workers yet. Add one, then link a phone so they can sign in." })),
+      ].filter(Boolean), workers, { empty: T("No workers yet. Add one, then link a phone so they can sign in.") })),
   ]);
   if (wantsNew(params)) addWorker(reload);
 }
@@ -143,63 +144,63 @@ export async function devicesView() {
   const revoked = devices.filter((d) => d.revoked_at);
 
   layout("#/devices", [
-    pageHeader("Phones", "Any phone works: workers' own, or shared ones kept at the dock."),
+    pageHeader(T("Phones"), T("Any phone works: workers' own, or shared ones kept at the dock.")),
     h("div", { class: "grid-main" },
-      card("Link a phone",
+      card(T("Link a phone"),
         h("ol", { class: "steps" },
-          h("li", null, "Open the phone's camera and point it at this code."),
-          h("li", null, "Tap the link. The Autorack scanner opens and links itself."),
-          h("li", null, "Add it to the home screen when prompted. It works offline from then on."),
-          h("li", null, "The worker signs in with their PIN.")),
-        h("p", { class: "muted small" }, "No camera handy? Open ", h("span", { class: "mono" }, link.url.replace(/\?.*$/, "")), " on the phone and type the setup code."),
+          h("li", null, T("Open the phone's camera and point it at this code.")),
+          h("li", null, T("Tap the link. The Autorack scanner opens and links itself.")),
+          h("li", null, T("Add it to the home screen when prompted. It works offline from then on.")),
+          h("li", null, T("The worker signs in with their PIN."))),
+        h("p", { class: "muted small" }, T("No camera handy? Open") + " ", h("span", { class: "mono" }, link.url.replace(/\?.*$/, "")), " " + T("on the phone and type the setup code.")),
         h("div", { class: "row" },
-          h("button", { class: "btn", onclick: () => window.open(`/app/print.html?setup=1`, "_blank", "noopener") }, "Print setup poster"),
+          h("button", { class: "btn", onclick: () => window.open(`/app/print.html?setup=1`, "_blank", "noopener") }, T("Print setup poster")),
           isOwner() ? h("button", {
             class: "btn btn-ghost",
             onclick: async () => {
-              if (!(await confirmDialog("Change the setup code?", "The old code and QR stop working for new phones. Phones already linked keep working.", { confirmLabel: "Change code" }))) return;
+              if (!(await confirmDialog(T("Change the setup code?"), T("The old code and QR stop working for new phones. Phones already linked keep working."), { confirmLabel: T("Change code") }))) return;
               await api("/api/warehouse/device-link/rotate", { method: "POST" }).then(reload, fail);
             },
-          }, "Change setup code") : null)),
+          }, T("Change setup code")) : null)),
       card(null,
         h("div", { class: "qr-box qr-large" }, svg(link.qr_svg, "qr")),
         h("div", { class: "setup-code mono" }, link.join_code))),
-    card("Pack station (laptop or tablet)",
-      h("p", null, "For the packing bench: a laptop or tablet with a USB or Bluetooth scanner, and a webcam for box photos. Same PIN sign-in, works offline, and shows the whole order at once."),
-      h("p", null, "On that computer, open ", h("a", { class: "mono", href: stationUrl, target: "_blank", rel: "noopener" }, stationUrl.replace(/\?.*$/, "")),
-        " and enter the setup code ", h("strong", { class: "mono" }, link.join_code), ". Or open this link on it: ",
-        h("button", { class: "btn btn-sm", onclick: () => navigator.clipboard.writeText(stationUrl).then(() => toast("Link copied", "ok"), () => toast(stationUrl)) }, "Copy station link"))),
-    card(`Linked phones (${active.length})`,
+    card(T("Pack station (laptop or tablet)"),
+      h("p", null, T("For the packing bench: a laptop or tablet with a USB or Bluetooth scanner, and a webcam for box photos. Same PIN sign-in, works offline, and shows the whole order at once.")),
+      h("p", null, T("On that computer, open") + " ", h("a", { class: "mono", href: stationUrl, target: "_blank", rel: "noopener" }, stationUrl.replace(/\?.*$/, "")),
+        " " + T("and enter the setup code") + " ", h("strong", { class: "mono" }, link.join_code), T(". Or open this link on it:") + " ",
+        h("button", { class: "btn btn-sm", onclick: () => navigator.clipboard.writeText(stationUrl).then(() => toast(T("Link copied"), "ok"), () => toast(stationUrl)) }, T("Copy station link")))),
+    card(T("Linked phones ({length})", { length: active.length }),
       table([
-        { label: "Phone", render: (d) => h("strong", null, d.label) },
-        { label: "Signed in", render: (d) => d.current_worker || h("span", { class: "muted" }, "Nobody") },
-        { label: "Last seen", render: (d) => h("span", { class: "muted" }, fmtAgo(d.last_seen_at)) },
-        { label: "Linked", render: (d) => h("span", { class: "muted" }, fmtAgo(d.created_at)) },
+        { label: T("Phone"), render: (d) => h("strong", null, d.label) },
+        { label: T("Signed in"), render: (d) => d.current_worker || h("span", { class: "muted" }, T("Nobody")) },
+        { label: T("Last seen"), render: (d) => h("span", { class: "muted" }, fmtAgo(d.last_seen_at)) },
+        { label: T("Linked"), render: (d) => h("span", { class: "muted" }, fmtAgo(d.created_at)) },
         canManage() && {
           label: "",
           render: (d) => h("div", { class: "row nowrap" },
             h("button", {
               class: "btn btn-sm",
               onclick: async () => {
-                const label = await dialog("Rename phone", (close) => {
+                const label = await dialog(T("Rename phone"), (close) => {
                   const input = h("input", { class: "input", value: d.label, maxlength: "100" });
                   return h("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); close(input.value.trim()); } }, input,
-                    h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
-                      h("button", { class: "btn btn-primary", type: "submit" }, "Save")));
+                    h("div", { class: "dialog-actions" }, h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("Cancel")),
+                      h("button", { class: "btn btn-primary", type: "submit" }, T("Save"))));
                 });
                 if (label) await api(`/api/devices/${d.id}`, { method: "PATCH", body: { label } }).then(reload, fail);
               },
-            }, "Rename"),
+            }, T("Rename")),
             h("button", {
               class: "btn btn-sm btn-ghost",
               onclick: async () => {
-                if (!(await confirmDialog("Unlink this phone?", `${d.label} is signed out and can't be used until it's linked again. Scans that already synced are kept. Scans still waiting on the phone (made offline) will not sync, so let it reconnect first if you can.`, { confirmLabel: "Unlink", danger: true }))) return;
-                await api(`/api/devices/${d.id}/revoke`, { method: "POST" }).then(() => { toast("Phone unlinked", "ok"); reload(); }, fail);
+                if (!(await confirmDialog(T("Unlink this phone?"), T("{label} is signed out and can't be used until it's linked again. Scans that already synced are kept. Scans still waiting on the phone (made offline) will not sync, so let it reconnect first if you can.", { label: d.label }), { confirmLabel: T("Unlink"), danger: true }))) return;
+                await api(`/api/devices/${d.id}/revoke`, { method: "POST" }).then(() => { toast(T("Phone unlinked"), "ok"); reload(); }, fail);
               },
-            }, "Unlink")),
+            }, T("Unlink"))),
         },
-      ].filter(Boolean), active, { empty: "No phones linked yet." })),
-    revoked.length ? h("details", { class: "card" }, h("summary", null, `Unlinked phones (${revoked.length})`),
-      table([{ label: "Phone", key: "label" }, { label: "Unlinked", render: (d) => fmtAgo(d.revoked_at) }], revoked)) : null,
+      ].filter(Boolean), active, { empty: T("No phones linked yet.") })),
+    revoked.length ? h("details", { class: "card" }, h("summary", null, T("Unlinked phones ({length})", { length: revoked.length })),
+      table([{ label: T("Phone"), key: "label" }, { label: T("Unlinked"), render: (d) => fmtAgo(d.revoked_at) }], revoked)) : null,
   ]);
 }

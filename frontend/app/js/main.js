@@ -12,6 +12,7 @@ import { boardView, reportsView } from "./views/reports.js";
 import { importView, newOrderView, orderDetailView, ordersView } from "./views/orders.js";
 import { devicesView, workersView } from "./views/people.js";
 import { reportErrors } from "../../shared/report-errors.js";
+import { T } from "./i18n.js";
 
 reportErrors("dashboard");
 
@@ -52,7 +53,7 @@ async function route() {
       } catch (e) {
         fail(e);
         const main = document.getElementById("main");
-        if (main) mount(main, h("div", { class: "empty" }, "Couldn't load this page. ", h("a", { href: location.hash }, "Try again")));
+        if (main) mount(main, h("div", { class: "empty" }, T("Couldn't load this page.") + " ", h("a", { href: location.hash }, T("Try again"))));
       }
       return;
     }
@@ -65,7 +66,7 @@ async function boot() {
   try {
     await loadMe();
   } catch (e) {
-    mount(document.getElementById("app"), h("div", { class: "empty" }, e.message || "Couldn't reach Autorack. ", h("a", { href: "" }, "Retry")));
+    mount(document.getElementById("app"), h("div", { class: "empty" }, e.message || T("Couldn't reach Autorack.") + " ", h("a", { href: "" }, T("Retry"))));
     return;
   }
   if (ctx.me.membership && ctx.me.membership.role === "client") {
@@ -78,12 +79,12 @@ async function boot() {
     // was removed from every team.
     if (ctx.me.is_operator) return location.replace("/admin/");
     mount(document.getElementById("app"), h("div", { class: "auth-page" }, h("div", { class: "auth-card" },
-      h("h1", null, "No warehouse yet"),
-      h("p", { class: "muted" }, "You're signed in, but you're not on any warehouse's team. Ask an owner to invite you."),
-      h("button", { class: "btn", onclick: logout }, "Sign out"))));
+      h("h1", null, T("No warehouse yet")),
+      h("p", { class: "muted" }, T("You're signed in, but you're not on any warehouse's team. Ask an owner to invite you.")),
+      h("button", { class: "btn", onclick: logout }, T("Sign out")))));
     return;
   }
-  document.title = `${ctx.me.warehouse.name} · Autorack`;
+  document.title = T("{name} · Autorack", { name: ctx.me.warehouse.name });
   if (ctx.me.agreement && ctx.me.agreement.required) {
     const host = document.getElementById("app");
     mount(host, h("div", { class: "boot" }, h("div", { class: "skeleton" })));

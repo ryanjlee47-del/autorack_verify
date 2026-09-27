@@ -20,8 +20,10 @@ Flat **$175/month per warehouse**. 14-day trial, free pilots.
 
 | Surface | Where | What it does |
 |---|---|---|
-| Worker PWA | `frontend/w/` | Link phone, PIN sign-in, pick orders, scan (camera or Bluetooth wedge), works offline, English/Spanish/Chinese/Vietnamese |
-| Owner dashboard | `frontend/app/` | Live floor, mistakes caught, CSV import, pick sheets, workers, phones, insights, billing, settings |
+| Worker PWA | `frontend/w/` | Link phone, PIN sign-in, home tiles (pick, pack & ship, receive, returns, count), scan (camera, Bluetooth/USB, ring or Zebra/Honeywell scanners), batch/tote picking, time clock, works offline, English/Spanish/Chinese/Vietnamese |
+| Pack station | `frontend/w/station.html` | The same app laid out for a laptop at the packing bench: USB scanner, whole order on screen, webcam box photos |
+| Owner dashboard | `frontend/app/` | Live floor, mistakes caught, orders (rush, ship-by, batches, boxes), catalog, restock, time clock, clients and billing statements, reports, settings; search everywhere (Ctrl+K); English/Spanish/Chinese/Vietnamese |
+| Client portal | `frontend/portal/` | For 3PLs' brands: their own orders, tracking, proof, returns, monthly report and statement |
 | Landing page | `frontend/index.html` | Marketing + pricing |
 | API | `backend/autorack/` | Auth, matching, orders, scan sync, dashboard, Stripe |
 
@@ -76,6 +78,23 @@ Owners can **download all their data** as one ZIP and **close the account**
 reminder; reopen any time before). Workers see a **privacy notice** on the
 phone before their first order. `/security.html` describes the safeguards and
 `docs/INCIDENT_RESPONSE.md` what to do when something goes wrong.
+
+**On the floor, beyond picking**: a **product catalog** with pictures,
+bins, packer notes, case/inner-pack barcodes, kits and approved substitutes
+(pulled from Shopify/WooCommerce/ShipStation or imported by CSV) and printable
+barcode labels; items with **no barcode** are confirmed by tap and marked as
+such; **batch picking** into totes; **rush orders and ship-by cutoffs** at the
+top of every list; **pack inserts** ticked off or scanned before the label;
+a **photo of the packed box**; orders shipped in **several boxes**, each with
+its own tracking number; **restock tasks** when a bin runs empty; a **time
+clock** with units per hour; and per-phone **scanner and sound settings**.
+
+**For 3PLs**: tag orders and products with a **client**, give each client
+**portal logins** (Google sign-in; only their own orders, never internal notes
+or who picked), set per-client **rates** and print a monthly **statement**
+counted from the scan log. Any shipped order has an **evidence pack** PDF
+(scan log, boxes, tracking, box photos) for carrier claims and marketplace
+disputes.
 
 New warehouses get a **setup checklist** and can load 12 sample orders with a
 printable barcode sheet, to try scanning before importing anything.

@@ -6,6 +6,7 @@
 import { fmtAgo, fmtMoney, fmtNumber, fmtPercent, h, mount, toast } from "../../../shared/dom.js";
 import { api, canManage, card, ctx, fail, layout, pageHeader, poll, statusBadge, table } from "../core.js";
 import { flagItem } from "./flags.js";
+import { T } from "../i18n.js";
 
 function tile(label, value, { hero = false, tone = null, hint = null, href = null } = {}) {
   return h(href ? "a" : "div", { class: ["tile", hero && "tile-hero", tone && `tile-${tone}`, href && "tile-link"], href },
@@ -22,7 +23,20 @@ function progressCell(o) {
 }
 
 export function problemLabel(result) {
-  return { mismatch: "Wrong item", over_pick: "Extra unit", review: "Needs review" }[result] || result;
+  return { mismatch: T("Wrong item"), over_pick: T("Extra unit"), review: T("Needs review") }[result] || result;
+}
+
+const STEP_LABELS = {
+  worker: T("Add a worker and give them their PIN"),
+  phone: T("Link a phone with the setup QR code"),
+  orders: T("Import orders, or load the sample orders"),
+  scan: T("Scan the first item on a phone"),
+  complete: T("Finish picking a whole order"),
+  real: T("Import your own pick list"),
+};
+
+function stepLabel(st) {
+  return STEP_LABELS[st.key] || st.label;
 }
 
 /** First-run checklist, from real data. Hidden once done or dismissed. */
@@ -33,7 +47,7 @@ function onboarding(ob, refresh) {
     e.target.disabled = true;
     try {
       const r = await api("/api/onboarding/sample", { method: "POST" });
-      toast(`Loaded ${r.orders_created} sample orders. Print their barcodes and try scanning.`, "ok", 7000);
+      toast(T("Loaded {orders_created} sample orders. Print their barcodes and try scanning.", { orders_created: r.orders_created }), "ok", 7000);
       refresh();
     } catch (err) {
       e.target.disabled = false;
@@ -42,25 +56,25 @@ function onboarding(ob, refresh) {
   };
   return h("section", { class: "card onboarding" },
     h("div", { class: "row-between" },
-      h("h2", { class: "card-title" }, `Get set up · ${ob.done} of ${ob.total} done`),
+      h("h2", { class: "card-title" }, T("Get set up · {done} of {total} done", { done: ob.done, total: ob.total })),
       manage ? h("button", {
         class: "link-btn small",
         onclick: () => api("/api/onboarding/dismiss", { method: "POST" }).then(refresh, fail),
-      }, "Hide") : null),
+      }, T("Hide")) : null),
     h("div", { class: "bar" }, h("span", { style: { width: `${Math.round((100 * ob.done) / ob.total)}%` } })),
     h("ol", { class: "checklist-steps" }, ...ob.steps.map((st) =>
       h("li", { class: st.done ? "done" : null },
         h("span", { class: "step-check", "aria-hidden": "true" }, st.done ? "✓" : ""),
-        st.done ? h("span", null, st.label) : h("a", { href: st.href }, st.label)))),
+        st.done ? h("span", null, stepLabel(st)) : h("a", { href: st.href }, stepLabel(st))))),
     manage ? h("div", { class: "onboarding-sample" },
       h("div", null,
-        h("strong", null, "Try it before importing anything. "),
-        h("span", { class: "muted" }, "Load 12 sample orders and print their barcodes: scan them with a phone to see right items go green and wrong ones go red.")),
+        h("strong", null, T("Try it before importing anything.") + " "),
+        h("span", { class: "muted" }, T("Load 12 sample orders and print their barcodes: scan them with a phone to see right items go green and wrong ones go red."))),
       h("div", { class: "row" },
         ob.sample_loaded
-          ? h("span", { class: "ok-text small" }, "Sample orders loaded")
-          : h("button", { class: "btn btn-primary btn-sm", onclick: loadSample }, "Load sample orders"),
-        h("a", { class: "btn btn-sm", href: ob.sample_barcodes_url, target: "_blank", rel: "noopener" }, "Sample barcodes (PDF)"))) : null);
+          ? h("span", { class: "ok-text small" }, T("Sample orders loaded"))
+          : h("button", { class: "btn btn-primary btn-sm", onclick: loadSample }, T("Load sample orders")),
+        h("a", { class: "btn btn-sm", href: ob.sample_barcodes_url, target: "_blank", rel: "noopener" }, T("Sample barcodes (PDF)")))) : null);
 }
 
 export async function dashboardView() {
@@ -70,22 +84,22 @@ export async function dashboardView() {
   const flagsHost = h("div", null);
   const attentionHost = h("div", null);
   const onboardingHost = h("div", null);
-  const updated = h("span", { class: "muted small live-dot" }, "Live");
+  const updated = h("span", { class: "muted small live-dot" }, T("Live"));
   const wh = ctx.me.warehouse;
 
   layout("#/", [
-    pageHeader("Today on the floor", null, updated,
-      wh.leaderboard_enabled ? h("a", { class: "btn btn-sm", href: "#/board" }, "Floor board") : null,
-      h("a", { class: "btn btn-sm", href: "#/reports" }, "Reports")),
+    pageHeader(T("Today on the floor"), null, updated,
+      wh.leaderboard_enabled ? h("a", { class: "btn btn-sm", href: "#/board" }, T("Floor board")) : null,
+      h("a", { class: "btn btn-sm", href: "#/reports" }, T("Reports"))),
     onboardingHost,
     tiles,
     h("div", { class: "grid-main" },
       h("div", { class: "stack-lg" },
-        card("Needs a decision", flagsHost),
-        card("Orders in motion", liveHost)),
+        card(T("Needs a decision"), flagsHost),
+        card(T("Orders in motion"), liveHost)),
       h("div", { class: "stack-lg" },
-        card("Mistakes caught", problemsHost),
-        card("Workers to check on", attentionHost))),
+        card(T("Mistakes caught"), problemsHost),
+        card(T("Workers to check on"), attentionHost))),
   ]);
 
   let lastFlags = null;
@@ -99,28 +113,28 @@ export async function dashboardView() {
     const o = summary.orders;
     mount(onboardingHost, onboarding(ob, () => refresh().catch(fail)));
     mount(tiles,
-      tile("Mistakes caught today", fmtNumber(t.errors_caught), {
+      tile(T("Mistakes caught today"), fmtNumber(t.errors_caught), {
         hero: true,
-        hint: `${fmtNumber(t.mismatches)} wrong item · ${fmtNumber(t.over_picks)} extra unit · ${fmtNumber(summary.all_time.errors_caught)} all time`,
+        hint: T("{mismatches} wrong item · {over_picks} extra unit · {errors_caught} all time", { mismatches: fmtNumber(t.mismatches), over_picks: fmtNumber(t.over_picks), errors_caught: fmtNumber(summary.all_time.errors_caught) }),
       }),
-      tile("Money saved today", fmtMoney(t.money_saved_cents), {
+      tile(T("Money saved today"), fmtMoney(t.money_saved_cents), {
         hero: true,
-        hint: `${fmtMoney(summary.cost_per_error_cents)} per mis-ship avoided · ${fmtMoney(summary.all_time.money_saved_cents)} all time`,
+        hint: T("{cost_per_error_cents} per mis-ship avoided · {money_saved_cents} all time", { cost_per_error_cents: fmtMoney(summary.cost_per_error_cents), money_saved_cents: fmtMoney(summary.all_time.money_saved_cents) }),
       }),
-      tile("Due today", fmtNumber(o.due_today || 0), {
+      tile(T("Due today"), fmtNumber(o.due_today || 0), {
         href: "#/orders?status=due:today",
         tone: o.late ? "bad" : null,
-        hint: o.late ? `${fmtNumber(o.late)} late · ${fmtNumber(o.rush)} rush` : o.rush ? `${fmtNumber(o.rush)} rush` : "Rush and ship-by orders",
+        hint: o.late ? T("{late} late · {rush} rush", { late: fmtNumber(o.late), rush: fmtNumber(o.rush) }) : o.rush ? T("{rush} rush", { rush: fmtNumber(o.rush) }) : T("Rush and ship-by orders"),
       }),
-      tile("In progress", fmtNumber(o.in_progress)),
-      tile("Completed today", fmtNumber(o.completed_today)),
-      tile("Shipped today", fmtNumber(o.shipped_today), { hint: o.ready_to_ship ? `${fmtNumber(o.ready_to_ship)} ready to ship` : "Label scanned on the box" }),
-      tile("Waiting to pick", fmtNumber(o.pending)),
-      tile("Open problems", fmtNumber(o.open_problems), { tone: o.open_problems ? "warn" : null }),
-      tile("Units picked today", fmtNumber(t.units_picked), { hint: `${t.active_workers} active worker${t.active_workers === 1 ? "" : "s"}` }),
-      tile("First-scan accuracy", fmtPercent(t.accuracy), { hint: "Right item on the first try" }),
-      tile("Needs review", fmtNumber(t.reviews), { tone: t.reviews ? "warn" : null }),
-      summary.restock_open ? tile("Bins to refill", fmtNumber(summary.restock_open), { href: "#/restock", tone: "warn", hint: "Reported empty on the floor" }) : null);
+      tile(T("In progress"), fmtNumber(o.in_progress)),
+      tile(T("Completed today"), fmtNumber(o.completed_today)),
+      tile(T("Shipped today"), fmtNumber(o.shipped_today), { hint: o.ready_to_ship ? T("{ready_to_ship} ready to ship", { ready_to_ship: fmtNumber(o.ready_to_ship) }) : T("Label scanned on the box") }),
+      tile(T("Waiting to pick"), fmtNumber(o.pending)),
+      tile(T("Open problems"), fmtNumber(o.open_problems), { tone: o.open_problems ? "warn" : null }),
+      tile(T("Units picked today"), fmtNumber(t.units_picked), { hint: T("{n} active worker(s)", { n: t.active_workers }) }),
+      tile(T("First-scan accuracy"), fmtPercent(t.accuracy), { hint: T("Right item on the first try") }),
+      tile(T("Needs review"), fmtNumber(t.reviews), { tone: t.reviews ? "warn" : null }),
+      summary.restock_open ? tile(T("Bins to refill"), fmtNumber(summary.restock_open), { href: "#/restock", tone: "warn", hint: T("Reported empty on the floor") }) : null);
 
     // Rebuilding the queue would reload its photos every 5 seconds.
     const flagKey = live.flags.map((f) => f.id).join(",");
@@ -132,16 +146,16 @@ export async function dashboardView() {
           order: f.order_number || "order",
           onDone: () => refresh().catch(fail),
         })))
-        : h("div", { class: "empty" }, "Nothing waiting. When a worker flags a problem or can't find an item, it lands here with any photos they took."));
+        : h("div", { class: "empty" }, T("Nothing waiting. When a worker flags a problem or can't find an item, it lands here with any photos they took.")));
     }
 
     mount(liveHost, table([
-      { label: "Order", render: (o) => h("a", { href: `#/orders/${o.id}`, class: "mono" }, o.external_order_number || o.id.slice(0, 8)) },
-      { label: "Status", render: (o) => statusBadge(o.status) },
-      { label: "Progress", render: progressCell },
-      { label: "Caught", align: "right", render: (o) => (o.errors_caught ? h("span", { class: "bad-text" }, String(o.errors_caught)) : "0") },
-      { label: "Last scan", render: (o) => h("span", { class: "muted" }, fmtAgo(o.last_scan_at)) },
-    ], live.orders, { empty: "Nothing is being picked right now. Orders appear here as soon as a worker scans them.", onRow: (o) => { location.hash = `#/orders/${o.id}`; } }));
+      { label: T("Order"), render: (o) => h("a", { href: `#/orders/${o.id}`, class: "mono" }, o.external_order_number || o.id.slice(0, 8)) },
+      { label: T("Status"), render: (o) => statusBadge(o.status) },
+      { label: T("Progress"), render: progressCell },
+      { label: T("Caught"), align: "right", render: (o) => (o.errors_caught ? h("span", { class: "bad-text" }, String(o.errors_caught)) : "0") },
+      { label: T("Last scan"), render: (o) => h("span", { class: "muted" }, fmtAgo(o.last_scan_at)) },
+    ], live.orders, { empty: T("Nothing is being picked right now. Orders appear here as soon as a worker scans them."), onRow: (o) => { location.hash = `#/orders/${o.id}`; } }));
 
     mount(problemsHost, live.problems.length
       ? h("ul", { class: "feed" }, ...live.problems.slice(0, 10).map((p) =>
@@ -150,10 +164,10 @@ export async function dashboardView() {
             h("span", { class: `badge badge-${p.result}` }, problemLabel(p.result)),
             h("span", { class: "muted small" }, fmtAgo(p.at))),
           h("div", null,
-            h("strong", null, p.worker), " scanned ", h("span", { class: "mono" }, p.scanned_barcode),
-            p.intended_description || p.intended_sku ? [" instead of ", h("em", null, p.intended_description || p.intended_sku)] : null,
-            " on ", h("a", { href: `#/orders/${p.order_id}`, class: "mono" }, p.order_number || "order")))))
-      : h("div", { class: "empty" }, "No mistakes yet today. Every wrong pick a scan catches shows up here."));
+            h("strong", null, p.worker), " " + T("scanned") + " ", h("span", { class: "mono" }, p.scanned_barcode),
+            p.intended_description || p.intended_sku ? [" " + T("instead of") + " ", h("em", null, p.intended_description || p.intended_sku)] : null,
+            " " + T("on") + " ", h("a", { href: `#/orders/${p.order_id}`, class: "mono" }, p.order_number || "order")))))
+      : h("div", { class: "empty" }, T("No mistakes yet today. Every wrong pick a scan catches shows up here.")));
   };
 
   const refreshWorkers = async () => {
@@ -163,9 +177,9 @@ export async function dashboardView() {
       ? h("ul", { class: "feed" }, ...flagged.map((w) => h("li", null,
         h("div", { class: "row-between" }, h("strong", null, w.name), h("span", { class: "warn-text" }, fmtPercent(w.error_rate))),
         h("div", { class: "muted small" },
-          `${w.mismatches + w.over_picks} mistakes in ${w.scans} scans over 7 days (warehouse: ${fmtPercent(stats.warehouse_error_rate)}). `,
-          "Worth a look at training or shelf labels."))))
-      : h("div", { class: "empty" }, "Nobody stands out this week."));
+          T("{p0} mistakes in {scans} scans over 7 days (warehouse: {warehouse_error_rate}).", { p0: w.mismatches + w.over_picks, scans: w.scans, warehouse_error_rate: fmtPercent(stats.warehouse_error_rate) }) + " ",
+          T("Worth a look at training or shelf labels.")))))
+      : h("div", { class: "empty" }, T("Nobody stands out this week.")));
   };
 
   await Promise.all([refresh(), refreshWorkers()]);
@@ -173,6 +187,6 @@ export async function dashboardView() {
   poll(async () => {
     await refresh();
     if (++n % 12 === 0) await refreshWorkers();
-    updated.textContent = `Live · updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
+    updated.textContent = T("Live · updated {p0}", { p0: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }) });
   }, 5000);
 }

@@ -3,26 +3,30 @@
 
 import { dialog, fmtAgo, h } from "../../../shared/dom.js";
 import { api, fail, photoStrip } from "../core.js";
+import { T } from "../i18n.js";
 
 export const REASONS = {
-  wrong_item_in_location: "Wrong item in the bin",
-  out_of_stock: "Out of stock",
-  damaged: "Damaged",
-  label_unreadable: "Label won't scan",
-  short_pick: "Short pick",
-  not_found: "Not in the bin",
-  other: "Other",
+  wrong_item_in_location: T("Wrong item in the bin"),
+  out_of_stock: T("Out of stock"),
+  damaged: T("Damaged"),
+  label_unreadable: T("Label won't scan"),
+  short_pick: T("Short pick"),
+  not_found: T("Not in the bin"),
+  other: T("Other"),
 };
 
 export function flagTitle(f) {
   if (f.reason === "short_pick") {
     const why = REASONS[f.short_reason] || "";
-    return `Short ${f.short_quantity}${f.expected_quantity ? ` of ${f.expected_quantity}` : ""}${why ? ` · ${why}` : ""}`;
+    const short = f.expected_quantity
+      ? T("Short {n} of {total}", { n: f.short_quantity, total: f.expected_quantity })
+      : T("Short {n}", { n: f.short_quantity });
+    return why ? `${short} · ${why}` : short;
   }
   return REASONS[f.reason] || f.reason;
 }
 
-const RESOLUTION = { accepted: "Shipped short", reopened: "Sent back to pick", resolved: "Resolved" };
+const RESOLUTION = { accepted: T("Shipped short"), reopened: T("Sent back to pick"), resolved: T("Resolved") };
 
 /**
  * One flag with its photos and the buttons to deal with it.
@@ -37,34 +41,34 @@ export function flagItem(orderId, f, { item = null, order = null, onDone }) {
         h("span", { class: ["badge", isShort ? "badge-warn" : "badge-flagged"] }, flagTitle(f)),
         item ? h("span", null, item) : null,
         order ? h("a", { href: `#/orders/${orderId}`, class: "mono" }, order) : null),
-      h("span", { class: "muted small nowrap" }, `${f.worker || "A worker"} · ${fmtAgo(f.created_at)}`)),
+      h("span", { class: "muted small nowrap" }, `${f.worker || T("A worker")} · ${fmtAgo(f.created_at)}`)),
     f.note ? h("div", { class: "flag-note" }, `“${f.note}”`) : null,
     photoStrip(f.photos),
     resolved
-      ? h("div", { class: "muted small" }, RESOLUTION[f.resolution] || "Resolved", f.resolution_note ? ` · ${f.resolution_note}` : "")
+      ? h("div", { class: "muted small" }, RESOLUTION[f.resolution] || T("Resolved"), f.resolution_note ? ` · ${f.resolution_note}` : "")
       : h("div", { class: "row" },
         isShort
           ? [
-            h("button", { class: "btn btn-sm btn-primary", onclick: () => resolve(orderId, f, "accept", onDone) }, "Ship short"),
-            h("button", { class: "btn btn-sm", onclick: () => resolve(orderId, f, "reopen", onDone) }, "Pick again"),
+            h("button", { class: "btn btn-sm btn-primary", onclick: () => resolve(orderId, f, "accept", onDone) }, T("Ship short")),
+            h("button", { class: "btn btn-sm", onclick: () => resolve(orderId, f, "reopen", onDone) }, T("Pick again")),
           ]
-          : h("button", { class: "btn btn-sm btn-primary", onclick: () => resolve(orderId, f, "resolve", onDone) }, "Resolve")));
+          : h("button", { class: "btn btn-sm btn-primary", onclick: () => resolve(orderId, f, "resolve", onDone) }, T("Resolve"))));
 }
 
 const PROMPTS = {
-  accept: ["Ship it short?", "The order can be completed and shipped without the missing units.", "Ship short"],
-  reopen: ["Send back to pick?", "The missing units go back on the worker's list, e.g. after restocking the bin.", "Pick again"],
-  resolve: ["Resolve problem", "Clears the flag so the order can finish.", "Resolve"],
+  accept: [T("Ship it short?"), T("The order can be completed and shipped without the missing units."), T("Ship short")],
+  reopen: [T("Send back to pick?"), T("The missing units go back on the worker's list, e.g. after restocking the bin."), T("Pick again")],
+  resolve: [T("Resolve problem"), T("Clears the flag so the order can finish."), T("Resolve")],
 };
 
 async function resolve(orderId, f, action, onDone) {
   const [title, text, label] = PROMPTS[action];
   const note = await dialog(title, (close) => {
-    const input = h("input", { class: "input", placeholder: "Note for the record (optional)", maxlength: "500" });
+    const input = h("input", { class: "input", placeholder: T("Note for the record (optional)"), maxlength: "500" });
     return h("form", { class: "stack", onsubmit: (e) => { e.preventDefault(); close(input.value); } },
       h("p", { class: "muted" }, text), input,
       h("div", { class: "dialog-actions" },
-        h("button", { class: "btn", type: "button", onclick: () => close(null) }, "Cancel"),
+        h("button", { class: "btn", type: "button", onclick: () => close(null) }, T("Cancel")),
         h("button", { class: "btn btn-primary", type: "submit" }, label)));
   });
   if (note === null) return;
