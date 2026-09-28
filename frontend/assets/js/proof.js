@@ -24,7 +24,9 @@ function packPhotos(p, t) {
   if (!p.pack_photos || !p.pack_photos.length) return null;
   const figs = p.pack_photos.map((pid) => {
     const img = h("img", { class: "proof-photo", alt: "The packed box before it was sealed" });
-    imageUrl(`/api/public/proof/${t}/photos/${pid}`).then((url) => { img.src = url; }, () => img.remove());
+    const link = (p.photo_links || {})[pid]; // signed, short-lived, names only this photo
+    if (link) imageUrl(link).then((url) => { img.src = url; }, () => img.remove());
+    else img.remove();
     return h("figure", null, img);
   });
   return h("section", { class: "card" },
@@ -100,7 +102,8 @@ async function main() {
     return;
   }
   try {
-    mount(host, ...render(await request(`/api/public/proof/${t}`), t));
+    // The token goes in the request body, never in a URL the server logs.
+    mount(host, ...render(await request("/api/public/proof", { method: "POST", body: { token: t } }), t));
   } catch (e) {
     mount(host, h("div", { class: "empty" }, h("h1", null, "This link isn't available"),
       h("p", null, e.status === 404 ? "It may have been turned off by the sender. Ask them for a new one." : "Couldn't load it. Try again in a minute.")));

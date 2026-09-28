@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import JPEG, google_login, make_order, scan, scan_event, signup, sync, worker_on_phone
+from conftest import IS_JPEG, JPEG, google_login, make_order, scan, scan_event, signup, sync, worker_on_phone
 from sqlalchemy import select
 
 from autorack.config import get_settings
@@ -212,7 +212,7 @@ def test_operator_overview_detail_status_and_photos(client, db, operator):
     assert detail["photos"][0]["id"] == pid and detail["members"][0]["role"] == "owner" and detail["team"] == 1
     assert any(u["feature"] == "floor.scan" for u in detail["usage"])
     img = client.get(f"/api/admin/photos/{pid}", headers=operator)
-    assert img.status_code == 200 and img.content == JPEG
+    assert img.status_code == 200 and img.content.startswith(IS_JPEG)
     gallery = client.get("/api/admin/photos", headers=operator).json()
     assert gallery[0]["warehouse"] == "Busy Co"
 

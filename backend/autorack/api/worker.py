@@ -49,7 +49,7 @@ from ..models import (
     utcnow,
 )
 from ..security import is_valid_pin, normalize_join_code
-from ..services import audit, batches, floor, scans, tasks, usage
+from ..services import audit, batches, catalog, floor, scans, tasks, usage
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
 from ..services import orders as order_svc
@@ -514,6 +514,7 @@ async def upload_photo(
     data = bytes(body)
     if not data or not data.startswith(PHOTO_TYPES[ctype]):
         raise bad_request("photo_invalid", "That file isn't a valid image.")
+    data, ctype = catalog.clean_photo(data), "image/jpeg"
     count = db.scalar(select(func.count()).select_from(Photo).where(same)) or 0
     if count >= limit:
         what = "per box" if kind == "pack" else "per problem"

@@ -297,8 +297,11 @@ def test_operator_notice_preview_then_send(client, monkeypatch):
     email.outbox.clear()
     r = client.post("/api/admin/notices", json={**body, "send": True}, headers=ops).json()
     assert r["sent"] == 2
-    assert sorted(m.to for m in email.outbox) == sorted([a.email, b.email])
-    assert "Second paragraph." in email.outbox[0].text
+    notices = [m for m in email.outbox if m.subject == "Security notice"]
+    assert sorted(m.to for m in notices) == sorted([a.email, b.email])
+    assert "Second paragraph." in notices[0].text
+    # Every operator hears about a mass email, whoever sent it.
+    assert any(m.subject.startswith("Operator action: emailed a notice") for m in email.outbox)
     assert client.get("/api/audit", headers=a.h).json()[0]["action"] == "notice.sent"
     assert client.get("/api/admin/notices", headers=ops).json()[0]["subject"] == "Security notice"
     only = client.post("/api/admin/notices", json={**body, "warehouse_ids": [closed.warehouse_id]}, headers=ops).json()

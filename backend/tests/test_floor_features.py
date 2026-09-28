@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from conftest import JPEG, add_worker, make_order, scan, scan_event, signup, sync, worker_on_phone
+from conftest import IS_JPEG, JPEG, add_worker, make_order, scan, scan_event, signup, sync, worker_on_phone
 
 UPC_A = "012345678905"
 UPC_B = "036000291452"
@@ -216,7 +216,7 @@ def test_photo_upload_waits_for_flag_and_is_viewable(client):
     d = detail(client, owner, oid)
     assert d["flags"][0]["photos"] == [pid]
     img = client.get(f"/api/photos/{pid}", headers=owner.h)
-    assert img.status_code == 200 and img.content == JPEG
+    assert img.status_code == 200 and img.content.startswith(IS_JPEG)
     assert img.headers["content-type"] == "image/jpeg"
     assert client.get(f"/api/photos/{pid}").status_code == 401
     gallery = client.get("/api/photos", headers=owner.h).json()

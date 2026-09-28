@@ -2,10 +2,11 @@
 """Autorack watched folder: uploads every CSV saved into a folder.
 
 Usage:
-    python autorack-watch.py <folder> <drop URL>
+    python autorack-watch.py <folder> <drop URL> <import key>
 
-The drop URL is on Autorack -> Connections -> "Import by email or from a
-folder". Every .csv file that appears in <folder> is uploaded, then moved
+The drop URL and import key are on Autorack -> Connections -> "Import by
+email or from a folder". (Or set the key in the AUTORACK_IMPORT_KEY
+environment variable and leave it off the command line.) Every .csv file that appears in <folder> is uploaded, then moved
 into <folder>/imported (or <folder>/failed, with a .txt saying why).
 Leave it running (or start it with Windows Task Scheduler / cron at boot).
 
@@ -24,14 +25,14 @@ POLL_SECONDS = 15
 SETTLE_SECONDS = 5  # wait until a file stops changing (still being written)
 
 
-def upload(path, url):
+def upload(path, url, key):
     with open(path, "rb") as f:
         body = f.read()
     req = urllib.request.Request(
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": "text/csv", "X-Filename": os.path.basename(path)},
+        headers={"Content-Type": "text/csv", "X-Filename": os.path.basename(path), "X-Import-Key": key},
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -47,13 +48,16 @@ def move(path, sub):
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         print(__doc__)
         sys.exit(2)
     folder, url = sys.argv[1], sys.argv[2]
+    import_key = sys.argv[3] if len(sys.argv) == 4 else os.environ.get("AUTORACK_IMPORT_KEY", "")
+    if not import_key:
+        sys.exit("Give the import key (Connections page) as the third argument, or set AUTORACK_IMPORT_KEY.")
     if not os.path.isdir(folder):
         sys.exit(f"Folder not found: {folder}")
-    if "/api/inbound/drop/" not in url:
+    if not url.rstrip("/").endswith("/api/inbound/drop"):
         sys.exit("That doesn't look like an Autorack drop URL (copy it from Connections).")
     print(f"Watching {folder} -- new CSV files go to Autorack. Ctrl+C to stop.")
     sizes = {}
@@ -72,7 +76,7 @@ def main():
                 continue
             sizes.pop(path, None)
             try:
-                result = upload(path, url)
+                result = upload(path, url, import_key)
                 dest = move(path, "imported")
                 print(
                     f"{time.strftime('%H:%M:%S')} {name}: {result.get('orders_created', 0)} new order(s), "

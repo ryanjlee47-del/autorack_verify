@@ -116,7 +116,12 @@ def recipients(db: Session, wh: Warehouse, *, want: str) -> list[str]:
     stmt = (
         select(User.email)
         .join(Membership, Membership.user_id == User.id)
-        .where(Membership.warehouse_id == wh.id, Membership.active.is_(True), User.active.is_(True))
+        .where(
+            Membership.warehouse_id == wh.id,
+            Membership.active.is_(True),
+            Membership.pending.is_(False),
+            User.active.is_(True),
+        )
     )
     if want == "summary":
         stmt = stmt.where(Membership.email_daily_summary.is_(True))

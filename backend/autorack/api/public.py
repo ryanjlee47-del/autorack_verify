@@ -10,11 +10,14 @@ photos.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -86,13 +89,45 @@ def _shared(db: Session, token: str) -> tuple[OrderModel, Warehouse]:
     return order, wh
 
 
-@public_router.get("/proof/{token}/photos/{photo_id}", response_class=Response)
-def public_pack_photo(token: str, photo_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
-    """The packed-box photo, only through the order's share link."""
+PHOTO_LINK_TTL = 3600
+
+
+def _photo_sig(photo_id: uuid.UUID, exp: int) -> str:
+    key = get_settings().secret_key.encode()
+    return hmac.new(key, f"proof-photo|{photo_id}|{exp}".encode(), hashlib.sha256).hexdigest()
+
+
+def signed_photo_path(photo_id: uuid.UUID) -> str:
+    """A photo link that works for an hour and names only that photo: the
+    share token itself never goes into a URL path (or an access log)."""
+    exp = int(utcnow().timestamp()) + PHOTO_LINK_TTL
+    return f"/api/public/photo/{photo_id}?exp={exp}&sig={_photo_sig(photo_id, exp)}"
+
+
+@public_router.get("/photo/{photo_id}", response_class=Response)
+def public_pack_photo(
+    photo_id: uuid.UUID,
+    request: Request,
+    exp: int = Query(...),
+    sig: str = Query(..., max_length=64),
+    db: Session = Depends(get_db),
+) -> Response:
+    """A packed-box photo of a shared order, through a link from POST /proof."""
     memory_limiter.check(f"proof:{client_ip(request)}", 60, 60, "Too many requests. Try again in a minute.")
-    order, _ = _shared(db, token)
-    photo = db.scalar(select(Photo).where(Photo.id == photo_id, Photo.order_id == order.id, Photo.kind == "pack"))
-    if not photo:
+    if exp < utcnow().timestamp() or not hmac.compare_digest(sig, _photo_sig(photo_id, exp)):
+        raise not_found("Photo not found.")
+    photo = db.scalar(select(Photo).where(Photo.id == photo_id, Photo.kind == "pack"))
+    order = db.get(OrderModel, photo.order_id) if photo else None
+    wh = db.get(Warehouse, order.warehouse_id) if order else None
+    # Still shared right now: turning the link off also stops photo links.
+    if (
+        not photo
+        or not order
+        or not order.share_token
+        or order.status == OrderStatus.cancelled
+        or not wh
+        or wh.closed_at
+    ):
         raise not_found("Photo not found.")
     return Response(
         content=photo.data,
@@ -101,10 +136,16 @@ def public_pack_photo(token: str, photo_id: uuid.UUID, request: Request, db: Ses
     )
 
 
-@public_router.get("/proof/{token}")
-def public_proof(token: str, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+class ProofIn(BaseModel):
+    token: str = Field(min_length=20, max_length=64)
+
+
+@public_router.post("/proof")
+def public_proof(body: ProofIn, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """The share token comes in the body (not the URL), so it isn't written to
+    access logs along the way."""
     memory_limiter.check(f"proof:{client_ip(request)}", 60, 60, "Too many requests. Try again in a minute.")
-    order, wh = _shared(db, token)
+    order, wh = _shared(db, body.token)
     lines = order_svc.lines_for(db, order.id)
     by_line: dict[uuid.UUID, OrderLineItem] = {li.id: li for li in lines}
     voided = select(ScanEvent.voids_scan_id).where(ScanEvent.order_id == order.id, ScanEvent.voids_scan_id.is_not(None))
@@ -162,6 +203,7 @@ def public_proof(token: str, request: Request, db: Session = Depends(get_db)) ->
             for s in scans
         ],
         "pack_photos": [str(pid) for pid in order_svc.pack_photo_ids(db, order.id)],
+        "photo_links": {str(pid): signed_photo_path(pid) for pid in order_svc.pack_photo_ids(db, order.id)},
         "boxes": [
             {k: b[k] for k in ("box", "tracking_number", "carrier", "photos")}
             for b in order_svc.package_dicts(db, order)

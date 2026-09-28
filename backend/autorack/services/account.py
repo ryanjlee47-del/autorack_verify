@@ -515,6 +515,7 @@ def owners(db: Session, wh: Warehouse) -> list[str]:
                 Membership.warehouse_id == wh.id,
                 Membership.role == UserRole.owner,
                 Membership.active.is_(True),
+                Membership.pending.is_(False),
                 User.active.is_(True),
             )
         )

@@ -7,7 +7,9 @@ filters on it. tests/test_tenant_isolation.py sweeps every route to hold that.
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
+from datetime import timedelta
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import get_db
 from .errors import ApiError, forbidden, unauthorized
-from .models import Client, Device, Membership, OwnerSession, User, UserRole, Warehouse, Worker, WorkerSession
+from .models import Client, Device, Membership, OwnerSession, User, UserRole, Warehouse, Worker, WorkerSession, utcnow
 from .services import access as access_svc
 from .services import agreement as agreement_svc
 from .services import auth as auth_svc
@@ -85,9 +87,37 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> UserContext
     return UserContext(user=user, session=sess, ip=client_ip(request))
 
 
+def _ip_allowed(ip: str | None, allowed: str) -> bool:
+    nets = [n.strip() for n in allowed.split(",") if n.strip()]
+    if not nets:
+        return True
+    try:
+        addr = ipaddress.ip_address((ip or "").split("%")[0])
+    except ValueError:
+        return False
+    return any(addr in ipaddress.ip_network(n, strict=False) for n in nets)
+
+
 def require_operator(uctx: UserContext = Depends(current_user)) -> UserContext:
+    """Autorack staff. The console sees every customer, so beyond the email
+    allow-list: optional network allow-list, and sessions that end after
+    OPERATOR_SESSION_HOURS however active they are."""
     if not uctx.is_operator:
         raise forbidden("This page is for Autorack staff.")
+    s = get_settings()
+    if not _ip_allowed(uctx.ip, s.operator_allowed_ips):
+        raise forbidden("The operator console isn't available from this network.", "operator_network")
+    if utcnow() - uctx.session.created_at > timedelta(hours=s.operator_session_hours):
+        raise unauthorized("Your operator session has ended. Sign in again.", "session_expired")
+    return uctx
+
+
+def require_operator_recent(uctx: UserContext = Depends(require_operator)) -> UserContext:
+    """For exporting, deleting or mass-emailing customers: a Google sign-in
+    within the last few minutes, so a stolen session token alone can't."""
+    fresh = uctx.session.authenticated_at or uctx.session.created_at
+    if utcnow() - fresh > timedelta(minutes=get_settings().operator_reauth_minutes):
+        raise forbidden("For this, sign in with Google again first (it's been a while).", "reauth_required")
     return uctx
 
 

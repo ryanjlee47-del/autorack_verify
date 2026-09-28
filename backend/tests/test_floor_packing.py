@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from conftest import JPEG, make_order, scan, scan_event, signup, sync, worker_on_phone
+from conftest import IS_JPEG, JPEG, make_order, scan, scan_event, signup, sync, worker_on_phone
 
 UPC = "012345678905"
 TAPE = "036000291452"
@@ -77,19 +77,22 @@ def test_packed_box_photo_shows_on_order_and_shared_proof(client):
     assert client.get(f"/api/worker/orders/{o['id']}", headers=phone.h).json()["pack_photos"] == 1
     detail = client.get(f"/api/orders/{o['id']}", headers=owner.h).json()
     assert detail["pack_photos"] == [pid]
-    assert client.get(f"/api/photos/{pid}", headers=owner.h).content == JPEG
+    assert client.get(f"/api/photos/{pid}", headers=owner.h).content.startswith(IS_JPEG)
     # Not a problem photo: the problem-photo list doesn't show it.
     assert client.get("/api/photos", headers=owner.h).json() == []
     token = client.post(f"/api/orders/{o['id']}/share", headers=owner.h).json()["url"].split("#t=")[1]
-    public = client.get(f"/api/public/proof/{token}").json()
+    public = client.post("/api/public/proof", json={"token": token}).json()
     assert public["pack_photos"] == [pid]
-    img = client.get(f"/api/public/proof/{token}/photos/{pid}")
-    assert img.status_code == 200 and img.content == JPEG
-    # Only that order's pack photos are reachable through its link.
+    link = public["photo_links"][pid]
+    assert token not in link  # the share token never goes into a URL
+    img = client.get(link)
+    assert img.status_code == 200 and img.content.startswith(IS_JPEG)
+    # A signed link names one photo: swapping in another id doesn't work.
     other = make_order(client, owner, [(UPC, 1)])
     other_pid = str(uuid.uuid4())
     upload_pack_photo(client, phone, other["id"], other_pid)
-    assert client.get(f"/api/public/proof/{token}/photos/{other_pid}").status_code == 404
+    assert client.get(link.replace(pid, other_pid)).status_code == 404
+    assert client.get(link[:-4] + "0000").status_code == 404  # tampered signature
     # Six at most per order.
     for _ in range(5):
         upload_pack_photo(client, phone, o["id"])

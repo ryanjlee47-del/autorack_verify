@@ -114,6 +114,8 @@ function unlink() {
   app.device = null;
   app.session = null;
   if (app.sync) app.sync.stop();
+  // The warehouse cut this phone off: nothing of theirs stays on it.
+  store.wipe().catch(() => {});
   showUnlinked();
 }
 
@@ -122,6 +124,8 @@ function endSessionLocally() {
   writeJson(LS_SESSION, null);
   app.session = null;
   app.order = null;
+  // The next person to pick up this phone doesn't inherit the order list.
+  store.clearOrders().catch(() => {});
 }
 
 // ---------------------------------------------------------------------------

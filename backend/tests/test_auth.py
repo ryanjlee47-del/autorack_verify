@@ -5,7 +5,17 @@ from __future__ import annotations
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
-from conftest import AGREEMENT, add_worker, fragment, google_login, google_redirect, link_phone, login, signup
+from conftest import (
+    AGREEMENT,
+    TEST_NONCE,
+    add_worker,
+    fragment,
+    google_login,
+    google_redirect,
+    link_phone,
+    login,
+    signup,
+)
 from sqlalchemy import select, update
 
 from autorack.models import MagicLinkToken, User, utcnow
@@ -27,17 +37,30 @@ def test_login_code_is_single_use_and_expires(client, db):
     loc = google_redirect(client, "/api/auth/google/start", owner.email)
     code = fragment(loc)["token"]
     assert loc.startswith("https://app.autorack.test/app/login.html#token=")  # never sent to a server log
-    assert client.post("/api/auth/verify", json={"token": code}).status_code == 200
-    r = client.post("/api/auth/verify", json={"token": code})
+    assert client.post("/api/auth/verify", json={"token": code, "nonce": TEST_NONCE}).status_code == 200
+    r = client.post("/api/auth/verify", json={"token": code, "nonce": TEST_NONCE})
     assert r.status_code == 401 and r.json()["detail"]["code"] == "link_invalid"
     code2 = fragment(google_redirect(client, "/api/auth/google/start", owner.email))["token"]
     db.execute(update(MagicLinkToken).values(expires_at=utcnow() - timedelta(seconds=1)))
     db.commit()
-    assert client.post("/api/auth/verify", json={"token": code2}).status_code == 401
+    assert client.post("/api/auth/verify", json={"token": code2, "nonce": TEST_NONCE}).status_code == 401
+
+
+def test_a_sign_in_code_only_works_in_the_browser_that_started_it(client):
+    """Login CSRF: someone sends you a link carrying *their* sign-in code.
+    Without the nonce your tab kept, it does nothing."""
+    owner = signup(client)
+    code = fragment(google_redirect(client, "/api/auth/google/start", owner.email))["token"]
+    for nonce in (None, "", "x" * 32):
+        r = client.post("/api/auth/verify", json={"token": code, "nonce": nonce})
+        assert r.status_code == 401 and r.json()["detail"]["code"] == "link_invalid"
+    # A sign-in can't even start without one.
+    r = client.get("/api/auth/google/start", follow_redirects=False)
+    assert fragment(r.headers["location"])["error"] == "expired"
 
 
 def test_google_start_uses_pkce_and_select_account(client):
-    r = client.get("/api/auth/google/start?next=%23/orders", follow_redirects=False)
+    r = client.get(f"/api/auth/google/start?next=%23/orders&nonce={TEST_NONCE}", follow_redirects=False)
     q = parse_qs(urlparse(r.headers["location"]).query)
     assert r.headers["location"].startswith("https://accounts.google.com/o/oauth2/v2/auth?")
     assert q["client_id"] == ["test-client.apps.googleusercontent.com"]
@@ -58,7 +81,7 @@ def test_next_page_is_kept_and_open_redirects_are_not(client):
 
 def test_callback_needs_the_state_cookie_from_this_browser(client, fake_google):
     owner = signup(client)
-    r = client.get("/api/auth/google/start", follow_redirects=False)
+    r = client.get(f"/api/auth/google/start?nonce={TEST_NONCE}", follow_redirects=False)
     state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
     client.cookies.clear()  # the callback lands in a different browser
     fake_google.requests.clear()
@@ -71,7 +94,7 @@ def test_callback_needs_the_state_cookie_from_this_browser(client, fake_google):
 
 def test_state_is_single_use(client):
     owner = signup(client)
-    r = client.get("/api/auth/google/start", follow_redirects=False)
+    r = client.get(f"/api/auth/google/start?nonce={TEST_NONCE}", follow_redirects=False)
     state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
     params = {"code": f"email:{owner.email}", "state": state}
     first = client.get("/api/auth/google/callback", params=params, follow_redirects=False)

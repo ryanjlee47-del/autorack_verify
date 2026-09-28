@@ -158,6 +158,26 @@ first sign-in creates the account automatically.
 - Request bodies over 25 MB are refused (`MAX_REQUEST_BYTES`).
 - CSV exports can't carry spreadsheet formulas; PDFs treat names as text.
 - HSTS, CSP, no framing, no-sniff; API docs are off in production.
+- Sign-in codes only work in the browser tab that started the sign-in (no
+  login CSRF); the sign-in page only shows its own error wording.
+- Dashboard sessions end after 7 idle days (30 at most); "Sign out of all
+  devices" is in Settings. Phone tokens stop after 90 days unused.
+- Scans are accepted only inside the worker's own sign-in; once a session is
+  ended (sign-out, deactivation, phone unlinked) nothing more is added to it,
+  and timed-out sessions accept their offline queue for 48 hours.
+- Someone already using Autorack must accept before another warehouse is added
+  to their account. Invitations: 20 a day per warehouse, live accounts only.
+  Warehouse and client names can't contain web or email addresses.
+- Extra warehouses don't restart a lapsed free trial; 10 per sign-in.
+- Worker photos are re-encoded on the server (no GPS or device metadata).
+- Timesheets are for managers and owners.
+
+**Operator console.** Operators see every customer, so: sessions end after 12
+hours; exporting, deleting, changing an account's status or emailing customers
+needs a Google sign-in from the last 15 minutes; every such action is emailed to
+all operators. Optionally restrict the console to your own network with
+`OPERATOR_ALLOWED_IPS` (comma-separated IPs or CIDRs). Turn on 2-Step
+Verification (ideally a security key) on every operator Google account.
 
 ## 8. Knowing when it breaks
 
@@ -200,16 +220,21 @@ Set it up once with Postmark (postmarkapp.com, free for 100 emails a month):
 
 1. Create a server → **Default Inbound Stream**. Copy its inbound address,
    e.g. `abc123@inbound.postmarkapp.com`.
-2. Webhook URL: `https://YOUR-API/api/inbound/email?key=<a long random secret>`.
-   Leave "Include raw email content" off.
+2. Webhook URL, with the secret as HTTP Basic auth (Postmark supports it; it
+   keeps the secret out of access logs):
+   `https://inbound:<a long random secret>@YOUR-API/api/inbound/email`.
+   Leave "Include raw email content" off. (Providers that can only call a bare
+   URL can use `?key=<secret>` instead, or send it as an `X-Inbound-Key` header.)
 3. On Render set `INBOUND_EMAIL_ADDRESS` to the inbound address with `+{token}`
    before the @ (`abc123+{token}@inbound.postmarkapp.com`) and
    `INBOUND_EMAIL_SECRET` to the same secret as in the webhook URL.
 
-Mailgun Routes and SendGrid Inbound Parse also work (same URL). They post
-multipart forms, which Autorack reads too.
+Mailgun Routes (Basic auth works there too) and SendGrid Inbound Parse (use the
+`?key=` form) also work. They post multipart forms, which Autorack reads too.
 
-**CSV drop URL and watched folder.** No setup needed. If the API isn't on the
+**CSV drop URL and watched folder.** No setup needed. Uploads go to
+`POST /api/inbound/drop` with the warehouse's import key in an `X-Import-Key`
+header (never in the URL); the Connections page shows both and a `curl` example. If the API isn't on the
 same host as `FRONTEND_URL` (Cloudflare Pages + Render), set `API_PUBLIC_URL`
 to the API's address (`https://YOUR-APP.onrender.com`) so the drop URL points
 to the right place.

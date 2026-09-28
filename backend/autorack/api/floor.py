@@ -32,6 +32,7 @@ from ..models import (
     Worker,
     utcnow,
 )
+from ..names import plain_name
 from ..services import audit, client_billing, email, floor, monthly, usage
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
@@ -99,7 +100,7 @@ def list_clients(ctx: OwnerContext = Depends(current_owner), db: Session = Depen
 def create_client(
     body: ClientIn, ctx: OwnerContext = Depends(require_manager), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
-    name = body.name.strip()
+    name = plain_name(body.name, "client name")
     if _name_taken(db, ctx, name):
         raise conflict("client_exists", f"There's already a client called {name}.")
     c = Client(
@@ -124,7 +125,7 @@ def update_client(
 ) -> dict[str, Any]:
     c = _client(db, ctx, client_id)
     if body.name is not None:
-        name = body.name.strip()
+        name = plain_name(body.name, "client name")
         if _name_taken(db, ctx, name, exclude=c.id):
             raise conflict("client_exists", f"There's already a client called {name}.")
         c.name = name
@@ -261,6 +262,7 @@ def add_client_user(
     """Give someone at the client a portal login: they sign in with Google
     and see only this client's orders, returns, reports and statements."""
     c = _client(db, ctx, client_id)
+    auth_svc.check_can_invite(db, ctx.warehouse)
     addr = auth_svc.normalize_email(str(body.email))
     user = db.scalar(select(User).where(User.email == addr))
     if user is not None:
@@ -270,12 +272,13 @@ def add_client_user(
         if existing and existing.role != UserRole.client and existing.active:
             raise conflict("team_member", "That person is on your team. Use a different address for the portal.")
         if not user.active:
-            raise conflict("account_disabled", "That account is disabled.")
+            raise conflict("cannot_invite", "That address can't be added. Check it, or contact us.")
     else:
         user = User(warehouse_id=ctx.warehouse.id, email=addr, name=(body.name or "").strip() or None)
         db.add(user)
         db.flush()
-    m = auth_svc.add_membership(db, user, ctx.warehouse.id, UserRole.client)
+    pending = auth_svc.needs_consent(db, user, ctx.warehouse.id)
+    m = auth_svc.add_membership(db, user, ctx.warehouse.id, UserRole.client, pending=pending)
     m.client_id, m.email_daily_summary, m.email_alerts = c.id, False, False
     audit.record(
         db,
@@ -549,7 +552,7 @@ def list_shifts(
     start: date | None = Query(None, alias="from"),
     end: date | None = Query(None, alias="to"),
     worker_id: uuid.UUID | None = None,
-    ctx: OwnerContext = Depends(current_owner),
+    ctx: OwnerContext = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     a, b = _range(ctx, start, end)
@@ -602,7 +605,7 @@ def edit_shift(
 def timesheet_csv(
     start: date | None = Query(None, alias="from"),
     end: date | None = Query(None, alias="to"),
-    ctx: OwnerContext = Depends(current_owner),
+    ctx: OwnerContext = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> PlainTextResponse:
     a, b = _range(ctx, start, end)

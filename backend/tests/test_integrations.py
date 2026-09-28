@@ -414,21 +414,25 @@ def test_push_failure_retries_then_manual_retry(client, fake, db):
 def test_drop_url_imports_a_csv(client, db):
     owner = signup(client)
     addr = client.post("/api/integrations/import-address", headers=owner.h).json()
-    assert addr["drop_url"].startswith("https://app.autorack.test/api/inbound/drop/")
-    token = addr["drop_url"].rsplit("/", 1)[1]
+    # The key goes in a header, never in the URL (where access logs keep it).
+    assert addr["drop_url"] == "https://app.autorack.test/api/inbound/drop"
+    key = addr["drop_key"]
+    assert key not in addr["drop_url"]
     csv = b"order_number,barcode,quantity\nD-1,012345678905,1\nD-2,,1\n"
-    r = client.post(f"/api/inbound/drop/{token}", files={"file": ("picks.csv", csv, "text/csv")})
+    r = client.post("/api/inbound/drop", files={"file": ("picks.csv", csv, "text/csv")}, headers={"X-Import-Key": key})
     assert r.status_code == 200, r.text
     assert r.json()["orders_created"] == 1
     # Raw body works too; repeats are skipped.
-    r = client.post(f"/api/inbound/drop/{token}", content=csv, headers={"Content-Type": "text/csv"})
+    r = client.post("/api/inbound/drop", content=csv, headers={"Content-Type": "text/csv", "X-Import-Key": key})
     assert r.json()["orders_created"] == 0 and r.json()["orders_skipped"] == 1
     assert orders_of(client, owner)[0]["source"] == "drop"
-    assert client.post("/api/inbound/drop/" + "0" * 32, content=csv).status_code == 404
-    # Rotating kills the old address.
+    assert client.post("/api/inbound/drop", content=csv, headers={"X-Import-Key": "0" * 32}).status_code == 404
+    assert client.post("/api/inbound/drop", content=csv).status_code == 404
+    assert client.post(f"/api/inbound/drop/{key}", content=csv).status_code in (404, 405)  # old style is gone
+    # Rotating kills the old key.
     new = client.post("/api/integrations/import-address/rotate", headers=owner.h).json()
-    assert new["drop_url"] != addr["drop_url"]
-    assert client.post(f"/api/inbound/drop/{token}", content=csv).status_code == 404
+    assert new["drop_key"] != key
+    assert client.post("/api/inbound/drop", content=csv, headers={"X-Import-Key": key}).status_code == 404
 
 
 def test_inbound_email_imports_attachments(client, db, monkeypatch):

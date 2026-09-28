@@ -10,6 +10,7 @@ own name.
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import uuid
 from datetime import timedelta
@@ -22,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..deps import UserContext, require_operator
+from ..deps import UserContext, require_operator, require_operator_recent
 from ..downloads import attachment
 from ..errors import ApiError, bad_request, not_found
 from ..models import (
@@ -56,6 +57,27 @@ cron_router = APIRouter(tags=["admin"])
 
 def _actor(uctx: UserContext) -> Actor:
     return Actor("operator", str(uctx.user.id), uctx.user.email, uctx.ip)
+
+
+def _tell_operators(uctx: UserContext, what: str) -> None:
+    """Every operator hears about every export, deletion, status change and
+    mass email, so a hijacked operator account can't act quietly."""
+    for addr in sorted(get_settings().operator_email_set):
+        with contextlib.suppress(email.EmailError):
+            email.send(
+                email.notice_email(
+                    addr,
+                    subject=f"Operator action: {what}",
+                    heading="An operator action was taken",
+                    lines=[
+                        f"{uctx.user.email} ({uctx.ip or 'unknown address'}): {what}.",
+                        "If that wasn't one of you, sign that account out and change its Google password now.",
+                    ],
+                    button_label="Open the operator console",
+                    url=f"{get_settings().frontend_url.rstrip('/')}/admin/",
+                    footer="Security notice sent to every operator.",
+                )
+            )
 
 
 def _warehouse_rows(db: Session, whs: list[Warehouse]) -> list[dict[str, Any]]:
@@ -308,7 +330,7 @@ class StatusIn(BaseModel):
 def set_status(
     warehouse_id: uuid.UUID,
     body: StatusIn,
-    uctx: UserContext = Depends(require_operator),
+    uctx: UserContext = Depends(require_operator_recent),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Make a warehouse a free pilot, extend its trial, or cancel it.
@@ -338,6 +360,7 @@ def set_status(
         note=body.note,
     )
     db.commit()
+    _tell_operators(uctx, f"set warehouse {warehouse_id} to {body.status}")
     return warehouse_detail(warehouse_id, uctx, db)
 
 
@@ -373,21 +396,23 @@ def _wh(db: Session, warehouse_id: uuid.UUID) -> Warehouse:
 def close_warehouse(
     warehouse_id: uuid.UUID,
     body: CloseAccountIn,
-    uctx: UserContext = Depends(require_operator),
+    uctx: UserContext = Depends(require_operator_recent),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Termination by Autorack (Section 9): same effect as an owner closing."""
     account_svc.close(db, _wh(db, warehouse_id), _actor(uctx), reason=body.reason)
     db.commit()
+    _tell_operators(uctx, f"closed warehouse {warehouse_id}")
     return warehouse_detail(warehouse_id, uctx, db)
 
 
 @router.post("/warehouses/{warehouse_id}/reopen")
 def reopen_warehouse(
-    warehouse_id: uuid.UUID, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+    warehouse_id: uuid.UUID, uctx: UserContext = Depends(require_operator_recent), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     account_svc.reopen(db, _wh(db, warehouse_id), _actor(uctx))
     db.commit()
+    _tell_operators(uctx, f"reopened warehouse {warehouse_id}")
     return warehouse_detail(warehouse_id, uctx, db)
 
 
@@ -399,7 +424,7 @@ class PurgeIn(BaseModel):
 def purge_warehouse(
     warehouse_id: uuid.UUID,
     body: PurgeIn,
-    uctx: UserContext = Depends(require_operator),
+    uctx: UserContext = Depends(require_operator_recent),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Delete a closed account's data now (e.g. the customer asked for it)
@@ -408,17 +433,19 @@ def purge_warehouse(
         raise bad_request("confirm_required", "Type DELETE to confirm.")
     counts = account_svc.purge(db, _wh(db, warehouse_id), _actor(uctx))
     db.commit()
+    _tell_operators(uctx, f"permanently deleted the data of warehouse {warehouse_id}")
     return {"deleted": counts}
 
 
 @router.get("/warehouses/{warehouse_id}/export.zip")
 def export_warehouse(
-    warehouse_id: uuid.UUID, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+    warehouse_id: uuid.UUID, uctx: UserContext = Depends(require_operator_recent), db: Session = Depends(get_db)
 ) -> Any:
     wh = _wh(db, warehouse_id)
     fh = account_svc.export_zip(db, wh)
     audit.record(db, _actor(uctx), "account.exported", warehouse_id=wh.id, target_type="warehouse", target_id=wh.id)
     db.commit()
+    _tell_operators(uctx, f"downloaded all data of {wh.name} ({wh.id})")
     return zip_response(fh, account_svc.export_filename(wh))
 
 
@@ -436,7 +463,7 @@ class NoticeIn(BaseModel):
 
 @router.post("/notices")
 def send_notice(
-    body: NoticeIn, uctx: UserContext = Depends(require_operator), db: Session = Depends(get_db)
+    body: NoticeIn, uctx: UserContext = Depends(require_operator_recent), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     """Email the owners of every account (or chosen ones): a security
     incident, planned maintenance, a change to the terms. Logged in each
@@ -492,6 +519,7 @@ def send_notice(
         failed=failed,
     )
     db.commit()
+    _tell_operators(uctx, f"emailed a notice ({body.subject!r}) to {sent} owner(s)")
     return {"warehouses": len(targets), "recipients": len(recipients), "sent": sent, "failed": failed}
 
 

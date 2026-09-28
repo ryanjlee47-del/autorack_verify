@@ -5,7 +5,7 @@ import {
 } from "../../../shared/dom.js";
 import { columnChart } from "../chart.js";
 import {
-  api, card, ctx, download, fail, isOwner, layout, loadMe, pageHeader, photoThumb, switchWarehouse, table, tz,
+  api, card, ctx, download, fail, isOwner, layout, loadMe, pageHeader, photoThumb, setToken, switchWarehouse, table, tz,
 } from "../core.js";
 import { REASONS } from "./flags.js";
 import { T } from "../i18n.js";
@@ -322,6 +322,21 @@ export async function settingsView() {
           method: "PATCH", body: { email_daily_summary: mySummary.checked, email_alerts: myAlerts.checked, name: myName.value },
         }).then(async () => { toast(T("Saved"), "ok"); await loadMe(); }, fail),
       }, T("Save"))),
+
+    card(T("Sign-in security"),
+      h("p", { class: "muted small" }, T("Lost a laptop, or signed in on a shared computer? End every Autorack session for {email}, this one included. You'll sign in with Google again.", { email: ctx.me.user.email })),
+      h("button", {
+        class: "btn",
+        onclick: async () => {
+          if (!(await confirmDialog(T("Sign out everywhere?"), T("Every computer and phone signed in to your dashboard is signed out now."), { confirmLabel: T("Sign out everywhere"), danger: true }))) return;
+          try {
+            await api("/api/auth/logout-all", { method: "POST" });
+          } finally {
+            setToken(null);
+            location.replace("/app/login.html");
+          }
+        },
+      }, T("Sign out of all devices"))),
 
     card(T("On the floor"),
       h("div", { class: "settings-list" },

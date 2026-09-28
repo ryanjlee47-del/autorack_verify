@@ -95,9 +95,16 @@ def test_inviting_an_existing_user_adds_a_membership(client):
     a = signup(client, "A")
     b = signup(client, "B")
     r = client.post("/api/team", json={"email": b.email, "role": "manager"}, headers=a.h)
-    assert r.status_code == 201
+    assert r.status_code == 201 and r.json()["pending"] is True
+    # Already using Autorack: nothing of A shows (or emails them) until they say yes.
+    me = client.get("/api/auth/me", headers=b.h).json()
+    assert [w["name"] for w in me["warehouses"]] == ["B"]
+    assert me["invitations"] == [{"warehouse_id": a.warehouse_id, "warehouse": "A", "role": "manager"}]
+    assert client.post("/api/auth/switch", json={"warehouse_id": a.warehouse_id}, headers=b.h).status_code == 403
+    assert client.post(f"/api/auth/invitations/{a.warehouse_id}/accept", headers=b.h).status_code == 200
     me = client.get("/api/auth/me", headers=b.h).json()
     assert {w["name"]: w["role"] for w in me["warehouses"]} == {"A": "manager", "B": "owner"}
+    assert me["invitations"] == []
     # Removing them from A doesn't sign them out of B.
     r = client.patch(f"/api/team/{r.json()['id']}", json={"active": False}, headers=a.h)
     assert r.status_code == 200

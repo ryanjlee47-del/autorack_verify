@@ -53,6 +53,13 @@ export function download(path, name) {
 
 /** Show an API error the way every view should: a toast, never a blank page. */
 export function fail(e) {
+  if (e instanceof ApiError && e.code === "reauth_required") {
+    // Operator actions that export, delete or email customers need a
+    // Google sign-in from the last few minutes.
+    // eslint-disable-next-line no-alert
+    if (window.confirm(`${e.message}\n\n${T("Sign in again now?")}`)) logout();
+    return;
+  }
   toast(e instanceof ApiError ? e.message : String(e), "bad", 6000);
 }
 
@@ -114,7 +121,11 @@ function navGroups() {
       wh.leaderboard_enabled ? ["#/board", T("Floor board")] : null,
     ]],
     [T("Products"), [["#/products", T("Catalog")], ["#/inserts", T("Pack inserts")]]],
-    [T("Team"), [["#/workers", T("Workers")], ["#/time", T("Time clock")], ["#/devices", T("Phones")]]],
+    [T("Team"), [
+      ["#/workers", T("Workers")],
+      canManage() ? ["#/time", T("Time clock")] : null, // hours worked: managers and owners
+      ["#/devices", T("Phones")],
+    ]],
     [T("Results"), [["#/reports", T("Reports")], ["#/insights", T("Insights")]]],
     [T("Setup"), [
       ["#/clients", T("Clients")],
@@ -161,6 +172,26 @@ export function accessBanner() {
   return null;
 }
 
+/** Someone added you to their warehouse: nothing of it shows until you say yes. */
+function invitationsBanner() {
+  const inv = (ctx.me && ctx.me.invitations) || [];
+  if (!inv.length) return null;
+  const answer = (i, verb) => api(`/api/auth/invitations/${i.warehouse_id}/${verb}`, { method: "POST" })
+    .then(async () => {
+      toast(verb === "accept" ? T("Added {p0} to your warehouses.", { p0: i.warehouse }) : T("Invitation declined."), "ok");
+      await loadMe();
+      layoutAgain();
+    }, fail);
+  return h("div", { class: "stack app-banner" }, ...inv.map((i) => h("div", { class: "banner banner-info row" },
+    h("span", null, T("You've been added to {p0} as {p1}.", { p0: i.warehouse, p1: i.role }) + " "),
+    h("button", { class: "btn btn-sm btn-primary", onclick: () => answer(i, "accept") }, T("Accept")),
+    h("button", { class: "btn btn-sm", onclick: () => answer(i, "decline") }, T("Decline")))));
+}
+
+function layoutAgain() {
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
 export function layout(active, content) {
   const root = document.getElementById("app");
   const me = ctx.me;
@@ -188,7 +219,7 @@ export function layout(active, content) {
           h("a", { class: ["small", "help-link", active === "#/help" && "active"], href: "#/help" }, T("Help & support")),
           h("button", { class: "link-btn small", onclick: logout }, T("Sign out")),
           languagePicker())),
-      h("main", { class: "main", id: "main" }, topBar(), accessBanner(), content)));
+      h("main", { class: "main", id: "main" }, topBar(), accessBanner(), invitationsBanner(), content)));
 }
 
 // ---------------------------------------------------------------------------

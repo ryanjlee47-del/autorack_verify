@@ -11,14 +11,14 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, Header, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..deps import OwnerContext, current_owner, require_manager, require_owner_role
+from ..deps import OwnerContext, client_ip, current_owner, require_manager, require_owner_role
 from ..errors import ApiError, bad_request, not_found
 from ..models import IntegrationKind, Membership, Order, OrderSource, User, utcnow
 from ..services import access, email, integrations
@@ -214,14 +214,20 @@ def _batch_result(batch: Any) -> dict[str, Any]:
     }
 
 
-@inbound_router.post("/drop/{token}")
-async def drop(token: str, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Post a CSV here (multipart field `file`, or the raw CSV as the body).
-    Used by the watched-folder script, Zapier, cron + curl..."""
-    memory_limiter.check(f"drop:{token[:40]}", 60, 3600, "Too many uploads. Try again later.")
+@inbound_router.post("/drop")
+async def drop(
+    request: Request, x_import_key: str = Header(default="", max_length=64), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Post a CSV here (multipart field `file`, or the raw CSV as the body),
+    with the warehouse's import key in the X-Import-Key header. Used by the
+    watched-folder script, Zapier, cron + curl... The key travels in a
+    header, not the URL, so it doesn't end up in proxy and access logs."""
+    token = x_import_key
+    memory_limiter.check(f"drop-ip:{client_ip(request)}", 120, 3600, "Too many uploads. Try again later.")
     wh = integrations.warehouse_for_token(db, token)
     if not wh:
         raise not_found("Unknown import address. Copy it again from Autorack → Connections.")
+    memory_limiter.check(f"drop:{wh.id}", 60, 3600, "Too many uploads. Try again later.")
     ctype = request.headers.get("content-type", "")
     filename = request.headers.get("x-filename") or "upload.csv"
     max_bytes = get_settings().max_import_bytes
@@ -275,6 +281,16 @@ def _csv_attachments(payload: dict[str, Any], files: list[tuple[str, bytes]]) ->
     return found
 
 
+def _basic_password(request: Request) -> str:
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "basic" or not value:
+        return ""
+    try:
+        return base64.b64decode(value.strip()).decode("utf-8", "replace").partition(":")[2]
+    except ValueError:
+        return ""
+
+
 @inbound_router.post("/email")
 async def inbound_email(
     request: Request, key: str = Query(default=""), db: Session = Depends(get_db)
@@ -283,7 +299,12 @@ async def inbound_email(
     SendGrid multipart). Always answers 200 for well-authenticated calls, so
     the provider doesn't retry an email that can never be imported."""
     s = get_settings()
-    if not s.inbound_email_enabled or not hmac.compare_digest(key.encode(), s.inbound_email_secret.encode()):
+    # The secret belongs in a header (X-Inbound-Key) or HTTP Basic auth
+    # (https://inbound:SECRET@host/..., which Postmark and Mailgun support):
+    # both stay out of access logs. ?key= still works for providers that
+    # can only call a bare URL.
+    presented = request.headers.get("x-inbound-key") or _basic_password(request) or key
+    if not s.inbound_email_enabled or not hmac.compare_digest(presented.encode(), s.inbound_email_secret.encode()):
         raise not_found()
     payload: dict[str, Any] = {}
     files: list[tuple[str, bytes]] = []
@@ -328,7 +349,12 @@ async def inbound_email(
     is_member = sender and db.scalar(
         select(Membership.id)
         .join(User, User.id == Membership.user_id)
-        .where(Membership.warehouse_id == wh.id, Membership.active.is_(True), User.email == sender)
+        .where(
+            Membership.warehouse_id == wh.id,
+            Membership.active.is_(True),
+            Membership.pending.is_(False),
+            User.email == sender,
+        )
     )
     if is_member:
         with contextlib.suppress(email.EmailError):

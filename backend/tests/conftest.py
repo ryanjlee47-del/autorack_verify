@@ -47,8 +47,20 @@ from autorack.main import create_app
 from autorack.services import email, google_auth
 from autorack.services.ratelimit import memory_limiter
 
-# Smallest thing that passes the upload's JPEG signature check.
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64 + b"\xff\xd9"
+
+def _tiny_jpeg() -> bytes:
+    import io as _io
+
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 60, 40)).save(buf, "JPEG")
+    return buf.getvalue()
+
+
+# A real (tiny) photo: uploads are decoded and re-encoded server-side.
+JPEG = _tiny_jpeg()
+IS_JPEG = b"\xff\xd8\xff"
 
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -210,11 +222,19 @@ def fake_google(monkeypatch: pytest.MonkeyPatch) -> FakeGoogle:
     return fake
 
 
-def google_redirect(client: TestClient, start_url: str, addr: str, sub: str | None = None) -> str:
+# What the sign-in page keeps in sessionStorage while it's away at Google.
+TEST_NONCE = "n" * 32
+
+
+def google_redirect(
+    client: TestClient, start_url: str, addr: str, sub: str | None = None, nonce: str | None = TEST_NONCE
+) -> str:
     """Walk the browser through Google; returns where the callback sent it."""
     if start_url.startswith("http"):
         u = urllib.parse.urlparse(start_url)
         start_url = u.path + (f"?{u.query}" if u.query else "")
+    if nonce and "nonce=" not in start_url:
+        start_url += ("&" if "?" in start_url else "?") + f"nonce={nonce}"
     r = client.get(start_url, follow_redirects=False)
     assert r.status_code == 302, r.text
     loc = r.headers["location"]
@@ -236,7 +256,7 @@ def google_login(client: TestClient, addr: str, start: str = "/api/auth/google/s
     loc = google_redirect(client, start, addr, sub)
     frag = fragment(loc)
     assert "token" in frag, frag
-    r = client.post("/api/auth/verify", json={"token": frag["token"]})
+    r = client.post("/api/auth/verify", json={"token": frag["token"], "nonce": TEST_NONCE})
     assert r.status_code == 200, r.text
     return str(r.json()["token"])
 

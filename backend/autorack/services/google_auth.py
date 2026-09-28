@@ -88,9 +88,12 @@ def begin(
     next_path: str | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
+    nonce: str | None = None,
 ) -> tuple[str, str]:
-    """Record an attempt. Returns (Google URL to redirect to, state for the cookie)."""
+    """Record an attempt. Returns (Google URL to redirect to, state for the cookie).
+    `nonce`: random, kept by the sign-in page in sessionStorage; stored hashed."""
     s = get_settings()
+    payload = {**(payload or {}), "nonce_hash": hash_token(nonce or "")}
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)[:96]
     db.add(
@@ -98,7 +101,7 @@ def begin(
             state_hash=hash_token(state),
             code_verifier=verifier,
             intent=intent,
-            payload=payload or {},
+            payload=payload,
             next_path=safe_next(next_path),
             ip=ip,
             user_agent=(user_agent or "")[:300] or None,
@@ -185,10 +188,19 @@ def bind(db: Session, user: User, who: GoogleIdentity) -> None:
         user.name = who.name[:200]
 
 
-def login_code(db: Session, user: User, ip: str | None, ttl: timedelta = LOGIN_CODE_TTL) -> str:
-    """A one-time code the sign-in page swaps for a session (POST /auth/verify)."""
+def login_code(db: Session, user: User, ip: str | None, nonce_hash: str, ttl: timedelta = LOGIN_CODE_TTL) -> str:
+    """A one-time code the sign-in page swaps for a session (POST /auth/verify),
+    usable only with the nonce the starting browser kept."""
     code = new_token()
-    db.add(MagicLinkToken(user_id=user.id, token_hash=hash_token(code), expires_at=utcnow() + ttl, requested_ip=ip))
+    db.add(
+        MagicLinkToken(
+            user_id=user.id,
+            token_hash=hash_token(code),
+            expires_at=utcnow() + ttl,
+            requested_ip=ip,
+            nonce_hash=nonce_hash,
+        )
+    )
     db.flush()
     return code
 

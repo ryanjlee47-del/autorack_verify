@@ -163,7 +163,7 @@ def test_an_order_can_ship_in_several_boxes(client):
     ret = client.post("/api/worker/returns", json={"code": "9400111899223197428490"}, headers=phone.h)
     assert ret.status_code == 201, ret.text
     token = client.post(f"/api/orders/{o['id']}/share", headers=owner.h).json()["url"].split("#t=")[1]
-    assert len(client.get(f"/api/public/proof/{token}").json()["boxes"]) == 2
+    assert len(client.post("/api/public/proof", json={"token": token}).json()["boxes"]) == 2
 
 
 def test_empty_bins_become_restock_tasks(client):

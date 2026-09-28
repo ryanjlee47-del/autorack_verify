@@ -7,7 +7,7 @@ import uuid
 from datetime import timedelta
 from urllib.parse import quote
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -62,6 +62,7 @@ def create_warehouse(
     status: SubscriptionStatus = SubscriptionStatus.trialing,
     actor: Actor,
     user: User | None = None,
+    trial: bool = True,
 ) -> tuple[Warehouse, User]:
     """A new warehouse, owned by a new user, or by `user` (adding a site)."""
     owner_email = normalize_email(owner_email)
@@ -73,7 +74,9 @@ def create_warehouse(
         owner_email=owner_email,
         timezone=timezone,
         subscription_status=status,
-        trial_ends_at=utcnow() + timedelta(days=s.trial_days) if status == SubscriptionStatus.trialing else None,
+        trial_ends_at=(utcnow() + timedelta(days=s.trial_days if trial else 0))
+        if status == SubscriptionStatus.trialing
+        else None,
         join_code=_unique_join_code(db),
     )
     billing.lock_founding_price(wh)
@@ -92,7 +95,70 @@ def create_warehouse(
     return wh, user
 
 
-def add_membership(db: Session, user: User, warehouse_id: uuid.UUID, role: UserRole) -> Membership:
+def owned_warehouses(db: Session, user: User) -> list[Warehouse]:
+    return list(
+        db.scalars(
+            select(Warehouse)
+            .join(Membership, Membership.warehouse_id == Warehouse.id)
+            .where(
+                Membership.user_id == user.id,
+                Membership.role == UserRole.owner,
+                Membership.active.is_(True),
+                Membership.pending.is_(False),
+                Warehouse.purged_at.is_(None),
+            )
+        )
+    )
+
+
+def has_lapsed_trial(warehouses: list[Warehouse]) -> bool:
+    """Any of these warehouses had a trial that ended without paying."""
+    now = utcnow()
+    return any(
+        w.subscription_status in (SubscriptionStatus.trialing, SubscriptionStatus.canceled)
+        and w.trial_ends_at is not None
+        and w.trial_ends_at <= now
+        and not w.stripe_subscription_id
+        for w in warehouses
+    )
+
+
+def needs_consent(db: Session, user: User, warehouse_id: uuid.UUID) -> bool:
+    """Someone already using Autorack elsewhere is asked before a warehouse
+    appears in their account (and before it can email them)."""
+    return bool(
+        db.scalar(
+            select(Membership.id).where(
+                Membership.user_id == user.id,
+                Membership.warehouse_id != warehouse_id,
+                Membership.active.is_(True),
+                Membership.pending.is_(False),
+            )
+        )
+    )
+
+
+def check_can_invite(db: Session, wh: Warehouse) -> None:
+    """Invitations are email we send on the owner's behalf: only from a live
+    account, and not in bulk."""
+    from .access import evaluate
+
+    acc = evaluate(wh)
+    if not acc.allowed:
+        raise ApiError(402, "subscription_inactive", acc.message, state=acc.state)
+    ratelimit.check_db(
+        db,
+        "invite_wh",
+        str(wh.id),
+        get_settings().max_invites_per_day,
+        timedelta(days=1),
+        "That's a lot of invitations for one day. Try again tomorrow, or contact us.",
+    )
+
+
+def add_membership(
+    db: Session, user: User, warehouse_id: uuid.UUID, role: UserRole, *, pending: bool = False
+) -> Membership:
     m = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.warehouse_id == warehouse_id))
     if m is None:
         is_owner = role == UserRole.owner
@@ -103,10 +169,13 @@ def add_membership(db: Session, user: User, warehouse_id: uuid.UUID, role: UserR
             active=True,
             email_daily_summary=is_owner,
             email_alerts=role not in (UserRole.supervisor, UserRole.client),
+            pending=pending,
         )
         db.add(m)
     else:
         m.role = role
+        if not m.active:
+            m.pending = pending
         m.active = True
     db.flush()
     return m
@@ -116,8 +185,29 @@ def memberships_for(db: Session, user: User) -> list[tuple[Membership, Warehouse
     rows = db.execute(
         select(Membership, Warehouse)
         .join(Warehouse, Warehouse.id == Membership.warehouse_id)
-        .where(Membership.user_id == user.id, Membership.active.is_(True), Warehouse.purged_at.is_(None))
+        .where(
+            Membership.user_id == user.id,
+            Membership.active.is_(True),
+            Membership.pending.is_(False),
+            Warehouse.purged_at.is_(None),
+        )
         .order_by(Warehouse.name, Warehouse.created_at)
+    )
+    return [(m, w) for m, w in rows]
+
+
+def pending_invitations(db: Session, user: User) -> list[tuple[Membership, Warehouse]]:
+    rows = db.execute(
+        select(Membership, Warehouse)
+        .join(Warehouse, Warehouse.id == Membership.warehouse_id)
+        .where(
+            Membership.user_id == user.id,
+            Membership.active.is_(True),
+            Membership.pending.is_(True),
+            Warehouse.purged_at.is_(None),
+            Warehouse.closed_at.is_(None),
+        )
+        .order_by(Warehouse.name)
     )
     return [(m, w) for m, w in rows]
 
@@ -133,7 +223,10 @@ def session_warehouse(db: Session, user: User, sess: OwnerSession) -> tuple[Ware
             continue
         m = db.scalar(
             select(Membership).where(
-                Membership.user_id == user.id, Membership.warehouse_id == wid, Membership.active.is_(True)
+                Membership.user_id == user.id,
+                Membership.warehouse_id == wid,
+                Membership.active.is_(True),
+                Membership.pending.is_(False),
             )
         )
         if m:
@@ -182,7 +275,9 @@ def issue_magic_link(db: Session, user: User, ip: str | None) -> str:
     return f"{s.frontend_url.rstrip('/')}/app/login.html#token={quote(token)}"
 
 
-def verify_magic_link(db: Session, token: str, ip: str | None, user_agent: str | None) -> tuple[str, User]:
+def verify_magic_link(
+    db: Session, token: str, ip: str | None, user_agent: str | None, nonce: str | None = None
+) -> tuple[str, User]:
     ratelimit.check_db(
         db, "magic_verify_ip", ip or "?", 30, timedelta(minutes=15), "Too many attempts. Try again shortly."
     )
@@ -194,6 +289,10 @@ def verify_magic_link(db: Session, token: str, ip: str | None, user_agent: str |
             MagicLinkToken.token_hash == hash_token(token),
             MagicLinkToken.used_at.is_(None),
             MagicLinkToken.expires_at > now,
+            # A code from Google sign-in only works in the browser that
+            # started it: someone can't send you a link that signs you into
+            # *their* account (login CSRF). CLI-issued links carry no nonce.
+            or_(MagicLinkToken.nonce_hash.is_(None), MagicLinkToken.nonce_hash == hash_token(nonce or "")),
         )
         .values(used_at=now)
         .returning(MagicLinkToken.user_id)
@@ -212,6 +311,7 @@ def verify_magic_link(db: Session, token: str, ip: str | None, user_agent: str |
             token_hash=hash_token(session_token),
             expires_at=now + timedelta(days=get_settings().owner_session_days),
             last_seen_at=now,
+            authenticated_at=now,
             user_agent=(user_agent or "")[:300] or None,
             warehouse_id=user.warehouse_id,
         )
@@ -234,6 +334,10 @@ def resolve_owner_session(db: Session, token: str) -> tuple[OwnerSession, User] 
     sess = db.scalar(select(OwnerSession).where(OwnerSession.token_hash == hash_token(token)))
     if not sess or sess.revoked_at or sess.expires_at <= now:
         return None
+    # Unused for a week: sign in again (a forgotten laptop doesn't stay in).
+    idle = timedelta(days=get_settings().owner_session_idle_days)
+    if sess.last_seen_at and now - sess.last_seen_at > idle:
+        return None
     user = db.get(User, sess.user_id)
     if not user or not user.active:
         return None
@@ -247,6 +351,17 @@ def resolve_owner_session(db: Session, token: str) -> tuple[OwnerSession, User] 
 def revoke_owner_session(db: Session, sess: OwnerSession) -> None:
     sess.revoked_at = utcnow()
     db.commit()
+
+
+def revoke_all_sessions(db: Session, user: User) -> int:
+    """Sign this person out everywhere (a lost laptop, a shared computer)."""
+    n = db.execute(
+        update(OwnerSession)
+        .where(OwnerSession.user_id == user.id, OwnerSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    ).rowcount
+    db.commit()
+    return int(n or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +414,11 @@ def resolve_device(db: Session, token: str) -> Device | None:
     if not device or device.revoked_at:
         return None
     now = utcnow()
+    # A phone nobody has opened in months: its token (maybe copied off an old
+    # handset) stops working. Linking again takes a minute.
+    idle = timedelta(days=get_settings().device_idle_days)
+    if device.last_seen_at and now - device.last_seen_at > idle:
+        return None
     if not device.last_seen_at or now - device.last_seen_at > timedelta(minutes=5):
         device.last_seen_at = now
         db.commit()
@@ -439,6 +559,7 @@ def active_owner_count(db: Session, warehouse_id: uuid.UUID) -> int:
                 Membership.warehouse_id == warehouse_id,
                 Membership.role == UserRole.owner,
                 Membership.active.is_(True),
+                Membership.pending.is_(False),
                 User.active.is_(True),
             )
         )

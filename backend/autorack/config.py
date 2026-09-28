@@ -77,6 +77,22 @@ class Settings(BaseSettings):
 
     # Worker auth
     worker_session_hours: int = 14
+    owner_session_idle_days: int = 7
+    device_idle_days: int = 90
+    # Operators (OPERATOR_EMAILS) see every customer's data: their sessions
+    # are short, and exporting, deleting or emailing customers needs a Google
+    # sign-in within the last OPERATOR_REAUTH_MINUTES.
+    operator_session_hours: int = 12
+    operator_reauth_minutes: int = 15
+    # Optional: operator console only from these addresses/networks
+    # (comma-separated IPs or CIDRs). Empty = anywhere.
+    operator_allowed_ips: str = ""
+    # Abuse limits
+    max_warehouses_per_user: int = 10
+    max_invites_per_day: int = 20
+    # A worker's scans must reach the server within this long after their
+    # sign-in session ends (phones queue offline); later ones are refused.
+    offline_sync_grace_hours: int = 48
     pin_length: int = 4
     pin_max_failures_per_device: int = 5
     pin_max_failures_per_warehouse: int = 25

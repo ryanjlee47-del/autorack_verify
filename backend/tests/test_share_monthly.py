@@ -37,7 +37,7 @@ def test_share_proof_link(client):
     assert client.post(f"/api/orders/{o['id']}/share", headers=owner.h).json()["url"] == url
     assert client.get(f"/api/orders/{o['id']}", headers=owner.h).json()["share_url"] == url
 
-    p = client.get(f"/api/public/proof/{token}")  # no auth
+    p = client.post("/api/public/proof", json={"token": token})  # no auth; token in the body, not the URL
     assert p.status_code == 200
     body = p.json()
     assert body["order_number"] == "SO-P1" and body["tracking_number"] == "1Z999AA10123456784"
@@ -47,9 +47,10 @@ def test_share_proof_link(client):
     assert "worker" not in p.text
 
     assert client.delete(f"/api/orders/{o['id']}/share", headers=owner.h).status_code == 204
-    assert client.get(f"/api/public/proof/{token}").status_code == 404
-    assert client.get("/api/public/proof/short").status_code == 404
-    assert client.get(f"/api/public/proof/{'x' * 32}").status_code == 404
+    assert client.post("/api/public/proof", json={"token": token}).status_code == 404
+    assert client.post("/api/public/proof", json={"token": "short"}).status_code == 422
+    assert client.post("/api/public/proof", json={"token": "x" * 32}).status_code == 404
+    assert client.get(f"/api/public/proof/{token}").status_code in (404, 405)  # token-in-URL form is gone
 
 
 def test_monthly_pdf_download(client):

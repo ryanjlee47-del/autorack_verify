@@ -43,6 +43,9 @@ services:
         sync: false
       - key: OPERATOR_EMAILS
         sync: false
+      # Optional: operator console only from these IPs/CIDRs.
+      - key: OPERATOR_ALLOWED_IPS
+        sync: false
       - key: CRON_SECRET
         sync: false
       - key: AGREEMENT_COUNTERSIGNER_NAME

@@ -33,6 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import matching
+from ..config import get_settings
 from ..errors import ApiError
 from ..models import (
     TALLY_KINDS,
@@ -61,6 +62,36 @@ from .dashboard import tz_of
 log = logging.getLogger("autorack.scans")
 
 MAX_CLOCK_SKEW = timedelta(minutes=5)
+SESSION_CLOCK_SLACK = timedelta(minutes=15)
+# In flight when a session was ended (the sign-out request raced a sync).
+ENDED_SESSION_GRACE = timedelta(minutes=2)
+
+
+def _outside_session(sess: WorkerSession, ev: SyncEvent) -> dict[str, str] | None:
+    """A scan belongs to the sign-in it claims: made while that worker was
+    signed in on this phone, and delivered soon after. Without this, a phone
+    (or its copied token) could keep recording picks under a worker's name
+    after they signed out or were deactivated, dated whenever it liked."""
+    end = sess.ended_at or sess.expires_at
+    closed = {"code": "session_closed", "message": "This sign-in has ended, so new scans can't be added to it."}
+    now = utcnow()
+    if sess.ended_at is not None:
+        # Ended on purpose (signed out on the phone, which syncs first;
+        # deactivated; phone unlinked): nothing more arrives for it.
+        if now > sess.ended_at + ENDED_SESSION_GRACE:
+            return closed
+    elif now > sess.expires_at + timedelta(hours=get_settings().offline_sync_grace_hours):
+        # Timed out while the phone may have been offline: its queue has
+        # a while to come in, then the session is closed for good.
+        return closed
+    # Within the session's own window, give or take a phone clock's drift.
+    earliest, latest = sess.created_at - SESSION_CLOCK_SLACK, end + SESSION_CLOCK_SLACK
+    if ev.client_scanned_at < earliest or ev.client_scanned_at > latest:
+        return {
+            "code": "outside_session",
+            "message": "This scan is dated outside the worker's sign-in, so it wasn't recorded.",
+        }
+    return None
 
 
 @dataclass
@@ -213,6 +244,10 @@ def _apply_order_group(
                 "error",
                 error={"code": "session_unknown", "message": "Scan came from a session this phone doesn't own."},
             )
+            continue
+        closed = _outside_session(sess, ev)
+        if closed:
+            out[ev.id] = EventOutcome(str(ev.id), ev.kind, "error", error=closed)
             continue
         try:
             with db.begin_nested():

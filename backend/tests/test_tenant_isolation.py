@@ -38,6 +38,9 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/clients/{client_id}/users"): {"email": "portal@example.com"},
 }
 NO_BODY = {
+    # No invitation to B's warehouse: looks exactly like no warehouse at all.
+    ("POST", "/api/auth/invitations/{warehouse_id}/accept"),
+    ("POST", "/api/auth/invitations/{warehouse_id}/decline"),
     ("GET", "/api/orders/{order_id}"),
     ("POST", "/api/orders/{order_id}/cancel"),
     ("DELETE", "/api/orders/{order_id}/lines/{line_id}"),
@@ -149,6 +152,7 @@ def two_tenants(client):
     client.post("/api/aliases", json={"scanned_barcode": "B-ALIAS", "target_barcode": "B-SECRET-BARCODE"}, headers=b.h)
     client.post("/api/team", json={"email": "b-manager@example.com"}, headers=b.h)
     ids = {
+        "warehouse_id": client.get("/api/auth/me", headers=b.h).json()["warehouse"]["id"],
         "order_id": b_order["id"],
         "line_id": b_order["lines"][0]["id"],
         "flag_id": client.get(f"/api/orders/{b_order['id']}", headers=b.h).json()["flags"][0]["id"],

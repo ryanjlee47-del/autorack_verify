@@ -183,7 +183,7 @@ def test_offline_batch_applied_in_scan_order(client):
     owner = signup(client)
     phone = worker_on_phone(client, owner)
     oid = make_order(client, owner, [("012345678905", 1), ("036000291452", 1)])["id"]
-    t0 = datetime.now(UTC) - timedelta(minutes=30)
+    t0 = datetime.now(UTC) - timedelta(minutes=3)  # still inside this worker's sign-in
     later = scan_event(
         phone, oid, "012345678905", client_scanned_at=(t0 + timedelta(seconds=5)).isoformat(), offline=True
     )

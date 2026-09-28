@@ -279,6 +279,9 @@ class Membership(Base):
     email_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
     # Client-portal logins: which 3PL client this person sees (role "client").
     client_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clients.id"))
+    # Added to a warehouse while already using Autorack elsewhere: nothing
+    # of it shows (or emails them) until they accept.
+    pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped[User] = relationship()
@@ -296,6 +299,9 @@ class MagicLinkToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     requested_ip: Mapped[str | None] = mapped_column(String(64))
+    # Hash of the random value the browser kept when it started the sign-in.
+    # The code only works alongside it. Null for CLI-issued links.
+    nonce_hash: Mapped[str | None] = mapped_column(String(64))
 
 
 class OAuthState(Base):
@@ -329,6 +335,9 @@ class OwnerSession(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str | None] = mapped_column(String(300))
+    # When the person last proved who they are (Google). Operator actions
+    # that expose or destroy customer data need this to be recent.
+    authenticated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # The warehouse this session is looking at (users can switch).
     warehouse_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("warehouses.id"))
 

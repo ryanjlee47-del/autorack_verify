@@ -19,6 +19,7 @@ from ..deps import OwnerContext, current_owner, require_manager, require_owner_a
 from ..errors import bad_request, conflict, not_found
 from ..matching import MAX_SUFFIX_LEN, MIN_SUFFIX_LEN
 from ..models import AuditLog, Membership, Order, OrderStatus, OwnerSession, User, UserRole, utcnow
+from ..names import plain_name
 from ..services import audit, email, onboarding, usage
 from ..services import auth as auth_svc
 
@@ -97,9 +98,7 @@ def update_warehouse(
     if "timezone" in changes and changes["timezone"] not in available_timezones():
         raise bad_request("timezone_invalid", "Unknown timezone.")
     if "name" in changes:
-        changes["name"] = changes["name"].strip()
-        if not changes["name"]:
-            raise bad_request("name_required", "Warehouse name can't be blank.")
+        changes["name"] = plain_name(changes["name"], "warehouse name")
     if "owner_email" in changes:
         changes["owner_email"] = auth_svc.normalize_email(str(changes["owner_email"]))
     if "ship_cutoff" in changes:
@@ -172,6 +171,7 @@ def member_dict(u: User, m: Membership) -> dict[str, Any]:
         "name": u.name,
         "role": m.role.value,
         "active": m.active and u.active,
+        "pending": m.pending,
         "email_daily_summary": m.email_daily_summary,
         "email_alerts": m.email_alerts,
         "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
@@ -194,6 +194,7 @@ def list_team(ctx: OwnerContext = Depends(current_owner), db: Session = Depends(
 def invite(
     body: InviteIn, ctx: OwnerContext = Depends(require_owner_role), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
+    auth_svc.check_can_invite(db, ctx.warehouse)
     addr = auth_svc.normalize_email(str(body.email))
     user = db.scalar(select(User).where(User.email == addr))
     if user is not None:
@@ -205,12 +206,14 @@ def invite(
         if existing and existing.role == UserRole.client:
             raise conflict("client_login", "That address is a client portal login. Remove it from the client first.")
         if not user.active:
-            raise conflict("account_disabled", "That account is disabled.")
+            # Same answer as any other refusal: no hint about who has an account.
+            raise conflict("cannot_invite", "That address can't be added. Check it, or contact us.")
     else:
         user = User(warehouse_id=ctx.warehouse.id, email=addr, name=(body.name or "").strip() or None)
         db.add(user)
         db.flush()
-    membership = auth_svc.add_membership(db, user, ctx.warehouse.id, UserRole(body.role))
+    pending = auth_svc.needs_consent(db, user, ctx.warehouse.id)
+    membership = auth_svc.add_membership(db, user, ctx.warehouse.id, UserRole(body.role), pending=pending)
     url = f"{get_settings().frontend_url.rstrip('/')}/app/login.html"
     audit.record(
         db,

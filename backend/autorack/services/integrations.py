@@ -674,7 +674,9 @@ def import_address(wh: Warehouse) -> dict[str, Any]:
     return {
         "email": s.inbound_email_address.replace("{token}", token) if s.inbound_email_enabled and token else None,
         "email_enabled": s.inbound_email_enabled,
-        "drop_url": f"{s.api_url}/api/inbound/drop/{token}" if token else None,
+        "drop_url": f"{s.api_url}/api/inbound/drop" if token else None,
+        # Sent as the X-Import-Key header, never in the URL.
+        "drop_key": token or None,
     }
 
 

@@ -102,6 +102,12 @@ export const store = {
   photoRemove: (id) => tx("photos", "readwrite", (s) => req(s.delete(id))),
   photoCount: () => tx("photos", "readonly", (s) => req(s.count())),
 
+  /** Cached orders (numbers, customers, items): not left on a shared phone
+   * for whoever picks it up next. The outbox is kept until it syncs. */
+  clearOrders: () => tx("orders", "readwrite", (s) => req(s.clear())),
+  /** Everything, for a phone that's been unlinked. */
+  wipe: () => Promise.all(["orders", "outbox", "photos", "meta"].map((n) => tx(n, "readwrite", (s) => req(s.clear())))),
+
   metaGet: (key) => tx("meta", "readonly", (s) => req(s.get(key))).then((row) => (row ? row.value : undefined)),
   metaSet: (key, value) => tx("meta", "readwrite", (s) => req(s.put({ key, value }))),
 

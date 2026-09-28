@@ -17,12 +17,13 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..deps import OwnerContext, UserContext, client_ip, current_owner, current_user
-from ..errors import ApiError, bad_request, forbidden
+from ..errors import ApiError, forbidden, not_found
 from ..models import Client, Membership, OAuthState, User, utcnow
+from ..names import plain_name
 from ..security import hash_token
 from ..services import agreement as agreement_svc
+from ..services import audit, google_auth, ratelimit
 from ..services import auth as auth_svc
-from ..services import google_auth, ratelimit
 from ..services.access import evaluate
 from ..services.audit import Actor
 from .legal import SignIn
@@ -41,6 +42,10 @@ class SignupIn(SignIn):
 
 class VerifyIn(BaseModel):
     token: str = Field(min_length=10, max_length=200)
+    # The random value the sign-in page kept when it sent the browser to
+    # Google. Without it the code is useless to anyone who intercepts or
+    # plants a sign-in link.
+    nonce: str | None = Field(default=None, max_length=200)
 
 
 def _google_or_503() -> None:
@@ -73,8 +78,7 @@ def signup(body: SignupIn, request: Request, db: Session = Depends(get_db)) -> d
     _google_or_503()
     ip = client_ip(request)
     ratelimit.check_db(db, "signup_ip", ip or "?", 10, timedelta(hours=1), "Too many sign-ups from here. Try later.")
-    if not body.warehouse_name.strip():
-        raise bad_request("name_required", "Enter your warehouse's name.")
+    plain_name(body.warehouse_name, "warehouse name")
     agreement_svc.clean(body.details())  # refuse before going anywhere
     tz = body.timezone if body.timezone in available_timezones() else "UTC"
     payload = {
@@ -115,6 +119,7 @@ def google_start(
     request: Request,
     next: str | None = Query(default=None, max_length=200),
     signup: str | None = Query(default=None, max_length=64),
+    nonce: str | None = Query(default=None, max_length=200),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     ip = client_ip(request)
@@ -126,6 +131,11 @@ def google_start(
             status_code=302,
         )
     ratelimit.check_db(db, "google_start_ip", ip or "?", 60, timedelta(minutes=15), "Too many sign-in attempts.")
+    if not nonce or len(nonce) < 16:
+        # Only our sign-in page starts a sign-in: it adds a nonce it keeps.
+        return RedirectResponse(
+            google_auth.error_url(google_auth.GoogleError("expired", "Start again from the sign-in page.")), 302
+        )
     intent, payload = "signin", {}
     if signup:
         try:
@@ -139,7 +149,13 @@ def google_start(
             )
         intent, payload = "signup", ticket.payload
     url, state = google_auth.begin(
-        db, intent=intent, payload=payload, next_path=next, ip=ip, user_agent=request.headers.get("user-agent")
+        db,
+        intent=intent,
+        payload=payload,
+        next_path=next,
+        ip=ip,
+        user_agent=request.headers.get("user-agent"),
+        nonce=nonce,
     )
     db.commit()
     return _to_google(url, state)
@@ -199,7 +215,7 @@ def google_callback(
                 raise google_auth.GoogleError("account_disabled", "This account is disabled.")
         google_auth.bind(db, user, who)
         google_auth.audit_login(db, user, ip)
-        code_out = google_auth.login_code(db, user, ip)
+        code_out = google_auth.login_code(db, user, ip, str((attempt.payload or {}).get("nonce_hash") or ""))
         db.commit()
     except google_auth.GoogleError as err:
         return fail(err)
@@ -228,7 +244,9 @@ def _create_from_signup(db: Session, attempt: OAuthState, who: google_auth.Googl
 @router.post("/verify")
 def verify(body: VerifyIn, request: Request, db: Session = Depends(get_db)) -> dict[str, object]:
     """Swap the one-time code from the Google callback for a session."""
-    token, user = auth_svc.verify_magic_link(db, body.token, client_ip(request), request.headers.get("user-agent"))
+    token, user = auth_svc.verify_magic_link(
+        db, body.token, client_ip(request), request.headers.get("user-agent"), body.nonce
+    )
     return {"token": token, "user": {"id": str(user.id), "email": user.email}}
 
 
@@ -236,6 +254,74 @@ def verify(body: VerifyIn, request: Request, db: Session = Depends(get_db)) -> d
 def logout(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, bool]:
     auth_svc.revoke_owner_session(db, uctx.session)
     return {"ok": True}
+
+
+def _pending(db: Session, uctx: UserContext, warehouse_id: uuid.UUID) -> Membership:
+    m = db.scalar(
+        select(Membership).where(
+            Membership.user_id == uctx.user.id,
+            Membership.warehouse_id == warehouse_id,
+            Membership.active.is_(True),
+            Membership.pending.is_(True),
+        )
+    )
+    if not m:
+        raise not_found("There's no invitation to that warehouse.")
+    return m
+
+
+@router.post("/invitations/{warehouse_id}/accept")
+def accept_invitation(
+    warehouse_id: uuid.UUID, uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)
+) -> dict[str, bool]:
+    """Someone added you to their warehouse: it appears once you say yes."""
+    m = _pending(db, uctx, warehouse_id)
+    m.pending = False
+    audit.record(
+        db,
+        uctx.actor,
+        "team.invitation_accepted",
+        warehouse_id=warehouse_id,
+        target_type="user",
+        target_id=uctx.user.id,
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/invitations/{warehouse_id}/decline")
+def decline_invitation(
+    warehouse_id: uuid.UUID, uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)
+) -> dict[str, bool]:
+    m = _pending(db, uctx, warehouse_id)
+    m.active = False
+    audit.record(
+        db,
+        uctx.actor,
+        "team.invitation_declined",
+        warehouse_id=warehouse_id,
+        target_type="user",
+        target_id=uctx.user.id,
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/logout-all")
+def logout_all(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, object]:
+    """Sign out on every computer and phone, this one included."""
+    n = auth_svc.revoke_all_sessions(db, uctx.user)
+    audit.record(
+        db,
+        uctx.actor,
+        "user.logout_all",
+        warehouse_id=uctx.user.warehouse_id,
+        target_type="user",
+        target_id=uctx.user.id,
+        sessions=n,
+    )
+    db.commit()
+    return {"ok": True, "sessions_ended": n}
 
 
 @router.get("/me")
@@ -249,6 +335,10 @@ def me(uctx: UserContext = Depends(current_user), db: Session = Depends(get_db))
         "user": {"id": str(user.id), "email": user.email, "name": user.name, "role": None},
         "is_operator": uctx.is_operator,
         "warehouses": [{"id": str(w.id), "name": w.name, "role": m.role.value} for m, w in memberships],
+        "invitations": [
+            {"warehouse_id": str(w.id), "warehouse": w.name, "role": m.role.value}
+            for m, w in auth_svc.pending_invitations(db, user)
+        ],
         "warehouse": None,
         "membership": None,
         "access": None,
@@ -307,6 +397,7 @@ def switch_warehouse(
             Membership.user_id == uctx.user.id,
             Membership.warehouse_id == body.warehouse_id,
             Membership.active.is_(True),
+            Membership.pending.is_(False),
         )
     )
     if not m:
@@ -329,16 +420,21 @@ def add_warehouse(
     each), so only an owner of the current warehouse can add one."""
     if not ctx.is_owner:
         raise forbidden("Only an owner can add a warehouse.")
-    if not body.name.strip():
-        raise bad_request("name_required", "Enter the warehouse's name.")
+    name = plain_name(body.name, "warehouse name")
+    owned = auth_svc.owned_warehouses(db, ctx.user)
+    if len(owned) >= get_settings().max_warehouses_per_user:
+        raise forbidden("You've reached the number of warehouses one sign-in can have. Contact us to add more.")
     tz = body.timezone if body.timezone in available_timezones() else ctx.warehouse.timezone
     wh, _ = auth_svc.create_warehouse(
         db,
-        name=body.name,
+        name=name,
         owner_email=ctx.warehouse.owner_email,
         timezone=tz,
         actor=ctx.actor,
         user=ctx.user,
+        # A free trial is for trying Autorack, once: an owner whose earlier
+        # trial ran out unpaid doesn't get a fresh one by adding a site.
+        trial=not auth_svc.has_lapsed_trial(owned),
     )
     ctx.session.warehouse_id = wh.id
     db.commit()

@@ -87,6 +87,23 @@ def process_image(content: bytes) -> tuple[bytes, bytes]:
     return encode(FULL_PX, 84), encode(THUMB_PX, 76)
 
 
+def clean_photo(content: bytes, max_side: int = 2048) -> bytes:
+    """A worker's photo, re-encoded: whatever the phone (or a script calling
+    the API directly) sent, what's kept is pixels only -- no GPS position,
+    device serial or capture metadata, which the proof page would otherwise
+    hand to strangers."""
+    try:
+        img = Image.open(io.BytesIO(content), formats=["JPEG", "PNG", "WEBP"])
+        img.load()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+        raise bad_request("photo_invalid", "That file isn't a valid image.") from exc
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    img.thumbnail((max_side, max_side))
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=82, optimize=True)
+    return out.getvalue()
+
+
 def set_image(db: Session, product: Product, content: bytes) -> ProductImage:
     full, thumb = process_image(content)
     img = ProductImage(

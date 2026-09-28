@@ -6,7 +6,7 @@ from __future__ import annotations
 import io
 import uuid
 
-from conftest import JPEG, bearer, google_login, make_order, scan, scan_event, signup, sync, worker_on_phone
+from conftest import IS_JPEG, JPEG, bearer, google_login, make_order, scan, scan_event, signup, sync, worker_on_phone
 from pypdf import PdfReader
 
 from autorack.services import email
@@ -83,7 +83,7 @@ def test_client_sees_only_its_own_orders(client):
     for oid in (theirs["id"], house["id"]):
         assert client.get(f"/api/portal/orders/{oid}", headers=h).status_code == 404
         assert client.get(f"/api/portal/orders/{oid}/claim.pdf", headers=h).status_code == 404
-    assert client.get(f"/api/portal/photos/{mine_photo}", headers=h).content == JPEG
+    assert client.get(f"/api/portal/photos/{mine_photo}", headers=h).content.startswith(IS_JPEG)
     assert client.get(f"/api/portal/photos/{their_photo}", headers=h).status_code == 404
     # Problem photos stay internal even on the client's own orders.
     sync(client, phone, flag)
