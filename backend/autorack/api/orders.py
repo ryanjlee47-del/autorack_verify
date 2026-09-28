@@ -17,6 +17,7 @@ from .. import matching
 from ..config import get_settings
 from ..db import get_db
 from ..deps import OwnerContext, current_owner, require_manager, require_owner_access
+from ..downloads import attachment
 from ..errors import bad_request, conflict, not_found
 from ..models import (
     TALLY_KINDS,
@@ -577,7 +578,7 @@ def variance_csv(
     return PlainTextResponse(
         tasks.variance_csv(db, order),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="autorack-{order.kind.value}-{name}.csv"'},
+        headers={"Content-Disposition": attachment(f"autorack-{order.kind.value}-{name}.csv")},
     )
 
 
@@ -904,7 +905,7 @@ def claim_pack(
     return Response(
         pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{claim.filename(order)}"'},
+        headers={"Content-Disposition": attachment(claim.filename(order))},
     )
 
 

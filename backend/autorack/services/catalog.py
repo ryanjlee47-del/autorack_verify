@@ -63,7 +63,9 @@ def process_image(content: bytes) -> tuple[bytes, bytes]:
     if len(content) > MAX_IMAGE_BYTES:
         raise bad_request("image_too_large", "Pictures are limited to 10 MB.")
     try:
-        img = Image.open(io.BytesIO(content))
+        # Only the formats we promise. Pillow can parse many more (EPS, PSD,
+        # TIFF...), each one more parser an uploaded file can poke at.
+        img = Image.open(io.BytesIO(content), formats=["JPEG", "PNG", "WEBP", "GIF"])
         img.load()
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise bad_request("image_invalid", "That file isn't a picture we can read (JPEG, PNG, WebP or GIF).") from exc

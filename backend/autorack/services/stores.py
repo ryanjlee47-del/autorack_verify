@@ -14,7 +14,11 @@ what the Connections page shows.
 
 Every URL fetched here is either a fixed vendor API host or checked by
 `check_public_url` (https, and resolves only to public addresses), so a
-pasted link can't make the server call into its own network.
+pasted link can't make the server call into its own network. That check
+alone can be raced (DNS rebinding: public when checked, 169.254.169.254 a
+moment later), so every connection also goes through `PublicOnlyBackend`,
+which resolves the name itself and connects only to the public address it
+just checked. Responses are capped at MAX_BODY while they download.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+import httpcore
 import httpx
 
 from ..models import IntegrationKind, Order, utcnow
@@ -41,6 +46,83 @@ MAX_BODY = 20 * 1024 * 1024
 
 # Tests swap this for httpx.MockTransport.
 TRANSPORT: httpx.BaseTransport | None = None
+
+
+def is_public_ip(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address.split("%")[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+class PublicOnlyBackend(httpcore.SyncBackend):
+    """Connects only to public addresses, checked at connect time. TLS still
+    verifies the certificate against the hostname (httpcore passes it as the
+    server name), so pinning the address doesn't weaken HTTPS."""
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.NetworkStream:
+        try:
+            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        except OSError as exc:
+            raise httpcore.ConnectError(f"can't resolve {host}") from exc
+        addrs = [str(i[4][0]) for i in infos]
+        if not addrs or not all(is_public_ip(a) for a in addrs):
+            raise httpcore.ConnectError(f"{host} resolves to a private address")
+        return super().connect_tcp(addrs[0], port, timeout, local_address, socket_options)
+
+
+class CappedStream(httpx.SyncByteStream):
+    def __init__(self, inner: httpx.SyncByteStream, limit: int) -> None:
+        self.inner, self.limit = inner, limit
+
+    def __iter__(self) -> Any:
+        seen = 0
+        for chunk in self.inner:
+            seen += len(chunk)
+            if seen > self.limit:
+                raise StoreError("The answer was larger than 20 MB, so it was ignored.", retry=False)
+            yield chunk
+
+    def close(self) -> None:
+        self.inner.close()
+
+
+class SafeTransport(httpx.BaseTransport):
+    """Public addresses only, and no response bigger than MAX_BODY."""
+
+    def __init__(self) -> None:
+        self.inner = httpx.HTTPTransport(trust_env=False)
+        self.inner._pool = httpcore.ConnectionPool(
+            ssl_context=self.inner._pool._ssl_context, network_backend=PublicOnlyBackend()
+        )
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        resp = self.inner.handle_request(request)
+        declared = resp.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > MAX_BODY:
+            resp.close()
+            raise StoreError("The answer was larger than 20 MB, so it was ignored.", retry=False)
+        assert isinstance(resp.stream, httpx.SyncByteStream)
+        return httpx.Response(
+            resp.status_code,
+            headers=resp.headers,
+            stream=CappedStream(resp.stream, MAX_BODY),
+            extensions=resp.extensions,
+            request=request,
+        )
+
+    def close(self) -> None:
+        self.inner.close()
 
 
 class StoreError(Exception):
@@ -80,7 +162,7 @@ EXPEDITED = re.compile(r"overnight|next[ -]?day|express|priority overnight|same[
 def client(**kw: Any) -> httpx.Client:
     return httpx.Client(
         timeout=TIMEOUT,
-        transport=TRANSPORT,
+        transport=TRANSPORT or SafeTransport(),
         headers={"User-Agent": "Autorack/1.0 (+order sync)"},
         **kw,
     )
@@ -160,10 +242,8 @@ def check_public_url(url: str) -> str:
         addrs = _resolve(host)
     except OSError as exc:
         raise StoreError(f"Couldn't find {host}. Check the address.") from exc
-    for a in addrs:
-        ip = ipaddress.ip_address(a.split("%")[0])
-        if not ip.is_global:
-            raise StoreError("That address points inside a private network; Autorack can't fetch it.", retry=False)
+    if not all(is_public_ip(a) for a in addrs):
+        raise StoreError("That address points inside a private network; Autorack can't fetch it.", retry=False)
     return url
 
 

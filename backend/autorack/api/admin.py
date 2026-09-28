@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..deps import UserContext, require_operator
+from ..downloads import attachment
 from ..errors import ApiError, bad_request, not_found
 from ..models import (
     AuditLog,
@@ -351,7 +352,7 @@ def warehouse_agreement(
         content=sig.signed_pdf,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{agreement_svc.signed_filename(sig)}"',
+            "Content-Disposition": attachment(agreement_svc.signed_filename(sig)),
             "Cache-Control": "private, no-store",
         },
     )

@@ -22,6 +22,9 @@ services:
         sync: false
       - key: SERVE_FRONTEND
         value: "true"
+      # Render's load balancer is the one proxy that appends X-Forwarded-For.
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
       - key: EMAIL_BACKEND
         value: resend
       - key: EMAIL_FROM

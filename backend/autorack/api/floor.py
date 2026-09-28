@@ -4,8 +4,6 @@ tasks, and the time clock."""
 from __future__ import annotations
 
 import contextlib
-import csv
-import io
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -19,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..deps import OwnerContext, current_owner, require_manager
+from ..downloads import attachment, csv_text
 from ..errors import bad_request, conflict, not_found
 from ..models import (
     Client,
@@ -175,26 +174,24 @@ def client_statement_csv(
 ) -> PlainTextResponse:
     y, m = _month(ctx, month)
     st = client_billing.statement(db, ctx.warehouse, _client(db, ctx, client_id), y, m)
-    buf = io.StringIO()
-    out = csv.writer(buf)
-    out.writerow(["client", "month", "item", "quantity", "rate", "amount"])
-    for line in st["lines"]:
-        out.writerow(
-            [
-                st["client"]["name"],
-                st["month"],
-                line["label"],
-                line["quantity"],
-                f"{line['rate_cents'] / 100:.2f}",
-                f"{line['amount_cents'] / 100:.2f}",
-            ]
-        )
-    out.writerow([st["client"]["name"], st["month"], "Total", "", "", f"{st['total_cents'] / 100:.2f}"])
+    rows = [
+        [
+            st["client"]["name"],
+            st["month"],
+            line["label"],
+            line["quantity"],
+            f"{line['rate_cents'] / 100:.2f}",
+            f"{line['amount_cents'] / 100:.2f}",
+        ]
+        for line in st["lines"]
+    ]
+    rows.append([st["client"]["name"], st["month"], "Total", "", "", f"{st['total_cents'] / 100:.2f}"])
+    text = csv_text(["client", "month", "item", "quantity", "rate", "amount"], rows)
     slug = "".join(ch for ch in (st["client"]["code"] or st["client"]["name"]) if ch.isalnum())[:30] or "client"
     return PlainTextResponse(
-        buf.getvalue(),
+        text,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="autorack-{slug}-{st["month"]}.csv"'},
+        headers={"Content-Disposition": attachment(f"autorack-{slug}-{st['month']}.csv")},
     )
 
 
@@ -611,13 +608,11 @@ def timesheet_csv(
     a, b = _range(ctx, start, end)
     tz = dash.tz_of(ctx.warehouse)
     workers = {w.id: w for w in db.scalars(select(Worker).where(Worker.warehouse_id == ctx.warehouse.id))}
-    buf = io.StringIO()
-    out = csv.writer(buf)
-    out.writerow(["worker", "date", "clock_in", "clock_out", "hours", "closed_by", "edited_by_manager"])
+    rows = []
     for s in _shifts(db, ctx, a, b, None):
         d = floor.shift_dict(s)
         w = workers.get(s.worker_id)
-        out.writerow(
+        rows.append(
             [
                 w.name if w else "",
                 s.clock_in.astimezone(tz).date().isoformat(),
@@ -628,10 +623,11 @@ def timesheet_csv(
                 "yes" if d["edited"] else "",
             ]
         )
+    text = csv_text(["worker", "date", "clock_in", "clock_out", "hours", "closed_by", "edited_by_manager"], rows)
     usage.track(db, ctx.warehouse.id, "exports.timesheet")
     db.commit()
     return PlainTextResponse(
-        buf.getvalue(),
+        text,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="autorack-timesheet-{a:%Y%m%d}.csv"'},
+        headers={"Content-Disposition": attachment(f"autorack-timesheet-{a:%Y%m%d}.csv")},
     )

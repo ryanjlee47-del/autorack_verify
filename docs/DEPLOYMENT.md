@@ -33,9 +33,11 @@ Required environment variables (full list with comments: `backend/.env.example`)
 | `EMAIL_BACKEND` | `resend` or `smtp` (+ `RESEND_API_KEY` or `SMTP_*`) |
 | `EMAIL_FROM` | `Autorack <login@yourdomain.com>` (a verified sender) |
 | `STRIPE_*` | optional until you charge; see step 4 |
+| `TRUSTED_PROXY_HOPS` | `1` (default) on Render, Railway and Fly. Use `2` if Cloudflare proxies in front of the host. It's how many proxies append to `X-Forwarded-For`; the app reads the client's address from there for rate limits and the audit log, never from the client-supplied part. |
 
 The process refuses to start if a production setting is unsafe (dev secret,
-console email, non-HTTPS frontend). Check a config without deploying:
+console email, non-HTTPS frontend, a wildcard or http:// CORS origin, a short
+`CRON_SECRET`). Check a config without deploying:
 `python -m autorack.cli check-config`.
 
 **Render:** New → Blueprint → this repo (`render.yaml`). Fill in the env vars.
@@ -136,6 +138,26 @@ first sign-in creates the account automatically.
 - [ ] Stripe test mode end-to-end: subscribe, fail a payment (card `4000 0000 0000 0341`), cancel.
 - [ ] `pip-audit -r backend/requirements.txt` clean.
 - [ ] Neon point-in-time restore enabled; you know how to use it.
+- [ ] `TRUSTED_PROXY_HOPS` matches your setup (1 behind the host alone, 2 behind Cloudflare + host).
+- [ ] Replace any secret that was ever pasted into a chat, ticket or screenshot (database password,
+      `SECRET_KEY`, Resend, Google client secret, Stripe keys).
+
+## Security safeguards (what's already on)
+
+- Sign-in only with Google (PKCE, state cookie, pinned Google account); sessions and
+  device tokens are random and stored hashed.
+- Every query is scoped to the caller's warehouse; `tests/test_tenant_isolation.py`
+  walks every route with another warehouse's ids.
+- Worker PINs: 5 wrong per phone / 25 per warehouse every 10 minutes, 15 per phone a
+  day, and after 60 in a day phones linked in the last 24 hours are shut out (the
+  warehouse's own phones keep working). Owners are emailed at 30 wrong PINs in a day.
+  A setup code links at most 20 phones an hour.
+- Links people paste (spreadsheets, WooCommerce, product pictures) are fetched only
+  from public addresses, checked again at connection time (no DNS-rebinding into
+  the host's network), redirects re-checked, 20 MB cap.
+- Request bodies over 25 MB are refused (`MAX_REQUEST_BYTES`).
+- CSV exports can't carry spreadsheet formulas; PDFs treat names as text.
+- HSTS, CSP, no framing, no-sniff; API docs are off in production.
 
 ## 8. Knowing when it breaks
 

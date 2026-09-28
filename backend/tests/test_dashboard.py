@@ -175,5 +175,6 @@ def test_client_ip_falls_back_to_proxy_headers():
 
     assert client_ip(req(("1.2.3.4", 1), {"x-real-ip": "9.9.9.9"})) == "1.2.3.4"
     assert client_ip(req(None, {"x-real-ip": "9.9.9.9"})) == "9.9.9.9"
-    assert client_ip(req(None, {"x-forwarded-for": "5.5.5.5, 10.0.0.1"})) == "5.5.5.5"
+    # The last entry is the one the host's proxy added; the first is whatever the client sent.
+    assert client_ip(req(None, {"x-forwarded-for": "5.5.5.5, 10.0.0.1"})) == "10.0.0.1"
     assert client_ip(req(None, {})) is None

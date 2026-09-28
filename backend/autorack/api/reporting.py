@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, aliased
 
 from ..db import get_db
 from ..deps import OwnerContext, current_owner, require_owner_role
+from ..downloads import attachment, safe_cell
 from ..errors import ApiError, bad_request
 from ..models import Order, OrderLineItem, ScanEvent, Worker, utcnow
 from ..services import billing, monthly, reports, usage
@@ -122,22 +123,13 @@ def monthly_pdf(
     return Response(
         pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{monthly.filename(d)}"'},
+        headers={"Content-Disposition": attachment(monthly.filename(d))},
     )
 
 
 # ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
-
-
-def safe_cell(v: Any) -> str:
-    """Neutralize spreadsheet formula injection. A barcode payload is
-    whatever a label said; '=HYPERLINK(...)' must stay text in Excel."""
-    s = "" if v is None else str(v)
-    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
-        return "'" + s
-    return s
 
 
 def _csv_stream(header: list[str], rows: Iterator[list[Any]]) -> Iterator[str]:
@@ -156,7 +148,7 @@ def _download(name: str, header: list[str], rows: Iterator[list[Any]]) -> Stream
     return StreamingResponse(
         _csv_stream(header, rows),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        headers={"Content-Disposition": attachment(name)},
     )
 
 

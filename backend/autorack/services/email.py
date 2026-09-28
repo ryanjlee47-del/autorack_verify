@@ -50,6 +50,9 @@ class EmailError(RuntimeError):
 
 def send(msg: Email) -> None:
     s = get_settings()
+    # Subjects carry warehouse, client and worker names. A line break in one
+    # would be a header injection over SMTP (and makes providers reject it).
+    msg.subject = " ".join(msg.subject.split())[:250]
     if s.email_backend == "memory":
         outbox.append(msg)
     elif s.email_backend == "console":

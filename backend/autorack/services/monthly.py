@@ -12,6 +12,7 @@ import io
 import logging
 from datetime import date, datetime, timedelta
 from typing import Any
+from xml.sax.saxutils import escape
 
 from reportlab.graphics.shapes import Drawing, Line, Rect, String
 from reportlab.lib import colors
@@ -175,18 +176,21 @@ S = {
 }
 
 
+def _text(value: Any, style: str) -> Paragraph:
+    """Plain text in the PDF. Paragraph reads its input as markup, and names
+    come from imports and stores: an unescaped "<img src=...>" in a product
+    name would pull a file off the server into the report."""
+    return Paragraph(escape(str(value)), S[style])
+
+
 def _tile(label: str, value: str, delta: str) -> list[Any]:
-    return [
-        Paragraph(label.upper(), S["tile_label"]),
-        Paragraph(value, S["tile_value"]),
-        Paragraph(delta, S["tile_delta"]),
-    ]
+    return [_text(label.upper(), "tile_label"), _text(value, "tile_value"), _text(delta, "tile_delta")]
 
 
 def _table(header: list[str], rows: list[list[str]], widths: list[float]) -> Table:
-    body = [[Paragraph(f"<b>{h}</b>", S["cell_r"] if i else S["cell"]) for i, h in enumerate(header)]]
+    body = [[Paragraph(f"<b>{escape(h)}</b>", S["cell_r"] if i else S["cell"]) for i, h in enumerate(header)]]
     for r in rows:
-        body.append([Paragraph(str(c), S["cell_r"] if i else S["cell"]) for i, c in enumerate(r)])
+        body.append([_text(c, "cell_r" if i else "cell") for i, c in enumerate(r)])
     t = Table(body, colWidths=widths, repeatRows=1)
     t.setStyle(
         TableStyle(

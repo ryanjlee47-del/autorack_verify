@@ -23,19 +23,26 @@ from .services.audit import Actor
 
 
 def client_ip(request: Request) -> str | None:
-    # uvicorn runs with --proxy-headers behind the host's load balancer, so
-    # request.client is normally the real client address. Served over a unix
-    # socket (PythonAnywhere) there is no peer address at all; fall back to
-    # what the host's proxy forwarded, or every visitor would share one
-    # rate-limit bucket.
+    """The caller's address, for rate limits and the audit log.
+
+    Behind the host's load balancer (Render, Fly, Railway) the peer is the
+    balancer, and the client is in X-Forwarded-For. That header is a list
+    the *client* starts: anyone can send "X-Forwarded-For: 1.2.3.4" and each
+    proxy appends the address it saw. So only the last TRUSTED_PROXY_HOPS
+    entries are trustworthy, and the client is the one the outermost trusted
+    proxy recorded -- never the leftmost entry, which is attacker-chosen (and
+    would let one person look like a new visitor on every request).
+    """
+    hops = get_settings().trusted_proxy_hops
+    if hops > 0:
+        forwarded = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+        if forwarded:
+            return forwarded[max(len(forwarded) - hops, 0)][:64]
     if request.client and request.client.host:
         return request.client.host
+    # Served over a unix socket (PythonAnywhere): no peer address at all.
     real = request.headers.get("x-real-ip", "").strip()
-    if real:
-        return real[:64]
-    forwarded = request.headers.get("x-forwarded-for", "")
-    first = forwarded.split(",")[0].strip()
-    return first[:64] or None
+    return real[:64] or None
 
 
 def _bearer(request: Request) -> str | None:

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import OwnerContext, current_member
+from ..downloads import attachment
 from ..errors import forbidden, not_found
 from ..services import agreement as agreement_svc
 
@@ -42,7 +43,7 @@ def pdf_response(data: bytes, filename: str, *, download: bool) -> Response:
     return Response(
         content=data,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'{disposition}; filename="{filename}"', "Cache-Control": "private, no-store"},
+        headers={"Content-Disposition": attachment(filename, disposition), "Cache-Control": "private, no-store"},
     )
 
 

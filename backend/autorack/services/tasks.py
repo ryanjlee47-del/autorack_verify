@@ -12,14 +12,13 @@ append-only scan history). What differs:
 
 from __future__ import annotations
 
-import csv
-import io
 import uuid
 from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from ..downloads import csv_text
 from ..errors import bad_request, conflict
 from ..models import (
     TALLY_KINDS,
@@ -100,25 +99,22 @@ def variance(db: Session, order: Order) -> dict[str, Any]:
 
 def variance_csv(db: Session, order: Order) -> str:
     v = variance(db, order)
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["barcode", "sku", "description", "location", "expected", "counted", "difference", "state"])
-    for r in v["lines"]:
-        w.writerow(
-            [
-                r["barcode"],
-                r["sku"] or "",
-                r["description"] or "",
-                r["location"] or "",
-                r["expected"],
-                r["counted"],
-                r["difference"],
-                r["state"],
-            ]
-        )
-    for e in v["extras"]:
-        w.writerow([e["barcode"], "", "NOT ON THE LIST", "", 0, e["counted"], e["counted"], "extra"])
-    return buf.getvalue()
+    rows: list[list[Any]] = [
+        [
+            r["barcode"],
+            r["sku"] or "",
+            r["description"] or "",
+            r["location"] or "",
+            r["expected"],
+            r["counted"],
+            r["difference"],
+            r["state"],
+        ]
+        for r in v["lines"]
+    ]
+    rows += [[e["barcode"], "", "NOT ON THE LIST", "", 0, e["counted"], e["counted"], "extra"] for e in v["extras"]]
+    # Extras are barcodes read off whatever was on the shelf: text, never formulas.
+    return csv_text(["barcode", "sku", "description", "location", "expected", "counted", "difference", "state"], rows)
 
 
 def find_returnable(db: Session, wh: Warehouse, code: str) -> Order | None:

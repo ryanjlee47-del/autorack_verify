@@ -10,6 +10,7 @@ which makes the API same-origin and lets a single host run everything.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -26,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
-from starlette.types import Scope
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__
 from .api import (
@@ -51,6 +52,7 @@ from .api import (
 from .config import get_settings
 from .db import get_db, get_sessionmaker
 from .deps import client_ip
+from .errors import ApiError
 from .services import jobs, monitoring
 from .services.ratelimit import memory_limiter
 
@@ -62,6 +64,53 @@ CSP = (
     "font-src 'self'; connect-src 'self' {api}; frame-ancestors 'none'; base-uri 'self'; "
     "form-action 'self'; manifest-src 'self'; worker-src 'self'"
 )
+
+
+REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+class BodySizeLimit:
+    """Refuse request bodies over `limit` bytes, before anything reads them:
+    by Content-Length when it's declared, and by counting when it isn't
+    (chunked uploads). Handlers keep their own, smaller limits; this is the
+    backstop for the ones that read a whole body (public CSV drop address,
+    inbound email, multipart forms)."""
+
+    def __init__(self, app: ASGIApp, limit: int) -> None:
+        self.app, self.limit = app, limit
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = dict(scope.get("headers") or []).get(b"content-length", b"")
+        if declared.isdigit() and int(declared) > self.limit:
+            await _too_large(send)
+            return
+        seen = 0
+
+        async def limited() -> Message:
+            nonlocal seen
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > self.limit:
+                    raise ApiError(413, "too_large", "That upload is too large.")
+            return message
+
+        await self.app(scope, limited, send)
+
+
+async def _too_large(send: Send) -> None:
+    body = b'{"detail":{"code":"too_large","message":"That upload is too large."}}'
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
 
 
 class ClientError(BaseModel):
@@ -111,15 +160,18 @@ def create_app() -> FastAPI:
         if loop:
             loop.stop()
 
+    # The interactive API docs are for development: in production they only
+    # hand an attacker a map of every endpoint.
     app = FastAPI(
         lifespan=lifespan,
         title="Autorack API",
         version=__version__,
         description="Warehouse picking verification.",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        docs_url=None if s.is_production else "/api/docs",
+        openapi_url=None if s.is_production else "/api/openapi.json",
         redoc_url=None,
     )
+    app.add_middleware(BodySizeLimit, limit=s.max_request_bytes)
 
     app.add_middleware(
         CORSMiddleware,
@@ -133,7 +185,10 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def request_context(request: Request, call_next: Any) -> Any:
-        rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+        # Echoed in the response and written to logs: keep it to a short token.
+        rid = request.headers.get("x-request-id", "")
+        if not REQUEST_ID.fullmatch(rid):
+            rid = uuid.uuid4().hex[:12]
         started = time.perf_counter()
         response = await call_next(request)
         elapsed = (time.perf_counter() - started) * 1000
@@ -141,6 +196,8 @@ def create_app() -> FastAPI:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")
+        if s.is_production:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         if request.url.path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")
             if elapsed > 1000:
@@ -222,6 +279,9 @@ def create_app() -> FastAPI:
         break too). Rate-limited per address; content is size-capped."""
         ip = client_ip(request)
         memory_limiter.check(f"client-errors:{ip}", 20, 60, "Too many error reports.")
+        # And across everyone: a script posting junk errors from many
+        # addresses can't fill the table or the operators' inbox.
+        memory_limiter.check("client-errors:all", 300, 3600, "Too many error reports.")
         recorded = monitoring.record_browser(body.model_dump(), ip=ip, user_agent=request.headers.get("user-agent"))
         return {"recorded": recorded}
 

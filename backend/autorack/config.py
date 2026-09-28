@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:8000"
     # Origins allowed to call the API from a browser. Comma-separated.
     cors_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
+    # How many proxies in front of the app append to X-Forwarded-For (the
+    # host's load balancer = 1; add one for Cloudflare in front of it). 0 =
+    # ignore the header and use the connecting address.
+    trusted_proxy_hops: int = 1
+    # Largest request body accepted, in bytes (uploads included).
+    max_request_bytes: int = 25 * 1024 * 1024
     # Serve ../frontend from this process. Handy locally and for single-host
     # deploys; turn off when the frontend lives on Cloudflare Pages.
     serve_frontend: bool = True
@@ -75,6 +81,14 @@ class Settings(BaseSettings):
     pin_max_failures_per_device: int = 5
     pin_max_failures_per_warehouse: int = 25
     pin_lockout_minutes: int = 10
+    # Across a whole day: past this many wrong PINs at one warehouse, phones
+    # linked in the last 24 hours can't try PINs any more (the warehouse's
+    # own phones still can), and owners are emailed at PIN_ALERT_FAILURES_DAY.
+    pin_max_failures_per_warehouse_day: int = 60
+    pin_max_failures_per_device_day: int = 15
+    pin_alert_failures_day: int = 30
+    # New phones one warehouse's setup code can link per hour.
+    max_device_links_per_hour: int = 20
 
     # Email
     email_backend: Literal["console", "memory", "smtp", "resend"] = "console"
@@ -201,6 +215,15 @@ class Settings(BaseSettings):
             problems.append("FRONTEND_URL must be https:// (magic links and camera access need TLS).")
         if self.stripe_secret_key and not self.stripe_webhook_secret:
             problems.append("STRIPE_WEBHOOK_SECRET is required when STRIPE_SECRET_KEY is set.")
+        for origin in self.cors_origin_list:
+            if origin == "*" or not origin.startswith("https://"):
+                problems.append(f"CORS_ORIGINS must list https:// origins only (found {origin!r}).")
+        if self.api_public_url and not self.api_public_url.startswith("https://"):
+            problems.append("API_PUBLIC_URL must be https://.")
+        if self.cron_secret and len(self.cron_secret) < 24:
+            problems.append("CRON_SECRET must be at least 24 random characters.")
+        if not 0 <= self.trusted_proxy_hops <= 5:
+            problems.append("TRUSTED_PROXY_HOPS must be between 0 and 5.")
         return problems
 
 

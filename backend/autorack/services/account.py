@@ -34,6 +34,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from ..downloads import safe_cell
 from ..errors import ApiError, bad_request, conflict
 from ..models import (
     AgreementSignature,
@@ -93,8 +94,7 @@ def _cell(v: Any) -> str:
         return v.isoformat()
     if hasattr(v, "value"):
         v = v.value
-    s = str(v)
-    return "'" + s if s and s[0] in ("=", "+", "-", "@", "\t", "\r") else s
+    return safe_cell(v)
 
 
 def _csv(zf: zipfile.ZipFile, name: str, header: list[str], rows: Iterable[Iterable[Any]]) -> int:

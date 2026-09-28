@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import ClientContext, current_client
+from ..downloads import attachment
 from ..errors import bad_request, not_found
 from ..models import (
     Order,
@@ -220,7 +221,7 @@ def portal_claim(
     return Response(
         claim.build(db, ctx.warehouse, o, internal=False),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{claim.filename(o)}"'},
+        headers={"Content-Disposition": attachment(claim.filename(o))},
     )
 
 

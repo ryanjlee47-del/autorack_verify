@@ -262,6 +262,16 @@ def link_device(db: Session, join_code: str, label: str, ip: str | None, user_ag
     if not wh:
         db.commit()
         raise bad_request("join_code_invalid", "That setup code isn't valid. Check it with your manager.")
+    # A leaked setup code (it's on the break-room poster) shouldn't be a way
+    # to mint unlimited fresh phones, each with its own PIN guesses.
+    ratelimit.check_db(
+        db,
+        "device_link_wh",
+        str(wh.id),
+        get_settings().max_device_links_per_hour,
+        timedelta(hours=1),
+        "Too many phones linked to this warehouse in the last hour. Try again later, or ask your manager.",
+    )
     token = new_token()
     device = Device(
         warehouse_id=wh.id,
@@ -303,6 +313,19 @@ def _pin_lockout_check(db: Session, device: Device) -> None:
         raise ApiError(429, "pin_locked", msg, retry_after=int(window.total_seconds()))
     if ratelimit.count_db(db, "pin_fail_wh", str(device.warehouse_id), window) >= s.pin_max_failures_per_warehouse:
         raise ApiError(429, "pin_locked", msg, retry_after=int(window.total_seconds()))
+    # Guessing spread over a day, from phones linked for the purpose: each
+    # phone gets a daily allowance, and once the warehouse as a whole has
+    # seen too many wrong PINs, new phones are shut out for the day while
+    # the phones that were already here keep working.
+    day = timedelta(hours=24)
+    day_msg = "Too many wrong PINs from this phone today. Ask your manager for help."
+    if ratelimit.count_db(db, "pin_fail_device_day", str(device.id), day) >= s.pin_max_failures_per_device_day:
+        raise ApiError(429, "pin_locked", day_msg, retry_after=int(day.total_seconds()))
+    new_phone = device.created_at is not None and utcnow() - device.created_at < day
+    if new_phone and (
+        ratelimit.count_db(db, "pin_fail_wh", str(device.warehouse_id), day) >= s.pin_max_failures_per_warehouse_day
+    ):
+        raise ApiError(429, "pin_locked", day_msg, retry_after=int(day.total_seconds()))
 
 
 def worker_login(db: Session, device: Device, pin: str, ip: str | None) -> tuple[str, WorkerSession, Worker]:
@@ -316,6 +339,7 @@ def worker_login(db: Session, device: Device, pin: str, ip: str | None) -> tuple
     )
     if not worker or not verify_pin(pin, worker.pin_hash):
         ratelimit.hit_db(db, "pin_fail_device", str(device.id))
+        ratelimit.hit_db(db, "pin_fail_device_day", str(device.id))  # not cleared by a good PIN
         ratelimit.hit_db(db, "pin_fail_wh", str(device.warehouse_id))
         audit.record(
             db,

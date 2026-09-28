@@ -43,6 +43,7 @@ from ..models import (
     OrderLineItem,
     OrderStatus,
     OwnerSession,
+    RateLimitHit,
     ScanEvent,
     ScanResult,
     SubscriptionStatus,
@@ -454,6 +455,49 @@ def run_error_spikes(db: Session, now: datetime) -> int:
     return sent
 
 
+def run_pin_guess_alerts(db: Session, now: datetime) -> int:
+    """Many wrong PINs at one warehouse in a day: someone may be guessing
+    (the setup code is on a poster; anyone who saw it can link a phone).
+    Tell the owners once a day, with what to do about it."""
+    threshold = get_settings().pin_alert_failures_day
+    rows = db.execute(
+        select(RateLimitHit.key, func.count())
+        .where(RateLimitHit.bucket == "pin_fail_wh", RateLimitHit.created_at >= now - timedelta(hours=24))
+        .group_by(RateLimitHit.key)
+        .having(func.count() >= threshold)
+    ).all()
+    sent = 0
+    for key, failures in rows:
+        try:
+            wh = db.get(Warehouse, uuid.UUID(key))
+        except ValueError:
+            continue
+        if wh is None or wh.closed_at:
+            continue
+        day = now.astimezone(tz_of(wh)).date().isoformat()
+
+        def build(addr: str, w: Warehouse = wh, n: int = failures) -> email.Email:
+            return email.notice_email(
+                addr,
+                subject=f"{w.name}: {n} wrong PINs in the last day",
+                heading="Someone may be guessing PINs",
+                lines=[
+                    f"Phones linked to {w.name} entered {n} wrong PINs in the last 24 hours. That's far more "
+                    "than typos usually explain.",
+                    "Phones linked in the last day have been stopped from trying more PINs. If this wasn't "
+                    "your team: change the setup code on the Phones page, unlink any phone you don't "
+                    "recognise, and give workers new PINs.",
+                ],
+                button_label="Open the Phones page",
+                url=app_url("#/devices"),
+                footer="Security alert. You get this at most once a day.",
+            )
+
+        if _send_all(db, wh, "pin_guessing", day, recipients(db, wh, want="owners"), build):
+            sent += 1
+    return sent
+
+
 # ---------------------------------------------------------------------------
 # Account emails
 # ---------------------------------------------------------------------------
@@ -659,6 +703,7 @@ def run_all(db: Session, now: datetime | None = None) -> dict[str, Any]:
                 ("daily_summaries", run_daily_summaries),
                 ("flag_alerts", run_flag_alerts),
                 ("error_spikes", run_error_spikes),
+                ("pin_guess_alerts", run_pin_guess_alerts),
                 ("account_emails", run_account_emails),
                 ("account_deletions", run_account_deletions),
                 ("error_alerts", monitoring.run_error_alerts),

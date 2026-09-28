@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import OwnerContext, require_owner_role
+from ..downloads import attachment
 from ..errors import bad_request
 from ..services import account as account_svc
 from ..services import audit
@@ -34,7 +35,7 @@ def zip_response(fh: Any, filename: str) -> StreamingResponse:
     return StreamingResponse(
         account_svc.stream(fh),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "private, no-store"},
+        headers={"Content-Disposition": attachment(filename), "Cache-Control": "private, no-store"},
     )
 
 
