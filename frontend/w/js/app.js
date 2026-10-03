@@ -407,6 +407,7 @@ async function showOrders() {
           h("button", { class: "btn btn-primary btn-xl", onclick: () => scanOnce(openFromCode) }, T("ordersScanSheet")),
           h("button", { class: "btn btn-xl", onclick: typeOrderNumber }, T("ordersTypeNumber"))),
       restockHost,
+      h("button", { class: "btn btn-block practice-btn", onclick: startPractice }, T("practiceStart")),
       note,
       listEl));
 
@@ -786,6 +787,8 @@ function typeOrderNumber() {
 // ---------------------------------------------------------------------------
 
 function pendingFor(orderId) {
+  // Practice scans live apart from the outbox (a sync reloads that list).
+  if (app.practice && app.order && app.order.practice && orderId === app.order.id) return app.practice.events;
   return app.pending.filter((e) => e.order_id === orderId);
 }
 
@@ -836,6 +839,7 @@ function renderPickBody() {
         h("span", { class: "order-number" }, order.external_order_number || order.id.slice(0, 8)),
         h("span", { class: "muted" }, T("progressUnits", { done: prog.done, total: prog.total })))),
     h("div", { class: "bar bar-lg" }, h("span", { style: { width: `${pct}%` } })),
+    order.practice ? h("div", { class: "banner banner-practice" }, h("strong", null, T("practiceBanner")), h("div", { class: "small" }, T("practiceHelp"))) : null,
     order.status === "flagged" || order.open_flags ? h("div", { class: "banner banner-warn" }, T("orderFlagged")) : null,
     order.rush || order.late ? h("div", { class: ["banner", order.late ? "banner-bad" : "banner-warn"] },
       order.rush ? `${T("rushTag")} · ` : "", order.due_at ? T("dueAt", { time: fmtDue(order.due_at) }) : "") : null,
@@ -862,9 +866,13 @@ function renderPickBody() {
       h("div", { class: "target-name" }, T("orderComplete")),
       ...shipControls());
 
+  const practiceActions = h("div", { class: "actions" },
+    scanButton(),
+    h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
+    h("button", { class: "btn btn-lg", onclick: () => showPracticeDone(false) }, T("practiceStop")));
   mount(document.getElementById("pick-body"),
     targetCard,
-    target
+    order.practice ? practiceActions : target
       ? h("div", { class: "actions" },
         scanButton(),
         h("button", { class: "btn btn-lg", onclick: typeBarcode }, T("pickType")),
@@ -1227,6 +1235,10 @@ async function handleScan(rawText) {
   } else {
     c = S.classify(order, lines, raw);
   }
+  if (order.practice) {
+    practiceScan(order, c);
+    return;
+  }
   // Lot / serial / expiry: from the barcode if it carries them, else ask.
   let details = S.unitDetails(raw);
   const hit = lines.find((l) => l.id === c.lineId);
@@ -1281,6 +1293,74 @@ async function handleScan(rawText) {
   app.status.pending += 1;
   refreshChip();
   if (app.sync) app.sync.kick();
+}
+
+// ---------------------------------------------------------------------------
+// Practice: real products, a made-up order, checked on the phone only.
+// Nothing goes into the outbox; only the round's summary is sent.
+// ---------------------------------------------------------------------------
+
+async function startPractice() {
+  FX.unlockAudio();
+  let order;
+  try {
+    order = await api("/api/worker/practice", { method: "POST" });
+  } catch (e) {
+    toast(e.isNetwork ? T("practiceOffline") : e.message, "bad");
+    return;
+  }
+  app.batch = null;
+  app.targetLineId = null;
+  app.order = order;
+  app.practice = { started: Date.now(), scans: 0, mistakes: 0, sent: false, events: [] };
+  showPick();
+}
+
+function practiceScan(order, c) {
+  const p = app.practice;
+  p.scans += 1;
+  if (c.result === "mismatch" || c.result === "over_pick" || c.result === "review") p.mistakes += 1;
+  p.events.push({
+    id: uuid4(), kind: "scan", order_id: order.id, client_seq: Date.now(),
+    local: { result: c.result, lineId: c.lineId, qty: c.qty || 1 },
+  });
+  const after = currentLines();
+  const line = after.find((l) => l.id === c.lineId);
+  if (c.result === "match" && line && line.scanned_quantity >= line.expected_quantity) app.targetLineId = null;
+  showResult({ ...c, line, complete: S.progress(after).complete });
+}
+
+function fmtDuration(ms) {
+  const sec = Math.max(1, Math.round(ms / 1000));
+  return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`;
+}
+
+async function showPracticeDone(finished) {
+  const order = app.order;
+  const p = app.practice || { started: Date.now(), scans: 0, mistakes: 0, events: [] };
+  const prog = S.progress(currentLines());
+  const elapsed = Date.now() - p.started;
+  stopCamera();
+  if (!p.sent && p.scans) {
+    p.sent = true;
+    api("/api/worker/practice/result", {
+      method: "POST",
+      body: { units: prog.done, scans: p.scans, mistakes: p.mistakes, seconds: Math.round(elapsed / 1000) },
+    }).catch(() => {});
+  }
+  app.order = null;
+  app.practice = null;
+  if (finished) FX.play("ok");
+  setScreen("complete",
+    topbar(),
+    h("main", { class: "screen narrow center complete" },
+      h("div", { class: "complete-check" }, "🎓"),
+      h("h1", null, T("practiceDone")),
+      h("p", { class: "practice-score" }, T("practiceScore", { right: prog.done, wrong: p.mistakes, time: fmtDuration(elapsed) })),
+      h("p", { class: "muted" }, p.mistakes ? T("practiceTip") : T("practicePerfect")),
+      h("div", { class: "stack" },
+        h("button", { class: "btn btn-primary btn-xl", onclick: startPractice }, T("practiceAgain")),
+        h("button", { class: "btn btn-lg", onclick: showOrders }, T("practiceBack")))));
 }
 
 function remember(entry) {
@@ -1341,7 +1421,7 @@ function showResult(r) {
   const buttons = kind === "ok"
     ? null
     : h("div", { class: "overlay-actions" },
-      r.result === "mismatch" || r.result === "review" || r.result === "extra"
+      (r.result === "mismatch" || r.result === "review" || r.result === "extra") && !order.practice
         ? h("button", {
           class: "btn btn-xl btn-ghost-light",
           onclick: (e) => {
@@ -1368,6 +1448,7 @@ function showResult(r) {
 
 function showComplete() {
   if (!app.order) return showOrders();
+  if (app.order.practice) return showPracticeDone(true);
   if (app.batch) return showPick();
   stopCamera();
   if (app.screen !== "complete") FX.play("ok");

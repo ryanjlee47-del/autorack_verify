@@ -96,6 +96,15 @@ counted from the scan log. Any shipped order has an **evidence pack** PDF
 (scan log, boxes, tracking, box photos) for carrier claims and marketplace
 disputes.
 
+**Training mode**: a "Practice scanning" button on the phone builds a practice
+order from the warehouse's real products; scans are checked on the phone only,
+nothing is stored except the round's result, which shows on the Workers page.
+**Mixed up most often** (Insights and the monthly PDF): pairs of products that
+keep getting swapped, where each sits, and the likeliest fix. **Accuracy
+reports for 3PL clients**: a monthly PDF per client under the 3PL's own logo
+(upload it in Settings; it also brands the client portal), downloadable by both
+sides and emailed to the client's portal logins on the 1st.
+
 New warehouses get a **setup checklist** and can load 12 sample orders with a
 printable barcode sheet, to try scanning before importing anything.
 

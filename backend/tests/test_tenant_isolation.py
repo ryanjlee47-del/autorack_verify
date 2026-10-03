@@ -38,6 +38,7 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/clients/{client_id}/users"): {"email": "portal@example.com"},
 }
 NO_BODY = {
+    ("GET", "/api/clients/{client_id}/accuracy.pdf"),
     # No invitation to B's warehouse: looks exactly like no warehouse at all.
     ("POST", "/api/auth/invitations/{warehouse_id}/accept"),
     ("POST", "/api/auth/invitations/{warehouse_id}/decline"),

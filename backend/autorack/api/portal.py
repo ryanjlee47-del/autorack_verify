@@ -20,14 +20,13 @@ from ..errors import bad_request, not_found
 from ..models import (
     Order,
     OrderKind,
-    OrderLineItem,
     OrderStatus,
     Photo,
     ScanEvent,
     ScanResult,
     utcnow,
 )
-from ..services import claim, client_billing, floor, monthly, tasks
+from ..services import claim, client_billing, client_report, floor, monthly, tasks
 from ..services import dashboard as dash
 from ..services import orders as order_svc
 
@@ -83,12 +82,37 @@ def _row(o: Order, r: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/me")
-def portal_me(ctx: ClientContext = Depends(current_client)) -> dict[str, Any]:
+def portal_me(ctx: ClientContext = Depends(current_client), db: Session = Depends(get_db)) -> dict[str, Any]:
     return {
         "user": {"email": ctx.user.email, "name": ctx.user.name},
         "client": {"id": str(ctx.client.id), "name": ctx.client.name},
-        "warehouse": {"name": ctx.warehouse.name, "timezone": ctx.warehouse.timezone},
+        "warehouse": {
+            "name": ctx.warehouse.name,
+            "timezone": ctx.warehouse.timezone,
+            "has_logo": client_report.logo_of(db, ctx.warehouse.id) is not None,
+        },
     }
+
+
+@router.get("/logo", response_class=Response)
+def portal_logo(ctx: ClientContext = Depends(current_client), db: Session = Depends(get_db)) -> Response:
+    """The warehouse's own logo: the portal is theirs, not ours."""
+    from .warehouse import logo_response
+
+    return logo_response(client_report.logo_of(db, ctx.warehouse.id))
+
+
+@router.get("/accuracy.pdf", response_class=Response)
+def portal_accuracy_pdf(
+    month: str | None = Query(None),
+    ctx: ClientContext = Depends(current_client),
+    db: Session = Depends(get_db),
+) -> Response:
+    y, m = _month(ctx, month)
+    pdf, d = client_report.pdf_for(db, ctx.warehouse, ctx.client, y, m)
+    return Response(
+        pdf, media_type="application/pdf", headers={"Content-Disposition": attachment(client_report.filename(d))}
+    )
 
 
 @router.get("/orders")
@@ -233,61 +257,9 @@ def portal_report(
 ) -> dict[str, Any]:
     """This client's month: what shipped, how accurately, how fast, what came back."""
     y, m = _month(ctx, month)
-    start, end = client_billing.period(ctx.warehouse, y, m)
-    counts = client_billing.usage(db, ctx.warehouse, ctx.client.id, start, end)
-    out_the_door = func.coalesce(Order.shipped_at, Order.completed_at)
-    shipped = list(
-        db.scalars(
-            select(Order).where(
-                Order.warehouse_id == ctx.warehouse.id,
-                Order.client_id == ctx.client.id,
-                Order.kind == OrderKind.pick,
-                Order.status.in_([OrderStatus.shipped, OrderStatus.completed]),
-                out_the_door >= start,
-                out_the_door < end,
-            )
-        )
-    )
-    ids = [o.id for o in shipped]
-    late = 0
-    for o in shipped:
-        due = order_svc.due_at(o, ctx.warehouse)
-        when = o.shipped_at or o.completed_at
-        late += bool(due and when and when > due)
-    errors = (
-        db.scalar(
-            select(func.count())
-            .select_from(ScanEvent)
-            .where(ScanEvent.order_id.in_(ids), ScanEvent.result.in_(dash.ERROR_RESULTS))
-        )
-        if ids
-        else 0
-    ) or 0
-    short = (
-        db.scalar(select(func.sum(OrderLineItem.short_quantity)).where(OrderLineItem.order_id.in_(ids))) if ids else 0
-    ) or 0
-    return {
-        "month": f"{y:04d}-{m:02d}",
-        "orders_shipped": counts["per_order"],
-        "units_shipped": counts["per_unit"],
-        "on_time": len(shipped) - late,
-        "late": late,
-        "wrong_items_caught": int(errors),
-        "units_short": int(short),
-        "returns": counts["per_return"],
-        "units_received": counts["per_receive_unit"],
-        "open_orders": db.scalar(
-            select(func.count())
-            .select_from(Order)
-            .where(
-                Order.warehouse_id == ctx.warehouse.id,
-                Order.client_id == ctx.client.id,
-                Order.kind == OrderKind.pick,
-                Order.status.in_(OPEN),
-            )
-        )
-        or 0,
-    }
+    d = client_report.numbers(db, ctx.warehouse, ctx.client, y, m)
+    d.pop("recent", None)
+    return d
 
 
 @router.get("/statement")

@@ -121,6 +121,14 @@ export async function workersView(params) {
         { label: T("Flags"), align: "right", render: (w) => fmtNumber(w.flags ?? 0) },
         { label: T("Last active"), render: (w) => h("span", { class: "muted" }, fmtAgo(w.last_active)) },
         {
+          label: T("Practice"),
+          render: (w) => (w.practice
+            ? h("span", { title: T("Last round {p0}", { p0: fmtAgo(w.practice.last_at) }) },
+              T("{p0} rounds", { p0: fmtNumber(w.practice.rounds) }),
+              w.practice.last_accuracy !== null ? h("span", { class: "muted" }, ` · ${fmtPercent(w.practice.last_accuracy)}`) : null)
+            : h("span", { class: "muted" }, T("Not yet"))),
+        },
+        {
           label: T("Privacy notice"),
           render: (w) => (w.notice_acknowledged_at
             ? h("span", { class: "muted", title: new Date(w.notice_acknowledged_at).toLocaleString() }, T("Read ✓"))

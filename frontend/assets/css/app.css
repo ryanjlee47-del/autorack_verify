@@ -1937,3 +1937,113 @@ kbd {
 .help-links li {
   padding: 6px 0;
 }
+
+/* Insights: confused pairs */
+.pairs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pair {
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+
+.pair:first-child {
+  border-top: 0;
+}
+
+.pair-items {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.pair-name {
+  font-weight: 600;
+}
+
+.pair-bin {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 600;
+}
+
+.pair-swap {
+  color: var(--text-3);
+  font-size: 20px;
+}
+
+.pair-count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.pair-count strong {
+  font-size: 22px;
+}
+
+.pair-advice {
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+@media (max-width: 760px) {
+  .pair-items {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pair-swap {
+    display: none;
+  }
+  .pair-count {
+    align-items: flex-start;
+    flex-direction: row;
+    gap: 6px;
+  }
+}
+
+.logo-preview {
+  display: flex;
+  align-items: center;
+  min-height: 72px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.logo-preview img {
+  max-width: 260px;
+  max-height: 72px;
+}
+
+.portal-logo-link {
+  display: inline-flex;
+  align-items: center;
+}
+
+.portal-logo {
+  max-width: 200px;
+  max-height: 40px;
+}
+
+/* A checkbox with a long label: box on the left, text wrapping beside it. */
+.row.check {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.row.check > input[type="checkbox"] {
+  flex: none;
+  margin-top: 3px;
+}

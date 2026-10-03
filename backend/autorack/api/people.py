@@ -15,7 +15,7 @@ from ..deps import OwnerContext, current_owner, require_manager
 from ..errors import bad_request, not_found
 from ..models import Device, Worker, WorkerSession, utcnow
 from ..security import is_valid_pin
-from ..services import audit
+from ..services import audit, training
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
 
@@ -66,8 +66,10 @@ def list_workers(
         for wid, w in workers.items()
         if wid not in listed
     ]
+    practice = training.summary_by_worker(db, ctx.warehouse.id)
     for r in rows:
         w = workers[r["worker_id"]]
+        r["practice"] = practice.get(w.id)
         r["created_at"] = w.created_at.isoformat()
         r["notice_acknowledged_at"] = w.notice_acknowledged_at.isoformat() if w.notice_acknowledged_at else None
     return {**stats, "workers": rows}

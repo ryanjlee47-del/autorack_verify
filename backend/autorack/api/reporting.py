@@ -19,7 +19,7 @@ from ..deps import OwnerContext, current_owner, require_owner_role
 from ..downloads import attachment, safe_cell
 from ..errors import ApiError, bad_request
 from ..models import Order, OrderLineItem, ScanEvent, Worker, utcnow
-from ..services import billing, monthly, reports, usage
+from ..services import billing, monthly, pairs, reports, usage
 from ..services import dashboard as dash
 
 router = APIRouter(tags=["reporting"])
@@ -47,6 +47,15 @@ def skus(
     days: int = Query(30, ge=1, le=365), ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     return dash.sku_insights(db, ctx.warehouse, days)
+
+
+@router.get("/dashboard/confused-pairs")
+def confused_pairs(
+    days: int = Query(30, ge=1, le=365), ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """Which two products keep getting swapped, where each sits, and why."""
+    now = utcnow()
+    return {"days": days, "pairs": pairs.confused_pairs(db, ctx.warehouse, now - timedelta(days=days), now)}
 
 
 @router.get("/dashboard/trend")

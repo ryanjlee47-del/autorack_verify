@@ -466,6 +466,34 @@ class ProductImage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class WarehouseLogo(Base):
+    """A 3PL's own logo, shown to its clients (portal and accuracy reports)."""
+
+    __tablename__ = "warehouse_logos"
+
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(32))
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TrainingRun(Base):
+    """One practice round on a phone. Practice scans never become scan
+    events: only this summary is kept, for the manager."""
+
+    __tablename__ = "training_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    worker_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workers.id"), index=True)
+    units: Mapped[int] = mapped_column(Integer)
+    scans: Mapped[int] = mapped_column(Integer)
+    mistakes: Mapped[int] = mapped_column(Integer)
+    seconds: Mapped[int] = mapped_column(Integer)
+    completed: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ProductBarcode(Base):
     """Another barcode for a product: a second unit barcode (UPC vs EAN), or
     a case/inner pack that counts `pack_qty` units in one scan."""
@@ -538,6 +566,8 @@ class Client(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     # What the 3PL charges this client, in cents: see services/client_billing.py.
     rates: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict, server_default="{}")
+    # Email the monthly accuracy report to this client's portal logins.
+    monthly_report: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (Index("uq_clients_name", "warehouse_id", text("lower(name)"), unique=True),)

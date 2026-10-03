@@ -67,9 +67,11 @@ from ..models import (
     Shift,
     StripeEvent,
     SubscriptionStatus,
+    TrainingRun,
     User,
     UserRole,
     Warehouse,
+    WarehouseLogo,
     Worker,
     WorkerSession,
     utcnow,
@@ -666,6 +668,8 @@ def purge(db: Session, wh: Warehouse, actor: Actor) -> dict[str, int]:
     gone("connections", delete(Integration).where(Integration.warehouse_id == wid))
     gone("barcode_aliases", delete(BarcodeAlias).where(BarcodeAlias.warehouse_id == wid))
     gone("shifts", delete(Shift).where(Shift.warehouse_id == wid))
+    gone("practice_rounds", delete(TrainingRun).where(TrainingRun.warehouse_id == wid))
+    gone("logo", delete(WarehouseLogo).where(WarehouseLogo.warehouse_id == wid))
     gone("worker_sessions", delete(WorkerSession).where(WorkerSession.warehouse_id == wid))
     gone("workers", delete(Worker).where(Worker.warehouse_id == wid))
     gone("phones", delete(Device).where(Device.warehouse_id == wid))

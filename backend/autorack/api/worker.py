@@ -49,7 +49,7 @@ from ..models import (
     utcnow,
 )
 from ..security import is_valid_pin, normalize_join_code
-from ..services import audit, batches, catalog, floor, scans, tasks, usage
+from ..services import audit, batches, catalog, floor, scans, tasks, training, usage
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
 from ..services import orders as order_svc
@@ -284,6 +284,39 @@ def order_payload(
 ) -> dict[str, Any]:
     order = order_svc.get_order(db, ctx.warehouse.id, order_id)
     return order_svc.offline_payload(db, ctx.warehouse, order)
+
+
+# ---------------------------------------------------------------------------
+# Practice (training mode)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/practice")
+def practice_order(ctx: WorkerContext = Depends(current_worker), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """A practice order from this warehouse's real products. Nothing is
+    stored: the phone checks practice scans itself and keeps them local."""
+    memory_limiter.check(f"practice:{ctx.worker.id}", 30, 3600, "That's a lot of practice. Take a break!")
+    return training.practice_order(db, ctx.warehouse, ctx.worker)
+
+
+class PracticeResult(BaseModel):
+    units: int = Field(ge=0, le=1000)
+    scans: int = Field(ge=0, le=5000)
+    mistakes: int = Field(ge=0, le=5000)
+    seconds: int = Field(ge=0, le=24 * 3600)
+
+
+@router.post("/practice/result", status_code=201)
+def practice_result(
+    body: PracticeResult, ctx: WorkerContext = Depends(current_worker), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """How a practice round went, for the Workers page."""
+    memory_limiter.check(f"practice-result:{ctx.worker.id}", 30, 3600, "Too many practice results.")
+    run = training.record(db, ctx.warehouse, ctx.worker, body.units, body.scans, body.mistakes, body.seconds)
+    usage.track(db, ctx.warehouse.id, "floor.practice")
+    db.commit()
+    acc = training.accuracy(run.units, run.mistakes)
+    return {"id": str(run.id), "accuracy": acc}
 
 
 @router.get("/batches/{batch_id}")

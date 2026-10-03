@@ -4,8 +4,9 @@ import {
   confirmDialog, dialog, fmtAgo, fmtCents, fmtDate, fmtDateTime, fmtMoney, fmtNumber, fmtPercent, h, mount, toast,
 } from "../../../shared/dom.js";
 import { columnChart } from "../chart.js";
+import { imageUrl } from "../../../shared/api.js";
 import {
-  api, card, ctx, download, fail, isOwner, layout, loadMe, pageHeader, photoThumb, setToken, switchWarehouse, table, tz,
+  api, card, ctx, download, fail, getToken, isOwner, layout, loadMe, pageHeader, photoThumb, setToken, switchWarehouse, table, tz,
 } from "../core.js";
 import { REASONS } from "./flags.js";
 import { T } from "../i18n.js";
@@ -14,13 +15,53 @@ import { T } from "../i18n.js";
 // Insights
 // ---------------------------------------------------------------------------
 
+/** What to do about a pair, from the cause the server found. */
+function pairAdvice(p) {
+  const a = p.wanted;
+  const b = p.scanned;
+  const unknown = !b.known ? b : a;
+  return {
+    unknown_barcode: T("Barcode {p0} isn't in your catalog. If it's a case, inner pack or vendor label for the right product, add it as an extra barcode; if not, find where it's shelved.", { p0: unknown.barcode }),
+    same_bin: T("Both live in {p0}. Give each its own bin.", { p0: a.location }),
+    neighbours: T("They sit side by side ({p0} and {p1}). Move one, or put a picture label on the shelf.", { p0: a.location, p1: b.location }),
+    look_alike: T("Look-alike items. Add product photos (the phone shows them while picking) or relabel."),
+    check_labels: T("Check both shelf labels match what's in the bin."),
+  }[p.cause] || "";
+}
+
+function pairItem(label, it) {
+  return h("div", { class: "pair-item" },
+    h("div", { class: "muted small" }, label),
+    h("div", { class: "pair-name" }, it.name || it.sku || it.barcode),
+    h("div", { class: "muted small" },
+      it.location ? h("span", { class: "pair-bin" }, it.location) : null,
+      " ", h("span", { class: "mono" }, it.sku ? `${it.sku} · ${it.barcode}` : it.barcode)));
+}
+
+function confusedPairsCard(pairs) {
+  return card(T("Mixed up most often"),
+    h("p", { class: "muted small" }, T("Two products that keep getting swapped, where each one sits, and the likeliest fix. Fixing the top pair usually removes the most mistakes.")),
+    pairs.length
+      ? h("ol", { class: "pairs" }, ...pairs.map((p) => h("li", { class: "pair" },
+        h("div", { class: "pair-items" },
+          pairItem(T("Wanted"), p.wanted),
+          h("div", { class: "pair-swap", "aria-hidden": "true" }, "⇄"),
+          pairItem(T("Grabbed instead"), p.scanned),
+          h("div", { class: "pair-count" },
+            h("strong", null, fmtNumber(p.times)),
+            h("span", { class: "muted small" }, T("times · {p0} orders", { p0: fmtNumber(p.orders) })))),
+        h("p", { class: "pair-advice" }, "💡 ", pairAdvice(p)))))
+      : h("div", { class: "empty" }, T("No mix-ups in this period. Nice.")));
+}
+
 export async function insightsView(params) {
   const days = Number(params.get("days") || 30);
-  const [trend, skus, workers, photos] = await Promise.all([
+  const [trend, skus, workers, photos, mixups] = await Promise.all([
     api(`/api/dashboard/trend?days=${days}`),
     api(`/api/dashboard/skus?days=${days}`),
     api(`/api/dashboard/workers?days=${days}`),
     api("/api/photos?limit=48"),
+    api(`/api/dashboard/confused-pairs?days=${days}`),
   ]);
   const exportDays = h("select", { class: "input input-inline" },
     ...[7, 30, 90, 365].map((d) => h("option", { value: String(d), selected: d === days }, T("Last {d} days", { d }))));
@@ -31,6 +72,7 @@ export async function insightsView(params) {
         class: "input input-inline",
         onchange: (e) => { location.hash = `#/insights?days=${e.target.value}`; },
       }, ...[14, 30, 90, 180].map((d) => h("option", { value: String(d), selected: d === days }, T("Last {d} days", { d }))))),
+    confusedPairsCard(mixups.pairs),
     card(T("Daily activity"),
       columnChart({ title: T("Units picked per day"), unit: "units", points: trend.series.map((p) => ({ date: p.date, value: p.units_picked })) }),
       columnChart({ title: T("Mistakes caught per day"), unit: "mistakes", points: trend.series.map((p) => ({ date: p.date, value: p.errors_caught })) })),
@@ -225,6 +267,43 @@ function timezones() {
   }
 }
 
+/** Your logo: on your clients' portal and their monthly accuracy reports. */
+function logoCard(hasLogo) {
+  const preview = h("div", { class: "logo-preview" }, h("span", { class: "muted small" }, T("No logo yet.")));
+  const empty = () => mount(preview, h("span", { class: "muted small" }, T("No logo yet.")));
+  const load = () => imageUrl("/api/warehouse/logo", getToken()).then(
+    (url) => mount(preview, h("img", { src: url, alt: T("Your logo") })),
+    empty,
+  );
+  if (hasLogo) load();
+  const file = h("input", {
+    type: "file",
+    accept: "image/png,image/jpeg,image/webp",
+    class: "visually-hidden",
+    onchange: async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      try {
+        await api("/api/warehouse/logo", { method: "POST", blob: f, timeoutMs: 60000 });
+        toast(T("Logo saved"), "ok");
+        load();
+      } catch (err) {
+        fail(err);
+      }
+      e.target.value = "";
+    },
+  });
+  return card(T("Your logo"),
+    h("p", { class: "muted small" }, T("Shown to your 3PL clients: on their portal and on the monthly accuracy report. A wide PNG with a transparent background looks best.")),
+    preview,
+    h("div", { class: "row" },
+      h("label", { class: "btn" }, file, T("Upload logo")),
+      h("button", {
+        class: "btn btn-ghost",
+        onclick: () => api("/api/warehouse/logo", { method: "DELETE" }).then(empty, fail),
+      }, T("Remove"))));
+}
+
 export async function settingsView() {
   const owner = isOwner();
   const [wh, team, aliases, audit, agreement] = await Promise.all([
@@ -309,6 +388,8 @@ export async function settingsView() {
           alert_on_flag: alertFlag.checked, alert_error_rate: alertRate.checked, monthly_report_enabled: monthlyOn.checked,
         }, T("Email settings saved")),
       }, T("Save")) : h("p", { class: "muted small" }, T("An owner decides which emails this warehouse sends. You choose which you get, below."))),
+
+    owner ? logoCard(wh.has_logo) : null,
 
     card(T("My emails"),
       h("p", { class: "muted small" }, T("For you ({email}) at {name}.", { email: ctx.me.user.email, name: ctx.me.warehouse.name })),

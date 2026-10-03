@@ -33,7 +33,7 @@ from ..models import (
     utcnow,
 )
 from ..names import plain_name
-from ..services import audit, client_billing, email, floor, monthly, usage
+from ..services import audit, client_billing, client_report, email, floor, monthly, usage
 from ..services import auth as auth_svc
 from ..services import dashboard as dash
 
@@ -55,6 +55,7 @@ class ClientUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     code: str | None = Field(default=None, max_length=40)
     contact_email: EmailStr | None = None
+    monthly_report: bool | None = None
     active: bool | None = None
     rates: dict[str, int] | None = None
 
@@ -72,6 +73,7 @@ def client_dict(c: Client) -> dict[str, Any]:
         "contact_email": c.contact_email,
         "active": c.active,
         "rates": c.rates or {},
+        "monthly_report": c.monthly_report,
         "created_at": c.created_at.isoformat(),
     }
 
@@ -135,6 +137,8 @@ def update_client(
         c.contact_email = str(body.contact_email).lower()
     if body.active is not None:
         c.active = body.active
+    if body.monthly_report is not None:
+        c.monthly_report = body.monthly_report
     if body.rates is not None:
         try:
             c.rates = client_billing.clean_rates(body.rates)
@@ -153,6 +157,23 @@ def _month(ctx: OwnerContext, month: str | None) -> tuple[int, int]:
         return monthly.parse_month(month, today)
     except ValueError:
         raise bad_request("month_invalid", "Months look like 2026-09.") from None
+
+
+@router.get("/clients/{client_id}/accuracy.pdf", response_class=Response)
+def client_accuracy_pdf(
+    client_id: uuid.UUID,
+    month: str | None = Query(None),
+    ctx: OwnerContext = Depends(require_manager),
+    db: Session = Depends(get_db),
+) -> Response:
+    """The month's accuracy report for this client, under your logo."""
+    y, m = _month(ctx, month)
+    pdf, d = client_report.pdf_for(db, ctx.warehouse, _client(db, ctx, client_id), y, m)
+    usage.track(db, ctx.warehouse.id, "clients.accuracy_report")
+    db.commit()
+    return Response(
+        pdf, media_type="application/pdf", headers={"Content-Disposition": attachment(client_report.filename(d))}
+    )
 
 
 @router.get("/clients/{client_id}/statement")

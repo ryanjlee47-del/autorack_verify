@@ -53,7 +53,7 @@ from ..models import (
     Worker,
     utcnow,
 )
-from . import billing, email, floor, google_auth, integrations, monitoring, monthly, ratelimit
+from . import billing, client_report, email, floor, google_auth, integrations, monitoring, monthly, ratelimit
 from .audit import Actor
 from .dashboard import day_bounds, tz_of
 
@@ -715,6 +715,7 @@ def run_all(db: Session, now: datetime | None = None) -> dict[str, Any]:
                 ("store_sync", integrations.run_store_sync),
                 ("tracking_push", integrations.run_tracking_push),
                 ("monthly_reports", monthly.run_monthly_reports),
+                ("client_reports", client_report.run_client_reports),
                 ("stale_shifts", _close_stale_shifts),
             ):
                 try:

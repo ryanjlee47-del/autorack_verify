@@ -303,6 +303,22 @@ export async function clientView(id, params = new URLSearchParams()) {
         h("p", { class: "statement-total" }, T("Total:") + " ", h("strong", null, fmtCents(st.total_cents))),
         h("p", { class: "muted small" }, T("Counted from the scan records: orders out the door this month, units verified, extra boxes, inserts packed, returns and receipts finished."))),
       h("div", { class: "stack-lg" },
+        card(T("Accuracy report"),
+          h("p", { class: "muted small" }, T("A one-page monthly report for {p0}, under your logo: orders shipped, first-scan accuracy, wrong items caught before shipping, on-time rate. The proof that wins and keeps clients.", { p0: c.name })),
+          h("div", { class: "row" },
+            h("button", {
+              class: "btn btn-primary",
+              onclick: () => download(`/api/clients/${id}/accuracy.pdf?month=${month}`, `accuracy-${c.code || c.name}-${month}.pdf`),
+            }, T("Download PDF · {p0}", { p0: month }))),
+          h("div", { class: "settings-list" }, h("label", { class: "row check" },
+            h("input", {
+              type: "checkbox",
+              checked: c.monthly_report,
+              onchange: (e) => api(`/api/clients/${id}`, { method: "PATCH", body: { monthly_report: e.target.checked } })
+                .then(() => toast(e.target.checked ? T("They'll get it on the 1st of each month.") : T("Monthly email turned off."), "ok"), fail),
+            }),
+            T("Email it to their portal logins on the 1st of each month"))),
+          h("p", { class: "muted small" }, T("Your logo goes on the report and the portal:") + " ", h("a", { href: "#/settings" }, T("add it in Settings")))),
         card(T("Rates"),
           h("div", { class: "settings-list" }, ...rateInputs.map(([, label, input]) => h("label", { class: "row" }, h("span", { class: "rate-label" }, label), "$", input))),
           h("button", {

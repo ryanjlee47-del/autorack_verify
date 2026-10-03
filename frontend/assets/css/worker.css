@@ -1129,3 +1129,23 @@ body.station .camera {
 .home-tile.active .home-tile-count {
   color: var(--blue-strong);
 }
+
+/* Practice (training mode) */
+.practice-btn {
+  margin-top: 4px;
+}
+
+.banner-practice {
+  border: 2px dashed var(--blue);
+  background: var(--blue-soft);
+  color: var(--text);
+}
+
+.banner-practice strong {
+  letter-spacing: 0.04em;
+}
+
+.practice-score {
+  font-size: 20px;
+  font-weight: 700;
+}

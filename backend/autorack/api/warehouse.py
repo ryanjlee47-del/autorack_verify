@@ -8,7 +8,7 @@ from typing import Any, Literal
 from zoneinfo import available_timezones
 
 import segno
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,9 +18,9 @@ from ..db import get_db
 from ..deps import OwnerContext, current_owner, require_manager, require_owner_access, require_owner_role
 from ..errors import bad_request, conflict, not_found
 from ..matching import MAX_SUFFIX_LEN, MIN_SUFFIX_LEN
-from ..models import AuditLog, Membership, Order, OrderStatus, OwnerSession, User, UserRole, utcnow
+from ..models import AuditLog, Membership, Order, OrderStatus, OwnerSession, User, UserRole, WarehouseLogo, utcnow
 from ..names import plain_name
-from ..services import audit, email, onboarding, usage
+from ..services import audit, client_report, email, onboarding, usage
 from ..services import auth as auth_svc
 
 router = APIRouter(tags=["warehouse"])
@@ -85,8 +85,8 @@ def warehouse_dict(ctx: OwnerContext) -> dict[str, Any]:
 
 
 @router.get("/warehouse")
-def get_warehouse(ctx: OwnerContext = Depends(current_owner)) -> dict[str, Any]:
-    return warehouse_dict(ctx)
+def get_warehouse(ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)) -> dict[str, Any]:
+    return {**warehouse_dict(ctx), "has_logo": db.get(WarehouseLogo, ctx.warehouse.id) is not None}
 
 
 @router.patch("/warehouse")
@@ -126,6 +126,56 @@ def update_warehouse(
     usage.track(db, wh.id, "settings.update")
     db.commit()
     return warehouse_dict(ctx)
+
+
+# ---------------------------------------------------------------------------
+# Your logo (shown to your clients: portal and accuracy reports)
+# ---------------------------------------------------------------------------
+
+MAX_LOGO_BYTES = 2 * 1024 * 1024
+
+
+@router.post("/warehouse/logo")
+async def upload_logo(
+    request: Request, ctx: OwnerContext = Depends(require_owner_role), db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_LOGO_BYTES:
+            raise bad_request("logo_too_large", "Logos are limited to 2 MB.")
+    data = client_report.clean_logo(body)
+    logo = db.get(WarehouseLogo, ctx.warehouse.id)
+    if logo is None:
+        db.add(WarehouseLogo(warehouse_id=ctx.warehouse.id, content_type="image/png", data=data))
+    else:
+        logo.data, logo.content_type = data, "image/png"
+    audit.record(db, ctx.actor, "warehouse.logo_set", warehouse_id=ctx.warehouse.id, target_type="warehouse")
+    db.commit()
+    return {"has_logo": True}
+
+
+@router.delete("/warehouse/logo", status_code=204)
+def remove_logo(ctx: OwnerContext = Depends(require_owner_role), db: Session = Depends(get_db)) -> None:
+    logo = db.get(WarehouseLogo, ctx.warehouse.id)
+    if logo is not None:
+        db.delete(logo)
+        db.commit()
+
+
+def logo_response(logo: WarehouseLogo | None) -> Response:
+    if logo is None:
+        raise not_found("No logo")
+    return Response(
+        logo.data,
+        media_type=logo.content_type,
+        headers={"Cache-Control": "private, max-age=300", "Content-Security-Policy": "default-src 'none'"},
+    )
+
+
+@router.get("/warehouse/logo", response_class=Response)
+def get_logo(ctx: OwnerContext = Depends(current_owner), db: Session = Depends(get_db)) -> Response:
+    return logo_response(db.get(WarehouseLogo, ctx.warehouse.id))
 
 
 @router.get("/warehouse/device-link")

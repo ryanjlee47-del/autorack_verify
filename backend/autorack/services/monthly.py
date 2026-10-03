@@ -32,7 +32,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import TALLY_KINDS, NotificationSent, Order, OrderKind, OrderStatus, Warehouse, utcnow
-from . import billing, reports, tasks
+from . import billing, pairs, reports, tasks
 from .dashboard import day_bounds, tz_of
 
 log = logging.getLogger("autorack.monthly")
@@ -122,6 +122,7 @@ def data(db: Session, wh: Warehouse, year: int, month: int) -> dict[str, Any]:
         "previous": prev,
         "previous_label": ps.strftime("%B"),
         "skus": [s for s in cur["skus"] if s["mispicks"]][:8],
+        "pairs": [p for p in pairs.confused_pairs(db, wh, s_utc, e_utc, limit=5) if p["times"] >= 2][:3],
         "workers": [w for w in cur["workers"] if w["units_picked"] or w["errors"]][:10],
         "customers": [c for c in cur["customers"] if c["units_picked"]][:8],
         "days": cur["days"],
@@ -181,6 +182,11 @@ def _text(value: Any, style: str) -> Paragraph:
     come from imports and stores: an unescaped "<img src=...>" in a product
     name would pull a file off the server into the report."""
     return Paragraph(escape(str(value)), S[style])
+
+
+def _pair_side(item: dict[str, Any]) -> str:
+    name = item.get("name") or item.get("sku") or item.get("barcode") or ""
+    return f"{name} ({item['location']})" if item.get("location") else name
 
 
 def _tile(label: str, value: str, delta: str) -> list[Any]:
@@ -359,6 +365,27 @@ def render_pdf(d: dict[str, Any]) -> bytes:
                             for s in d["skus"]
                         ],
                         [width * 0.6, width * 0.2, width * 0.2],
+                    ),
+                ]
+            )
+        )
+    if d.get("pairs"):
+        story.append(
+            KeepTogether(
+                [
+                    Paragraph("Mixed up most often, and how to fix it", S["h2"]),
+                    _table(
+                        ["Wanted", "Grabbed instead", "Times", "Likely fix"],
+                        [
+                            [
+                                _pair_side(p["wanted"]),
+                                _pair_side(p["scanned"]),
+                                f"{p['times']:,}",
+                                p["advice"],
+                            ]
+                            for p in d["pairs"]
+                        ],
+                        [width * 0.24, width * 0.24, width * 0.1, width * 0.42],
                     ),
                 ]
             )

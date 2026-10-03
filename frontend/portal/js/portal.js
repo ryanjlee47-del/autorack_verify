@@ -75,12 +75,26 @@ function table(cols, rows, { empty = "Nothing here yet.", onRow } = {}) {
       ...cols.map((c) => h("td", { class: c.align === "right" ? "t-right" : null }, c.render(r))))))));
 }
 
+/** The warehouse's own logo when it has one: this is their portal. */
+function brandMark() {
+  if (!state.me.warehouse.has_logo) return brandLockup({ href: "#/" });
+  const img = h("img", { class: "portal-logo", alt: state.me.warehouse.name });
+  if (state.logoUrl) img.src = state.logoUrl;
+  else {
+    imageUrl("/api/portal/logo", token()).then((url) => {
+      state.logoUrl = url;
+      img.src = url;
+    }, () => img.replaceWith(brandLockup({ href: "#/" })));
+  }
+  return h("a", { href: "#/", class: "portal-logo-link" }, img);
+}
+
 function layout(active, content) {
   const tabs = [["#/", "Orders"], ["#/returns", "Returns"], ["#/report", "Reports & billing"]];
   mount(document.getElementById("app"),
     h("div", { class: "portal" },
       h("header", { class: "portal-head" },
-        h("div", { class: "portal-brand" }, brandLockup({ href: "#/" }),
+        h("div", { class: "portal-brand" }, brandMark(),
           h("span", { class: "portal-who" }, h("strong", null, state.me.client.name), " at ", state.me.warehouse.name)),
         h("nav", { class: "portal-nav" }, ...tabs.map(([href, label]) =>
           h("a", { href, class: ["portal-tab", active === href && "active"] }, label))),
@@ -186,7 +200,12 @@ async function reportView(params) {
   const host = h("div", null, h("div", { class: "skeleton" }));
   layout("#/report", [
     h("div", { class: "page-head" }, h("div", null, h("h1", null, "Reports & billing"),
-      h("p", { class: "muted" }, "Your month at the warehouse, from the scan records.")), picker),
+      h("p", { class: "muted" }, "Your month at the warehouse, from the scan records.")),
+    h("div", { class: "row" }, picker,
+      h("button", {
+        class: "btn btn-primary",
+        onclick: () => rawDownload(`/api/portal/accuracy.pdf?month=${month}`, token(), `accuracy-report-${month}.pdf`).catch((e) => toast(e.message, "bad")),
+      }, "Accuracy report (PDF)"))),
     host,
   ]);
   const [r, st] = await Promise.all([api(`/api/portal/report?month=${month}`), api(`/api/portal/statement?month=${month}`)]);
@@ -194,6 +213,7 @@ async function reportView(params) {
   const onTime = r.on_time + r.late ? Math.round((100 * r.on_time) / (r.on_time + r.late)) : null;
   mount(host,
     h("div", { class: "tiles" },
+      tile("Picked right the first time", r.accuracy === null ? "–" : `${(r.accuracy * 100).toFixed(1)}%`, "Every unit checked by barcode"),
       tile("Orders shipped", fmtNumber(r.orders_shipped)),
       tile("Units shipped", fmtNumber(r.units_shipped)),
       tile("Shipped on time", onTime === null ? "–" : `${onTime}%`, r.late ? `${r.late} late` : "Against ship-by dates and cutoffs"),
