@@ -1,23 +1,32 @@
 // Camera scanning: the native BarcodeDetector where it exists (Android
 // Chrome), the vendored ZXing decoder (window.ZXing) everywhere else. Both
-// run through one throttled loop so cadence and debounce are identical, and
-// video never leaves the phone: only the decoded text does.
+// run through one throttled loop and one ScanGate (scangate.js), which
+// decides which reads count: only inside the on-screen box, confirmed on
+// two frames, and never the same item twice without it leaving the box.
+// Video never leaves the phone: only the decoded text does.
+
+import { ScanGate, aimRect, pickAimed } from "./scangate.js";
 
 var DECODE_INTERVAL_MS = 100; // ~10 attempts/sec on the native fast path
 
-// The ZXing fallback decodes at half that rate, deliberately.
+// The ZXing fallback decodes less often, deliberately.
 // MultiFormatReader.decode() signals "no barcode in this frame" by
 // THROWING NotFoundException, and the vendored exception base extends
 // Error and calls Error.captureStackTrace -- so the miss path costs a
 // full exception construction plus stack capture, on every frame without
-// a barcode, which is nearly all of them. At 10 Hz that is ~10 exceptions
-// per second for the whole shift, on iOS Safari, which is already both
-// the slower decoder and the more battery-constrained platform. Removing
-// the throw means patching vendored ZXing; halving how often we pay for
-// it does not, and the 1200ms debounce means 5 Hz loses nothing at
-// reading distance.
-var ZXING_DECODE_INTERVAL_MS = 200;
-var DEBOUNCE_MS = 1200; // ignore identical consecutive decodes
+// a barcode, which is nearly all of them. ZXing only decodes the aim box
+// (about a third of the frame), so ~7 Hz costs less than the old 5 Hz on
+// the whole frame did.
+var ZXING_DECODE_INTERVAL_MS = 140;
+// Half the ZXing frames take the quick pass; the others try harder,
+// alternately TRY_HARDER (more rows, for faded or creased labels) and the
+// box turned 90 degrees, for a barcode standing on end. The bundle's own
+// rotation under TRY_HARDER doesn't find rotated barcodes, so we turn the
+// pixels ourselves. Both are too slow for every frame on an older iPhone.
+var ZXING_PASSES = ["quick", "turned", "quick", "hard"];
+// A barcode only the slower passes can read is seen every 4 frames, so
+// ZXing confirms over a longer window than the native detector.
+var ZXING_CONFIRM_WINDOW_MS = 1000;
 var TARGET_WIDTH = 1280;
 var TARGET_HEIGHT = 720;
 
@@ -43,8 +52,10 @@ export function Scanner(videoEl, canvasEl, onDecode) {
   this.usingNative = "BarcodeDetector" in window;
   this.detector = null;
   this.zxingReader = null;
-  this.lastCode = null;
-  this.lastCodeAt = 0;
+  this.zxingHardReader = null;
+  this.zxingTicks = 0;
+  this.turnedCanvas = null;
+  this.gate = new ScanGate({ confirmWindowMs: this.usingNative ? undefined : ZXING_CONFIRM_WINDOW_MS });
   this.intervalHandle = null;
   this.torchOn = false;
   this.running = false;
@@ -96,7 +107,12 @@ Scanner.prototype.start = function () {
       hints.set(window.ZXing.DecodeHintType.TRY_HARDER, false);
       self.zxingReader = new window.ZXing.MultiFormatReader();
       self.zxingReader.setHints(hints);
+      var hard = new Map(hints);
+      hard.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+      self.zxingHardReader = new window.ZXing.MultiFormatReader();
+      self.zxingHardReader.setHints(hard);
     }
+    self._focus();
     self.running = true;
     self.intervalHandle = setInterval(function () {
       self._tick();
@@ -165,41 +181,79 @@ Scanner.prototype._decodeNativeSync = function () {
   return this.detector.detect(this.video);
 };
 
+// Phones that can refocus on their own don't always start out doing it;
+// a camera fixed at arm's length can't read a label held close.
+Scanner.prototype._focus = function () {
+  var track = this.videoTrack;
+  if (!track || !track.getCapabilities || !track.applyConstraints) return;
+  var caps = track.getCapabilities();
+  if (caps.focusMode && caps.focusMode.indexOf("continuous") >= 0) {
+    track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(function () {});
+  }
+};
+
+Scanner.prototype._aim = function () {
+  return aimRect(this.video.videoWidth, this.video.videoHeight, this.video.clientWidth, this.video.clientHeight);
+};
+
 Scanner.prototype._handleNativeResults = function (results, startedAt) {
-  if (!results || !results.length) return;
+  var hit = pickAimed(results, this._aim());
+  if (!hit) return;
   var decodeMs = performance.now() - startedAt;
-  this._handleDecodedText(results[0].rawValue, startedAt, decodeMs);
+  this._handleDecodedText(hit.rawValue, startedAt, decodeMs);
 };
 
 Scanner.prototype._decodeZxing = function () {
-  var w = this.video.videoWidth;
-  var h = this.video.videoHeight;
-  if (!w || !h) return null;
+  var rect = this._aim();
+  if (!rect || !rect.w || !rect.h) return null;
+  // Only the aim box goes to the decoder: barcodes elsewhere on the shelf
+  // can't be read, and fewer pixels decode faster.
+  if (this.canvas.width !== rect.w || this.canvas.height !== rect.h) {
+    this.canvas.width = rect.w;
+    this.canvas.height = rect.h;
+  }
   // getContext("2d") is cheap but not free, and this runs every frame for
   // the whole shift. Cache it; the canvas element never changes.
-  if (this.canvas.width !== w || this.canvas.height !== h) {
-    this.canvas.width = w;
-    this.canvas.height = h;
-  }
-  if (!this.canvasCtx) this.canvasCtx = this.canvas.getContext("2d");
-  this.canvasCtx.drawImage(this.video, 0, 0, w, h);
-  var luminanceSource = new window.ZXing.HTMLCanvasElementLuminanceSource(this.canvas);
+  if (!this.canvasCtx) this.canvasCtx = this.canvas.getContext("2d", { willReadFrequently: true });
+  this.canvasCtx.drawImage(this.video, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+  var pass = ZXING_PASSES[this.zxingTicks++ % ZXING_PASSES.length];
+  var source = pass === "turned" ? this._turned(rect) : this.canvas;
+  var reader = pass === "hard" ? this.zxingHardReader : this.zxingReader;
+  var luminanceSource = new window.ZXing.HTMLCanvasElementLuminanceSource(source);
   var binaryBitmap = new window.ZXing.BinaryBitmap(new window.ZXing.HybridBinarizer(luminanceSource));
-  var result = this.zxingReader.decode(binaryBitmap);
-  return result ? result.getText() : null;
+  // The bundled QR readers throw a "not found" type MultiFormatReader
+  // doesn't recognise, so it console.warn()s the error, stack and all, on
+  // nearly every empty frame. Silence it for just this call.
+  var warn = console.warn;
+  console.warn = function () {};
+  try {
+    var result = reader.decode(binaryBitmap);
+    return result ? result.getText() : null;
+  } finally {
+    console.warn = warn;
+  }
+};
+
+Scanner.prototype._turned = function (rect) {
+  if (!this.turnedCanvas) this.turnedCanvas = document.createElement("canvas");
+  var c = this.turnedCanvas;
+  if (c.width !== rect.h || c.height !== rect.w) {
+    c.width = rect.h;
+    c.height = rect.w;
+  }
+  var ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.setTransform(0, 1, -1, 0, rect.h, 0); // 90 degrees clockwise
+  ctx.drawImage(this.canvas, 0, 0);
+  return c;
 };
 
 Scanner.prototype._handleDecodedText = function (text, startedAt, decodeMsOverride) {
-  if (!text || this.paused) return;
-  var now = performance.now();
-  var decodeMs = decodeMsOverride != null ? decodeMsOverride : now - startedAt;
-  var wallNow = Date.now();
-  if (text === this.lastCode && wallNow - this.lastCodeAt < DEBOUNCE_MS) {
-    return; // same barcode still in frame -- don't fire fifty times
-  }
-  this.lastCode = text;
-  this.lastCodeAt = wallNow;
-  this.onDecode(text, decodeMs);
+  if (!text) return;
+  var decodeMs = decodeMsOverride != null ? decodeMsOverride : performance.now() - startedAt;
+  // Reads keep counting while paused: an item still in the box when the
+  // result closes must not scan again.
+  var fire = this.gate.see(text, Date.now(), this.paused);
+  if (fire) this.onDecode(fire, decodeMs);
 };
 
 // While a result is on screen the item is usually still in front of the
@@ -210,7 +264,7 @@ Scanner.prototype.pause = function () {
 
 Scanner.prototype.resume = function () {
   this.paused = false;
-  this.lastCode = null;
+  this.gate.reset();
 };
 
 Scanner.prototype.hasTorch = function () {

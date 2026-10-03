@@ -813,6 +813,7 @@ function showPick() {
           h("video", { id: "video", playsinline: true, muted: true, autoplay: true }),
           h("canvas", { id: "canvas", hidden: true }),
           h("div", { class: "camera-frame" }),
+          h("div", { class: "camera-hint" }, T("pickCameraAim")),
           h("div", { class: "camera-bar" },
             h("span", { id: "camera-countdown" }),
             h("button", { class: "btn btn-sm", id: "torch", hidden: true, onclick: toggleTorch }, "💡"),

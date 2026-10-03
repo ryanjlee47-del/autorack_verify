@@ -386,6 +386,20 @@ body {
   pointer-events: none;
 }
 
+.camera-hint {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 60%);
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .camera-bar {
   position: absolute;
   left: 0;
